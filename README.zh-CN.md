@@ -25,6 +25,15 @@
 
 **查看原尺寸：** [预览](docs/screenshots.md#preview) · [检查与跨页拆分](docs/screenshots.md#review) · [ZIP 保存](docs/screenshots.md#export) · [日语界面](docs/screenshots.md#japanese-ui)
 
+<details>
+<summary>观看简短操作动图（日语界面 · 约8秒）</summary>
+
+![作者录制的自制样本：在日语界面检查图像并保存 ZIP](docs/images/kindletozip-demo.gif)
+
+*经过编辑的无声样本片段：已省略保存对话框，并遮挡本地路径。不验证真实书籍或发行版。[录制说明与静态图片](docs/screenshots.md#animation)。*
+
+</details>
+
 ## 让截图更好用
 
 以下功能已在源代码中实现，但仍受下文已知问题的影响：

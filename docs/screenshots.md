@@ -2,6 +2,22 @@
 
 [English](../README.md) · [日本語](../README.ja.md) · [简体中文](../README.zh-CN.md)
 
+<a id="animation"></a>
+
+## Recorded animation / 操作GIF / 操作动图
+
+An edited, silent excerpt of the author's recording, using the Japanese UI and a self-authored sample. Browser chrome, black margins, save-dialog footage, later reset operations, and wallpaper are omitted; local paths are masked. The first and last frames are held longer for readability. UI messages and counts are not redrawn. The recording's source/build revision is **unverified**; this is not real-book or packaged-release acceptance.
+
+作者撮影の日本語UI・自作サンプル動画を編集した、無音の抜粋です。ブラウザ枠・黒余白・保存ダイアログ・後半のリセット操作・壁紙を省略し、ローカルパスをマスクしています。最初と最後を長めに表示し、メッセージや画像数は描き直していません。録画したソース・ビルドの版は**未確認**で、実書籍や配布版の動作検証ではありません。
+
+由作者录制的日语界面与自制样本剪辑而成，无声。已省略浏览器边框、黑边、保存对话框、后续重置操作及壁纸，并遮挡本地路径；首尾帧延长显示，界面消息与图像数量未重绘。录制所用源代码或构建版本**尚未确认**，不代表真实书籍或打包发行版通过验证。
+
+![Edited Japanese-UI sample recording / 編集済みの日本語UIサンプル動画 / 编辑后的日语界面样本动图](images/kindletozip-demo.gif)
+
+Prefer no motion? Use the [preview](#preview), [review](#review), and [export](#export) stills below. / 動かない画像は以下の[プレビュー](#preview)・[点検](#review)・[保存](#export)へ。 / 如需静态图片，请查看下方的[预览](#preview)、[检查](#review)及[导出](#export)。
+
+## Still screenshots / 静止画 / 静态截图
+
 Actual English UI from published source **`9f95a73`**, using only self-authored local sample content. No Amazon login, normal browser profile, or real book was used. These screenshots demonstrate one sample flow, **not** real-book completeness, clean-Windows compatibility, or packaged-release acceptance. Local export paths are masked; UI messages and image counts are unchanged.
 
 公開済みソース **`9f95a73`** の英語UIを、自作のローカルサンプルだけで操作した実画面です。Amazonへのログイン・普段のブラウザプロファイル・実書籍は使用していません。サンプル1件の記録であり、**実書籍の全冊取得・クリーンなWindows・配布版の動作保証ではありません**。ローカル保存先だけをマスクし、メッセージと画像数は変更していません。

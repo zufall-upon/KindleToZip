@@ -25,6 +25,15 @@ Capture displayed pages in the Kindle web reader on Windows, review and split yo
 
 **Full-size:** [Preview](docs/screenshots.md#preview) · [Review & split](docs/screenshots.md#review) · [ZIP saved](docs/screenshots.md#export) · [Japanese UI](docs/screenshots.md#japanese-ui)
 
+<details>
+<summary>Watch a short demo (GIF · Japanese UI · about 8 seconds)</summary>
+
+![Author-recorded sample: image review and ZIP saving in the Japanese UI](docs/images/kindletozip-demo.gif)
+
+*Edited, silent sample footage: save dialogs omitted and local paths masked. Not real-book or release verification. [Recording notes and non-animated alternatives](docs/screenshots.md#animation).*
+
+</details>
+
 ## Review and organize your captures
 
 Implemented in the source, subject to the known issues below:

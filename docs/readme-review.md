@@ -90,3 +90,20 @@ Changed Markdown is rendered through the GitHub Markdown API. All three READMEs 
 New helpers and evidence remain under ignored `artifacts/github-page-polish/`. The broad app suite is not rerun for this documentation-only update. No tests are removed or waived to represent the application as passing.
 
 The final documentation run completed with **7 passed / 0 failed in 5.95 seconds** command elapsed. The three-language layouts and full-size gallery were visually inspected. Subsequent edits to this record receive targeted link/render/staging checks rather than repeating unchanged browser cases. The final editorial round requested the exact image allowlist and an updated historical-review boundary; both are included in this change.
+
+## Author-recorded animation — 2026-10-28
+
+The author subsequently supplied `c.mp4`: **1920 × 1080**, **19.392 seconds**, **2,564,418 bytes**, SHA-256 `481fdaa48ae5bf41fbb3b5c888f1f8156f96587b369cdf73a609001ad6869f63`. It shows Japanese UI and self-authored sample content. Its source/build revision is **unverified** and must not be attributed to the isolated `9f95a73` screenshot run above.
+
+The original recording is neither uploaded to ChatGPT nor published. A local, isolated Microsoft Edge decoder extracts reviewed PNG frames. Browser chrome, black margins, native save-dialog scenes, later reset operations, and wallpaper are omitted. The retained application crop is `(410, 106, 1180, 910)`. Local paths are covered with opaque masks at source rectangles `(448, 183, 1088, 46)` and `(450, 544, 1100, 31)` when the app UI is shown. An editorial footer identifies the sample, Japanese UI, editing, path masks, and absence of audio. UI messages and counts are not redrawn.
+
+Only **37 safe PNGs and their timing manifest**, packaged into two ZIPs, are sent to the existing logged-in ChatGPT conversation. ChatGPT actually generates the GIF, which is downloaded and independently checked locally; this is not merely a suggested conversion command. One pair of identical frames is combined. The first frame holds for one second and the last for 2.5 seconds; other delays alternate 120/130 ms to represent the requested 8 fps within GIF's 10 ms timing units.
+
+- Published asset: `docs/images/kindletozip-demo.gif`.
+- **800 × 672**, **36 frames**, **7.870 seconds**, **559,666 bytes**, infinite loop, no audio.
+- SHA-256: `837c414fc2f2694c4ba08e8742969aa31e6ff8c4154310e7aafbf84cbb12e94c`.
+- Every GIF frame is independently decompressed and composited, then compared against the reviewed PNGs in source order. The sampled mean absolute RGB error remains below **3 / 255** after palette reduction. The opaque path-mask regions are checked in every applicable decoded frame, and the final saved/read-back-verified screen still reports 12 images.
+
+All three READMEs keep the static overview and add an initially collapsed, localized `details`/`summary` control for the GIF. Captions identify edited, silent Japanese-UI sample footage and its limits. The gallery separates this recording from the older verified-source stills and links to non-animated alternatives. `.gitignore` permits this exact GIF only, not arbitrary media. No application, dependency, build, authentication, or storage configuration changes are included; helpers and intermediate media remain ignored under `artifacts/readme-animation/`, and the supplied original stays outside the repository.
+
+The animation documentation check completed with **6 passed / 0 failed in 7.33 seconds** command elapsed: full GIF decoding/compositing, frame order and masks, localized captions/destinations, **154 local links and anchors across 15 documents**, preservation of existing assets/license/risk documents, exact allowlisting, and fresh GitHub Markdown rendering. Browser cases cover all three languages at **1280 × 960** and **390 × 844**, initially collapsed GIFs, opening/closing the control, loaded animation, no horizontal overflow, visible source links, and navigation to the recording and still-image alternatives. The layouts and decoded final frame were also visually inspected. This does not rerun or waive the broad application suite.

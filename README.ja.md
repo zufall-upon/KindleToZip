@@ -25,6 +25,15 @@ WindowsでKindle Webの表示画面をPNG画像として取得。点検・見開
 
 **原寸で見る：** [プレビュー](docs/screenshots.md#preview) · [点検・見開き分割](docs/screenshots.md#review) · [ZIP保存](docs/screenshots.md#export) · [日本語UI](docs/screenshots.md#japanese-ui)
 
+<details>
+<summary>短い操作GIFを見る（日本語UI・約8秒）</summary>
+
+![作者撮影の自作サンプル動画：日本語UIで画像を点検してZIPを保存](docs/images/kindletozip-demo.gif)
+
+*無音の編集済みサンプル動画です。保存ダイアログを省略し、ローカルパスをマスクしています。実書籍や配布版の動作検証ではありません。[録画の説明・動かない画像で見る](docs/screenshots.md#animation)。*
+
+</details>
+
 ## 撮った画像を、使いやすく
 
 以下はソースに実装済みの機能です。後述の既知の問題が残っています。
