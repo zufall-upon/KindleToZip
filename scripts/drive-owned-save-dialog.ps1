@@ -1,5 +1,7 @@
 param([Parameter(Mandatory)][int]$OwnerPid, [ValidateSet('select','cancel')][string]$Action = 'cancel', [string]$Destination = '', [string]$Screenshot = '')
 $ErrorActionPreference = 'Stop'
+$watch = [Diagnostics.Stopwatch]::StartNew()
+$timings = [ordered]@{}
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Drawing
@@ -24,6 +26,8 @@ while (-not $window -and [DateTime]::UtcNow -lt $deadline) {
     if (-not $window) { Start-Sleep -Milliseconds 100 }
 }
 if (-not $window) { throw 'Owned native save dialog did not appear.' }
+$timings.windowFound = $watch.ElapsedMilliseconds
+[Console]::Error.WriteLine('KTZ_DIALOG:owned_window_found')
 $file = $null
 $readyDeadline = [DateTime]::UtcNow.AddSeconds(8)
 do {
@@ -43,6 +47,8 @@ if (-not $file) {
 }
 $value = $file.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
 $initial = $value.Current.Value
+$timings.filenameRead = $watch.ElapsedMilliseconds
+[Console]::Error.WriteLine('KTZ_DIALOG:filename_read')
 if ($Screenshot) {
     $bounds = $window.Current.BoundingRectangle
     $bitmap = [Drawing.Bitmap]::new([int]$bounds.Width, [int]$bounds.Height)
@@ -63,9 +69,12 @@ $button = $window.FindAll([Windows.Automation.TreeScope]::Descendants, $buttonCo
 if (-not $button) { throw 'Native dialog action not found.' }
 $invokedName = $button.Current.Name
 $dialogPid = $window.Current.ProcessId
+$timings.beforeInvoke = $watch.ElapsedMilliseconds
+[Console]::Error.WriteLine('KTZ_DIALOG:invoking_owned_button')
 $button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
 $exitDeadline = [DateTime]::UtcNow.AddSeconds(8)
 while ((Get-Process -Id $dialogPid -ErrorAction SilentlyContinue) -and [DateTime]::UtcNow -lt $exitDeadline) { Start-Sleep -Milliseconds 100 }
 if (Get-Process -Id $dialogPid -ErrorAction SilentlyContinue) { throw 'Owned native dialog did not finish after its public button.' }
+$timings.hostExited = $watch.ElapsedMilliseconds
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
-@{ initialFilename = $initial; action = $Action; invokedButton = $invokedName; nativeWindowFound = $true; osInputOrClipboardUsed = $false } | ConvertTo-Json -Compress
+@{ initialFilename = $initial; action = $Action; invokedButton = $invokedName; nativeWindowFound = $true; osInputOrClipboardUsed = $false; timingsMs = $timings } | ConvertTo-Json -Compress

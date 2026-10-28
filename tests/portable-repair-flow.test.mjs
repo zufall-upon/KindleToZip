@@ -249,9 +249,14 @@ test('保存先ドライバ: 従来型Windowsダイアログのファイル名�
     const destination = path.join(directory, 'legacy-selected.zip');
     host.stdin.end(JSON.stringify({ destination: path.join(directory, 'legacy-initial.zip'), format: 'zip' }) + '\n');
     const { stdout } = await promisify(execFile)('pwsh', ['-NoProfile', '-File', 'scripts/drive-owned-save-dialog.ps1',
-      '-OwnerPid', String(process.pid), '-Action', action, '-Destination', destination], { timeout: 25000, encoding: 'utf8' });
+      // Allow the driver's 15s appearance + 8s readiness + 8s exit bounds,
+      // plus cold Windows UIAutomation/PowerShell startup on hosted runners.
+      '-OwnerPid', String(process.pid), '-Action', action, '-Destination', destination], { timeout: 45000, encoding: 'utf8' });
     const result = JSON.parse(stdout.trim());
-    assert.equal(result.initialFilename, 'legacy-initial.zip');
+    t.diagnostic(JSON.stringify({ action, nativeDialogTimingsMs: result.timingsMs }));
+    // Windows may hide a known extension in the edit; the selected absolute
+    // path below must still include exactly the requested .zip extension.
+    assert.match(result.initialFilename, /^legacy-initial(?:\.zip)?$/);
     assert.equal(result.nativeWindowFound, true);
     assert.equal(result.osInputOrClipboardUsed, false);
     assert.equal(await finished, 0, errors);
@@ -273,12 +278,15 @@ test('3ボタン公開導線・保存先ダイアログ: 実Windows表示・書�
   const initial = await ui.locator('#destination').inputValue();
   const driver = async (action, destination, screenshot) => {
     const { stdout } = await promisify(execFile)('pwsh', ['-NoProfile', '-File', 'scripts/drive-owned-save-dialog.ps1', '-OwnerPid', String(process.pid), '-Action', action,
-      ...(destination ? ['-Destination', destination] : []), ...(screenshot ? ['-Screenshot', path.join(evidence, screenshot)] : [])], { timeout: 25000, encoding: 'utf8' });
-    return JSON.parse(stdout.trim());
+      ...(destination ? ['-Destination', destination] : []), ...(screenshot ? ['-Screenshot', path.join(evidence, screenshot)] : [])], { timeout: 45000, encoding: 'utf8' });
+    const result = JSON.parse(stdout.trim());
+    t.diagnostic(JSON.stringify({ action, nativeDialogTimingsMs: result.timingsMs }));
+    return result;
   };
   await ui.locator('#chooseDestination').click();
   const cancelled = await driver('cancel', null, 'anonymous-native-dialog.png');
-  assert.equal(cancelled.initialFilename, '匿名保存試料 第１巻.zip');
+  assert.equal(path.basename(initial), '匿名保存試料 第１巻.zip');
+  assert.match(cancelled.initialFilename, /^匿名保存試料 第１巻(?:\.zip)?$/);
   await ui.waitForFunction(() => document.querySelector('#operationStatus').dataset.status !== 'pending');
   assert.equal(await ui.locator('#operationStatus').getAttribute('data-status'), 'cancelled', await ui.locator('#message').textContent());
   await ui.waitForFunction(() => document.querySelector('#operationStatus').dataset.status === 'cancelled');
