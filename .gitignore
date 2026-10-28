@@ -8,6 +8,11 @@ AGENTS.md
 !/docs/releasing.md
 !/docs/legal-notes-ja.md
 !/docs/validation.md
+!/docs/README.md
+!/docs/getting-started.md
+!/docs/getting-started.ja.md
+!/docs/getting-started.zh-CN.md
+!/docs/readme-review.md
 /scripts/check-records.mjs
 
 # Dependencies, build outputs, and local test environments
@@ -58,3 +63,8 @@ storage-state*.json
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Publish only this reviewed application screenshot, not other local images.
+!/docs/images/
+/docs/images/*
+!/docs/images/kindletozip-workflow.png

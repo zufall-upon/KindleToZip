@@ -7,6 +7,7 @@ This document describes the published source, not a third-party security audit. 
 - Sign-in and additional verification take place in the official Kindle page in a dedicated Chromium profile. KindleToZip does not provide its own account system or sign-in server.
 - The source does not intentionally read password fields, export Amazon cookies with Playwright's cookie APIs, save `storageState`, or upload authentication data to an application-operated service. The reader adapter inspects selected visible reader elements and captures displayed pixels. Playwright controls the browser; it must not be described as technically incapable of accessing page data.
 - Login state is saved **by default** in the dedicated browser profile. The browser can write cookies, tokens, cache, and browsing history. Disabling retention creates a separate temporary profile; normal shutdown removes that temporary profile. Crashes can leave files behind.
+- Saved profiles are intended for the same PC and Windows user. Amazon can expire a session or require additional authentication; the app does not bypass either. Normal deletion is not a secure-erasure guarantee.
 - Profiles are separate from the normal browser. Portable builds use `data/` beside the executable; development uses `artifacts/mvp-data/`. Captured pages, titles, manifests, previews, and archives are sensitive local information.
 - Previews are held in application memory. Review and capture data may be written to the selected local job directory. Do not capture a login page, and verify the preview before approving it.
 
@@ -41,4 +42,6 @@ Implementation: [server](../app/server.mjs), [control window](../app/control-win
 
 The tool is free, with no additional KindleToZip account, usage quota, watermark, or paid DLC. The official Kindle service can still require an Amazon account or payment for its own content.
 
-Financial support is optional and must never unlock capture features or be required for export. On 2026-10-28 the author's GitHub account did not have an active Sponsors listing. No payment account or sponsorship has been created by this repository setup. Once the author enables it, use the same `zufall-upon` Sponsors destination across projects and add an unobtrusive, user-clicked link after export. Until then, no inactive payment URL is presented as working.
+Financial support is optional and must never unlock capture features or be required for export. The repository's [funding configuration](../.github/FUNDING.yml) and the three READMEs link to [the author's shared GitHub Sponsors destination](https://github.com/sponsors/zufall-upon). On 2026-10-28 that URL redirected to the author's profile, so an open financial-support listing has not been confirmed; the README labels this limitation rather than claiming donations are accepted.
+
+No payment account or sponsorship is created by this repository configuration. There is no active in-app support link and no automatic support-page request. After the listing becomes public, an unobtrusive, user-clicked post-export link can be considered separately; this documentation update does not change the app.

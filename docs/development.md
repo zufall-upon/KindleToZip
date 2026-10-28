@@ -1,5 +1,7 @@
 # Development and testing
 
+Looking for the current way to try the app? Use the source setup guide: [English](getting-started.md) · [日本語](getting-started.ja.md) · [简体中文](getting-started.zh-CN.md). There is no public Portable executable yet.
+
 ## Requirements
 
 - Windows x64 with PowerShell 7 (`pwsh`) and Node.js 22 or later.
@@ -7,7 +9,15 @@
 - Rust 1.99.1 is installed locally under `artifacts/toolchains/`; setup does not change the global PATH.
 - npm dependencies are pinned in `package-lock.json`; Rust dependencies and checksums are pinned in both `Cargo.lock` files.
 
-Run the setup commands in the [README](../README.md) before testing. Initial setup downloads tools and dependencies from their official distribution sites and registries.
+Run the setup commands in the [source setup guide](getting-started.md) before testing. Run the Rust installer and the launcher's explicit dependency fetch in the same PowerShell 7 session, as shown there. Initial setup downloads tools and dependencies from their official distribution sites and registries.
+
+## Architecture and implementation limits
+
+The backend controller is Rust; the local web UI and browser adapter use Node.js and Playwright. This is not a Tauri app or a purely Rust-only runtime. Source execution needs the development tools above. The portable build embeds its runtime rather than requiring the end user to install Node.js, Rust, npm, or Chromium separately, but no tested public executable is currently offered.
+
+PNG storage, recovery, ordering, non-destructive crops, and archive verification belong to the Rust controller. Standard or 2× browser rendering does not reconstruct absent source detail. The safety limit is 16 megapixels / 32 MiB per PNG, not a paid feature limit. Optional spread splitting must be reviewed by the user; it is not semantic page classification. ZIP64 and compatibility with all CBZ viewers remain unverified.
+
+The [initial validation report](validation.md) records 125 passes and 12 failures for `npm test`, including parent/subtest failures. These documentation changes do not fix, waive, or replace those results. Keep real Kindle acceptance, source-fixture tests, packaged-fixture tests, and clean-Windows checks separate.
 
 ## Tests
 
@@ -49,6 +59,6 @@ Portable data is stored beside the executable in `runtime/`, `data/`, and `temp/
 
 ## Repository privacy boundary
 
-Only application source, generic development scripts, tests, self-authored fixtures, lockfiles, and public documentation belong in Git. Local agent instructions, planning and participation records, build outputs, browser state, captured pages, and ZIP / CBZ exports are excluded by `.gitignore` and must remain private.
+Only application source, generic development scripts, tests, self-authored fixtures, lockfiles, public documentation, and the explicitly reviewed app screenshot belong in Git. Local agent instructions, planning and participation records, build outputs, browser state, captured pages, and ZIP / CBZ exports are excluded by `.gitignore` and must remain private. The screenshot exception allows one exact file, not arbitrary local images.
 
 Do not use `git add -f` to bypass those exclusions for runtime or browser data. Review staged filenames and content before publishing. Issue attachments and screenshots require a separate privacy review.
