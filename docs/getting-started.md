@@ -6,7 +6,7 @@
 
 ## What is available now?
 
-As of **2026-10-28**, [v0.1.2 is a public experimental Windows x64 Portable prerelease](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2). Mandatory source and packaged-fixture checks passed; clean Windows and complete real-book capture remain unverified. [Validation history](validation.md) retains earlier failures separately.
+As of **2026-10-28**, [v0.1.2 is a public experimental Windows x64 Portable release](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2). Mandatory source and packaged-fixture checks passed; clean Windows and complete real-book capture remain unverified. GitHub's Latest label is for sidebar visibility, not a stable-ready claim. [Validation history](validation.md) retains earlier failures separately.
 
 For use without a development setup, follow the [Portable guide](portable.md): download the release ZIP, verify its checksum, extract it completely, and run `KindleToZip-Portable.exe`. The instructions below are for **source execution only**. No Amazon credentials are needed to install the source or use the self-authored sample.
 

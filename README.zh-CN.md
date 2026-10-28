@@ -10,7 +10,7 @@
 
 **完全免费、开源 · Windows x64 · 无需注册 KindleToZip 账户 · 无付费 DLC**
 
-> **Windows x64 Portable v0.1.2 实验性预发行版现已提供。**
+> **Windows x64 Portable v0.1.2 实验版现已提供。**
 > 必需的源代码检查与打包版本自制样本检查已通过；干净 Windows 和真实书籍完整获取仍未验证。
 
 **[下载 Portable ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.2/KindleToZip-Portable-v0.1.2-win-x64.zip)** · [Portable 使用指南](docs/portable.md) · [从源代码体验](docs/getting-started.zh-CN.md)

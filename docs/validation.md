@@ -92,9 +92,9 @@ The user authorized **v0.1.2**, preserving both existing tags. The builder now i
 
 The first tag-free run, [40682154124](https://github.com/zufall-upon/KindleToZip/actions/runs/40682154124) at `99b9c76511689802ef062291932f18421ff5d1ae`, completed fresh-checkout build and deployment in the intended isolated runner. Packaged admission then rejected its test's obsolete `export.zip` expectation: the actual public UI correctly proposed the selected anonymous book title. Related bundled smoke expectations now check the exact book-owned destination in both jobs and explicitly choose **keep images** in the current public reset confirmation after cancellation. No application behavior or safety assertion was relaxed. Archive collection/transfer remained untested in that failed run, and no `v0.1.2` tag was created.
 
-## v0.1.2 public experimental prerelease — 2026-10-28
+## v0.1.2 public experimental release — 2026-10-28
 
-**Published:** [KindleToZip v0.1.2 — Windows x64 Portable](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2), **2026-10-28 12:33:30 UTC**, as a prerelease, not a stable/latest release. The annotated tag points to **`e3e3977588d75fffb72dae9f402288ca69f8bfe0`**. Earlier `v0.1.0` and `v0.1.1` tags remain untouched and have no executable release assets.
+**Published:** [KindleToZip v0.1.2 — Windows x64 Portable](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2), **2026-10-28 12:33:30 UTC**, initially as a prerelease. The user subsequently requested the repository TOP-right **Releases** listing and explicitly authorized normal Release + **Latest**, with the short title **v0.1.2 実験版 / Experimental**. This is discoverability metadata, not a stable-ready claim; the tag, executable, ZIP, checksums, and unverified limits are unchanged. The annotated tag points to **`e3e3977588d75fffb72dae9f402288ca69f8bfe0`**. Earlier `v0.1.0` and `v0.1.1` tags remain untouched and have no executable release assets.
 
 | Final gate | Result |
 | --- | --- |
@@ -103,7 +103,7 @@ The first tag-free run, [40682154124](https://github.com/zufall-upon/KindleToZip
 | [Tagged release workflow 40685376544](https://github.com/zufall-upon/KindleToZip/actions/runs/40685376544) | All source, build, packaged public selection/export, transferred checksum, attestation and draft steps passed |
 | Actual release EXE packaged regression | **66.53 seconds**, exit 0: preview/selection and separate approval/start, book-owned ZIP destinations, two-book/profile reuse and retained exports, crop/order/split output, ZIP/CBZ reopening, whole-folder move/reuse, exclusive data lock, private paths and write-denial handling |
 | Downloaded draft admission | ZIP and inner EXE hashes/size matched checksums and build metadata; 16 allowlisted entries, trilingual Portable guide and license text, component notices, exact source/tag/run; ZIP and EXE Sigstore verification matched the source commit, release workflow and GitHub-hosted runner |
-| Public verification | Anonymous release API returned HTTP 200, `draft=false`, `prerelease=true`; actual public ZIP and both companion assets were downloaded without authentication and matched the verified draft; GitHub rendered the three-language notes, prerelease label and asset links |
+| Public verification | Anonymous API returned HTTP 200; initial publication was `draft=false`, `prerelease=true`. After the user's sidebar request, the current state is `prerelease=false` + Latest, with all three asset IDs/digests unchanged. The public ZIP and companion assets matched the verified draft; GitHub rendered the trilingual notes and asset links. The actual Releases component was verified in the desktop right-hand pane, with the full experimental title and Latest badge visible without truncation |
 
 The `[skip ci]` candidate was not treated as accepted source: after tag-free packaging succeeded, the full existing `ci.yml` was explicitly dispatched on the same unchanged commit and passed before tagging. The final `release.yml` retained and passed all of its existing mandatory checks. The preflight EXE is a different build and its hash was not substituted for the release EXE.
 

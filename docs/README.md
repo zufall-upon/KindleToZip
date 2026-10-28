@@ -7,7 +7,7 @@
 - [Portable quick start / Portable版の使い方 / Portable 使用指南](portable.md) — instructions included in the release ZIP; availability is shown on Releases
 - [Actual app screenshots / 実画面 / 实际界面](screenshots.md) — preview, image review, ZIP export, and the original Japanese UI
 
-[Windows x64 Portable v0.1.2](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2) is publicly available as an **experimental prerelease**. The [Portable guide](portable.md) needs no development setup; the three source guides remain for development/source execution. Mandatory fixture checks passed, not clean-Windows or whole-real-book acceptance.
+[Windows x64 Portable v0.1.2](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2) is publicly available as an **experimental release**, listed as Latest for visibility in the repository's Releases sidebar, not as stable-ready certification. The [Portable guide](portable.md) needs no development setup; the three source guides remain for development/source execution. Mandatory fixture checks passed, not clean-Windows or whole-real-book acceptance.
 
 ## Details and implementation records
 
