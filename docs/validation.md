@@ -91,3 +91,27 @@ Source CI [40676271113](https://github.com/zufall-upon/KindleToZip/actions/runs/
 The user authorized **v0.1.2**, preserving both existing tags. The builder now initializes only its fixed workspace `_testenv` destination before calling the unchanged validating deployment helper. Application/package-lock and launcher versions are aligned at `0.1.2`. The tag-free preflight exercises fresh-checkout build, packaged public selection/export, the shared release archive/notice collector, and cross-runner checksums before any new tag is created. It is not a substitute for exact-commit mandatory source CI or the tagged release workflow's required gates.
 
 The first tag-free run, [40682154124](https://github.com/zufall-upon/KindleToZip/actions/runs/40682154124) at `99b9c76511689802ef062291932f18421ff5d1ae`, completed fresh-checkout build and deployment in the intended isolated runner. Packaged admission then rejected its test's obsolete `export.zip` expectation: the actual public UI correctly proposed the selected anonymous book title. Related bundled smoke expectations now check the exact book-owned destination in both jobs and explicitly choose **keep images** in the current public reset confirmation after cancellation. No application behavior or safety assertion was relaxed. Archive collection/transfer remained untested in that failed run, and no `v0.1.2` tag was created.
+
+## v0.1.2 public experimental prerelease — 2026-10-28
+
+**Published:** [KindleToZip v0.1.2 — Windows x64 Portable](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2), **2026-10-28 12:33:30 UTC**, as a prerelease, not a stable/latest release. The annotated tag points to **`e3e3977588d75fffb72dae9f402288ca69f8bfe0`**. Earlier `v0.1.0` and `v0.1.1` tags remain untouched and have no executable release assets.
+
+| Final gate | Result |
+| --- | --- |
+| [Tag-free package preflight 40682903449](https://github.com/zufall-upon/KindleToZip/actions/runs/40682903449) | Passed fresh-checkout build/deployment, packaged public regressions, shared archive/notice collection, and Windows-to-Linux checksum verification |
+| [Mandatory exact-commit source CI 40683644665](https://github.com/zufall-upon/KindleToZip/actions/runs/40683644665) | Rust controller 22; launcher 3; IPC/store 24; public source UI **142/142**; deployment **3/3**; no failures |
+| [Tagged release workflow 40685376544](https://github.com/zufall-upon/KindleToZip/actions/runs/40685376544) | All source, build, packaged public selection/export, transferred checksum, attestation and draft steps passed |
+| Actual release EXE packaged regression | **66.53 seconds**, exit 0: preview/selection and separate approval/start, book-owned ZIP destinations, two-book/profile reuse and retained exports, crop/order/split output, ZIP/CBZ reopening, whole-folder move/reuse, exclusive data lock, private paths and write-denial handling |
+| Downloaded draft admission | ZIP and inner EXE hashes/size matched checksums and build metadata; 16 allowlisted entries, trilingual Portable guide and license text, component notices, exact source/tag/run; ZIP and EXE Sigstore verification matched the source commit, release workflow and GitHub-hosted runner |
+| Public verification | Anonymous release API returned HTTP 200, `draft=false`, `prerelease=true`; actual public ZIP and both companion assets were downloaded without authentication and matched the verified draft; GitHub rendered the three-language notes, prerelease label and asset links |
+
+The `[skip ci]` candidate was not treated as accepted source: after tag-free packaging succeeded, the full existing `ci.yml` was explicitly dispatched on the same unchanged commit and passed before tagging. The final `release.yml` retained and passed all of its existing mandatory checks. The preflight EXE is a different build and its hash was not substituted for the release EXE.
+
+| Public file | Bytes | SHA-256 |
+| --- | ---: | --- |
+| [`KindleToZip-Portable-v0.1.2-win-x64.zip`](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.2/KindleToZip-Portable-v0.1.2-win-x64.zip) | 380,783,281 | `12f0dcf720b212688087bbf99175dc13d5aa823247f225447beafc99b7d0af36` |
+| `KindleToZip-Portable.exe` inside that ZIP | 859,389,970 | `ee4ab0423a20979da329e69a071aa43bf4d80b7fcd3d42bf0641f935963077bc` |
+
+The release also provides [`SHA256SUMS.txt`](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.2/SHA256SUMS.txt) and [`KindleToZip-build.sigstore.json`](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.2/KindleToZip-build.sigstore.json). Metadata records Node **22.14.0**, Playwright **1.64.1**, Chromium revision **1248**, app/launcher **0.1.2**, and the unchanged controller component **0.1.0**.
+
+All packaged reader content was self-authored. The public ZIP contains no used `runtime/`, `data/`, `temp/`, login profiles, captured book pages, or private validation records. Existing local actual-book state was not reopened or operated for this release. Clean-Windows acceptance, complete current real-book acquisition, every region/layout, independent security review, legal clearance, and complete third-party redistribution review remain **unverified**, not successful. The historical local 67 → 71 → 73 image record is not byte-specific acceptance of this new hosted EXE.

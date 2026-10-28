@@ -6,9 +6,9 @@
 
 ## What is available now?
 
-As checked on **2026-10-28**, the repository has **no public release or Portable executable**. Source code is available, but this experimental version has [known test failures](validation.md). It is not a verified, ready-to-use product. The presence of build scripts or a draft-release workflow does not change that status.
+As of **2026-10-28**, [v0.1.2 is a public experimental Windows x64 Portable prerelease](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2). Mandatory source and packaged-fixture checks passed; clean Windows and complete real-book capture remain unverified. [Validation history](validation.md) retains earlier failures separately.
 
-If you do not want a development setup, wait for a reviewed package on the [official Releases page](https://github.com/zufall-upon/KindleToZip/releases). No Amazon credentials are needed to install the source or use the self-authored test sample.
+For use without a development setup, follow the [Portable guide](portable.md): download the release ZIP, verify its checksum, extract it completely, and run `KindleToZip-Portable.exe`. The instructions below are for **source execution only**. No Amazon credentials are needed to install the source or use the self-authored sample.
 
 ## Requirements
 
@@ -55,7 +55,7 @@ The sample uses self-authored shapes and text. Its success does not prove that t
 3. Check the preview's book, area, direction, and position. Approve, then explicitly start in a separate action. Unclear targets, authentication changes, or uncertain page turns may stop capture.
 4. After stopping, inspect included/excluded images, order, crops, and optional spread splits. Committed images can be exported even after capture or preview stops. Exporting a valid archive does not establish whole-book completeness.
 
-The three main controls are **Confirm / Next**, **Cancel / Back**, and **Finish / Start over**. Follow the displayed next action; the three stages are not a promise of only three clicks. Japanese, English, and Simplified Chinese are selectable in the language menu; the initial validation report includes a failed language-flow test.
+The three main controls are **Confirm / Next**, **Cancel / Back**, and **Finish / Start over**. Follow the displayed next action; the three stages are not a promise of only three clicks. Japanese, English, and Simplified Chinese are selectable in the language menu. Current source CI passes the public language-flow regression; historical failures and packaged-test limits remain in [validation](validation.md).
 
 ## Images, saved data, and privacy
 

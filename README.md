@@ -10,10 +10,10 @@ Capture displayed pages in the Kindle web reader on Windows, review and split yo
 
 **Free & open source · Windows x64 · No KindleToZip account · No paid DLC**
 
-> **Experimental source release — no public Portable executable yet.**
-> Known test failures remain; this is not a verified, ready-to-use release.
+> **Experimental Windows x64 Portable v0.1.2 is available.**
+> Mandatory source and packaged-fixture checks passed. Clean Windows and complete real-book capture remain unverified.
 
-**[Try from source](docs/getting-started.md)** · [Release availability](https://github.com/zufall-upon/KindleToZip/releases)
+**[Download Portable ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.2/KindleToZip-Portable-v0.1.2-win-x64.zip)** · [Portable quick start](docs/portable.md) · [Run from source](docs/getting-started.md)
 
 <a href="docs/screenshots.md#animation"><img src="docs/images/kindletozip-demo.gif" alt="Author-recorded sample: image review and ZIP saving in the Japanese UI" width="340"></a>
 
@@ -35,7 +35,7 @@ Capture displayed pages in the Kindle web reader on Windows, review and split yo
 
 ## Review and organize your captures
 
-Implemented in the source, subject to the known issues below:
+Included in the experimental Portable build and source, with the limits below:
 
 - **Check before capturing.** Dedicated browser profile, reading-area selection, preview, and explicit approval before a separate start action.
 - **Split and organize.** Optional left/right spread splitting, reading direction, and image reordering.
@@ -43,15 +43,15 @@ Implemented in the source, subject to the known issues below:
 - **Save an ordered archive.** Export included PNGs to ZIP / CBZ without overwriting an existing file.
 - **Choose your language.** Japanese, English, and Simplified Chinese UI.
 
-## Try from source
+## Get started
 
-You need **Windows x64, Git, Node.js 22+, and PowerShell 7**. The [setup guide](docs/getting-started.md) installs an isolated Rust toolchain and dedicated browser, then launches the app with `npm start`. Start with its self-authored sample, without an Amazon login or a real book.
+**Portable:** download the [v0.1.2 release ZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2), verify `SHA256SUMS.txt`, extract the entire ZIP into a writable folder, and run `KindleToZip-Portable.exe`. Node.js and the dedicated browser are bundled; no development setup is needed. See the [trilingual Portable guide](docs/portable.md).
 
-Prefer an app without a development setup? Wait for a [public release](https://github.com/zufall-upon/KindleToZip/releases). Portable build scripts exist, but a tested public executable is **not available yet**.
+**From source:** you need **Windows x64, Git, Node.js 22+, and PowerShell 7**. The [setup guide](docs/getting-started.md) installs an isolated Rust toolchain and browser, then launches the app with `npm start`. Start with the self-authored sample, without an Amazon login or a real book.
 
 ## Before you use it
 
-- **Quality:** the initial published source recorded **125 passed / 12 failed** in `npm test`. That historical result is not a fresh result for ongoing fixes; this page update does not resolve it. See [validation and known failures](docs/validation.md).
+- **Quality:** v0.1.2 passed **142/142 public source UI tests**, mandatory deployment checks, and packaged public selection/export regressions. The initial **125-pass / 12-fail** run remains historical, not the current result. Fixture success is not whole-book or clean-Windows acceptance; see [validation history and release evidence](docs/validation.md).
 - **Login & local data:** sign in only on the official page. **Login state is saved by default.** Turn retention off for a separate temporary profile; normal shutdown removes temporary data, but crashes may leave files. Never share profiles, cookies, book data, or captured pages. See [privacy and storage details](docs/security-and-trust.md).
 - **Network & trust:** no app-operated login server, application telemetry, or automatic update checks. Reader, authentication, browser, and setup traffic still occurs. Open source is **not a security guarantee**; see [network destinations and trust boundaries](docs/security-and-trust.md).
 - **Compatibility:** the current entry point targets Japan's Kindle web reader. Other regions, every layout, clean Windows PCs, whole-book capture, ZIP64, and every CBZ viewer are unverified. Standard / 2× rendering has a **16-megapixel / 32 MiB limit per PNG**; it cannot restore missing source detail.
@@ -75,7 +75,7 @@ That is not guaranteed. Check the range, page order, spread splits, and stopping
 
 **Can I change the app language?**
 
-Yes, in the language menu: Japanese, English, or Simplified Chinese. Language support is implemented, but the historical validation includes a failed language-flow test.
+Yes, in the language menu: Japanese, English, or Simplified Chinese. The public language-flow regression passed in current source CI; [validation history](docs/validation.md) keeps the earlier failure and distinguishes source checks from packaged acceptance.
 
 ## Support development
 

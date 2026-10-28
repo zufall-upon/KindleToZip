@@ -10,10 +10,10 @@
 
 **完全免费、开源 · Windows x64 · 无需注册 KindleToZip 账户 · 无付费 DLC**
 
-> **实验性源代码版本 — 尚无公开的 Portable 可执行文件。**
-> 仍有已知测试失败，不是已经验证、开箱即用的正式版本。
+> **Windows x64 Portable v0.1.2 实验性预发行版现已提供。**
+> 必需的源代码检查与打包版本自制样本检查已通过；干净 Windows 和真实书籍完整获取仍未验证。
 
-**[从源代码体验](docs/getting-started.zh-CN.md)** · [查看发布情况](https://github.com/zufall-upon/KindleToZip/releases)
+**[下载 Portable ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.2/KindleToZip-Portable-v0.1.2-win-x64.zip)** · [Portable 使用指南](docs/portable.md) · [从源代码体验](docs/getting-started.zh-CN.md)
 
 [![开发状态：实验阶段](https://img.shields.io/badge/status-experimental-f59e0b?style=flat-square)](docs/validation.md) [![main 分支最新源代码检查](https://img.shields.io/github/actions/workflow/status/zufall-upon/KindleToZip/ci.yml?branch=main&style=flat-square&label=source%20checks)](https://github.com/zufall-upon/KindleToZip/actions/workflows/ci.yml) [![GitHub 星标数](https://img.shields.io/github/stars/zufall-upon/KindleToZip?style=flat-square&label=stars)](https://github.com/zufall-upon/KindleToZip/stargazers) [![仓库最近提交](https://img.shields.io/github/last-commit/zufall-upon/KindleToZip?style=flat-square)](https://github.com/zufall-upon/KindleToZip/commits/main/)
 
@@ -40,7 +40,7 @@
 
 ## 让截图更好用
 
-以下功能已在源代码中实现，但仍受下文已知问题的影响：
+实验性 Portable 版本与源代码包含以下功能，验证范围与限制见下文：
 
 - **获取前先检查。** 专用浏览器配置、区域选择、预览与明确确认，之后再单独开始。
 - **拆分与排序。** 可选左右跨页拆分、阅读方向选择和图像重排。
@@ -48,15 +48,15 @@
 - **有序归档。** 将采用的 PNG 导出为 ZIP / CBZ，不覆盖已有文件。
 - **选择界面语言。** 支持日语、英语和简体中文。
 
-## 从源代码体验
+## 开始使用
 
-需要 **Windows x64、Git、Node.js 22+ 和 PowerShell 7**。[入门指南](docs/getting-started.zh-CN.md)会安装隔离的 Rust 工具链与专用浏览器，再通过 `npm start` 启动。建议先体验指南中的自制样本，无需 Amazon 登录或真实书籍。
+**Portable：** 下载 [v0.1.2 发布 ZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2)，用 `SHA256SUMS.txt` 校验后完整解压到可写目录，再运行 `KindleToZip-Portable.exe`。已包含 Node.js 与专用浏览器，无需开发环境。详见[三语 Portable 指南](docs/portable.md)。
 
-希望无需开发环境就能使用？请等待[公开发布](https://github.com/zufall-upon/KindleToZip/releases)。虽然有 Portable 构建脚本，但**尚未公开经过验证的可执行文件**。
+**从源代码：** 需要 **Windows x64、Git、Node.js 22+ 和 PowerShell 7**。[入门指南](docs/getting-started.zh-CN.md)会安装隔离的 Rust 工具链与浏览器，再通过 `npm start` 启动。建议先体验自制样本，无需 Amazon 登录或真实书籍。
 
 ## 使用前须知
 
-- **质量：** 初次公开源代码的 `npm test` 结果为 **125 项通过、12 项失败**。这是历史记录，不是正在修复的实现的最新结果，本次页面更新也未解决这些失败。详见[验证与已知失败](docs/validation.md)（英语）。
+- **质量：** v0.1.2 的**公开源代码界面检查142/142通过**，必需的部署检查及打包版本公开选择、导出回归检查也已通过。最初的**125项通过、12项失败**保留为历史记录，不是当前结果。样本成功不代表整本真实书籍或干净 Windows 已获验证。详见[验证历史与发布记录](docs/validation.md)（英语）。
 - **登录与本地数据：** 只在官方页面登录。**默认保存登录状态。** 关闭保留设置后会使用独立的临时配置，正常退出时删除，但异常退出可能留下文件。不要分享配置、Cookie、书籍信息或截图。详见[隐私与存储说明](docs/security-and-trust.md)（英语）。
 - **网络与信任：** 没有应用自建的登录服务器、遥测或自动更新检查。官方阅读与认证服务、浏览器和安装过程仍会联网。开源**不等于安全保证**，详见[网络目标与信任边界](docs/security-and-trust.md)（英语）。
 - **兼容性：** 当前入口面向日本地区的 Kindle 网页阅读器。其他地区、所有布局、干净的 Windows 环境、整本书获取、ZIP64 和所有 CBZ 阅读器均未验证。标准 / 2倍渲染有**每张 PNG 1600万像素 / 32 MiB** 的上限，无法恢复原始显示中不存在的细节。
@@ -80,7 +80,7 @@ KindleToZip 免费且开源，无需另行注册，没有付费配额、水印�
 
 **可以切换应用语言吗？**
 
-可以在语言菜单选择日语、英语或简体中文。语言支持已经实现，但历史验证仍包含语言切换流程的测试失败。
+可以在语言菜单选择日语、英语或简体中文。当前源代码 CI 已通过公开语言切换流程检查；[验证历史](docs/validation.md)保留早期失败，并区分源代码与打包版本的验证范围。
 
 ## 支持开发
 

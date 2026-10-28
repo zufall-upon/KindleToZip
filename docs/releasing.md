@@ -8,7 +8,11 @@
 - A separate job verifies checksums, creates GitHub artifact attestations, and prepares a **draft** release. Only that job has release-writing and attestation permissions. Third-party actions are pinned to commit SHAs.
 - The archive contains the executable, project license and README, build metadata, and collected third-party notices. Collection is not a legal determination that every redistribution obligation has been met.
 
-There is no claim of bit-for-bit reproducible builds, independent security review, clean-Windows acceptance, real-Kindle acceptance, or legal clearance. Until the first successful workflow run, the workflow itself remains unverified on GitHub-hosted runners.
+There is no claim of bit-for-bit reproducible builds, independent security review, clean-Windows acceptance, real-Kindle acceptance, or legal clearance. The successful hosted release run below establishes the recorded fixture and package checks, not those broader claims.
+
+## Current public experimental prerelease
+
+[v0.1.2 for Windows x64](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2) was published on **2026-10-28** from `e3e3977588d75fffb72dae9f402288ca69f8bfe0`. Its exact source CI, tagged package gates, checksums, and GitHub build provenance passed. The public ZIP was downloaded without authentication and matched the verified draft. See [the final public validation record](validation.md#v012-public-experimental-prerelease--2026-10-28) and the [Portable quick start](portable.md). The earlier `v0.1.0` / `v0.1.1` tags have no executable release assets and are not replaced.
 
 ## Maintainer routine: freeze, draft, verify, publish
 
