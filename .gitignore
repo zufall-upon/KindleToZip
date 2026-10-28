@@ -13,6 +13,7 @@ AGENTS.md
 !/docs/getting-started.ja.md
 !/docs/getting-started.zh-CN.md
 !/docs/readme-review.md
+!/docs/screenshots.md
 /scripts/check-records.mjs
 
 # Dependencies, build outputs, and local test environments
@@ -64,7 +65,11 @@ Thumbs.db
 Desktop.ini
 .DS_Store
 
-# Publish only this reviewed application screenshot, not other local images.
+# Publish only these reviewed application images, not other local images.
 !/docs/images/
 /docs/images/*
 !/docs/images/kindletozip-workflow.png
+!/docs/images/kindletozip-overview.png
+!/docs/images/kindletozip-preview.png
+!/docs/images/kindletozip-review.png
+!/docs/images/kindletozip-export.png

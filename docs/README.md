@@ -4,6 +4,7 @@
 
 - Product overview: [English](../README.md) · [日本語](../README.ja.md) · [简体中文](../README.zh-CN.md)
 - Run from source: [English](getting-started.md) · [日本語](getting-started.ja.md) · [简体中文](getting-started.zh-CN.md)
+- [Actual app screenshots / 実画面 / 实际界面](screenshots.md) — preview, image review, ZIP export, and the original Japanese UI
 
 KindleToZip is currently an experimental source release, not a verified public Portable executable. The guides explain the current setup rather than offering an unavailable download.
 

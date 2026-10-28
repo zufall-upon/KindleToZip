@@ -1,5 +1,7 @@
 # README and screenshot review
 
+The original review below is retained as a historical checkpoint. The later **Visual-page follow-up** section records the subsequent README and image changes; statements about no app flow or no compositing in the original review describe that earlier checkpoint only.
+
 This is a documentation-only review, not an application acceptance test or an independent security/legal audit. Source behavior, authentication, storage, build workflows, and GPL-3.0-only are outside the change scope. Nothing was staged, committed, or pushed during the review; publication is a separate, user-authorized step.
 
 ## User-facing structure
@@ -45,3 +47,46 @@ The crop and the six README desktop/phone top-of-page screenshots were also visu
 The follow-up edit to this report is checked again for local links, rendering freshness, and preservation. Its text does not change the READMEs or the app, and the unchanged six browser cases are not rerun solely for this report update.
 
 Local review helpers and rendered evidence are kept under ignored `artifacts/readme-review/`. They are not added to the app's build or test configuration. The unchanged broad application test suite is not rerun for this documentation-only change, and its recorded failures are not waived.
+
+## Visual-page follow-up — 2026-10-28
+
+### Presentation and scope
+
+- The three READMEs now share a benefit-first hero, three-stage walkthrough, one compact screenshot overview, five feature groups, source setup, visible risk notes, four FAQs, optional support, and documentation/license links.
+- Compared with `9f95a73`, text length is reduced by **25.2% in English, 20.6% in Japanese, and 20.3% in Simplified Chinese**. Equivalent language navigation, destinations, release status, historical failures, default login retention, legal uncertainty, and GPL-3.0-only remain visible.
+- A trilingual gallery keeps the three full screenshots and the original author-supplied Japanese screenshot. The original image and its provenance above are unchanged.
+- Changes are limited to public documentation, the four reviewed new PNGs, and exact `.gitignore` exceptions. Parallel application, fixture, script, and test changes in the main working directory are not part of this publication. No executable release is built or published by this page update.
+
+### New screenshot evidence
+
+The application UI and capture/export code came from an isolated export of published commit **`9f95a73bf8a72c35ebd507180aee707364469b6d`**, with fresh npm dependencies and an isolated debug controller build. Only the local fixture's self-authored artwork was customized into two independent pages so that spread splitting does not cut a number or sentence. This does not change the main working directory's application or fixtures.
+
+All **33 application, browser-adapter, and controller source files** in that copy were compared with the published commit, allowing only the Git archive's CRLF/LF conversion; there were no code differences in those files.
+
+The public controls were used to prepare a job, open the local sample, select its reader tab and output mode, preview, explicitly approve, separately start, stop after three captures, explicitly keep images, reorder them to **2 → 1 → 3**, and export ZIP. The final screenshot run took **22.40 seconds**. The UI reported saved/read-back verified and six images; every exported PNG was independently decoded again at **600 × 960**.
+
+- ZIP bytes: **594,983**. SHA-256: `034313dcf5c35b4813b998bacb6d496a875354469e30114a926e4d44917f9ffc`.
+- Each full screenshot is **1280 × 1100**. Only the export destination input and its repeated path in the result text are masked. Messages, state, counts, and sample pixels are not replaced.
+- The **1600 × 1100** overview is explicitly labeled a **combined montage**, not a single app screen. It contains resized crops from preview `(88, 0, 1104, 725)`, review `(88, 0, 1104, 740)`, and export `(88, 460, 600, 77)`, expressed as x, y, width, height. Headings and surrounding layout are editorial labels, not app controls.
+- Images are re-encoded with only PNG `IHDR`, `IDAT`, and `IEND` chunks. No Amazon page, credentials, usual browser profile, real book, browser address bar, or desktop was used in these new screenshots.
+
+| Published image | SHA-256 |
+| --- | --- |
+| `kindletozip-preview.png` | `bba12ee412c1164f95a09d88149a4dceff8eff7d60cec12384e8b34628b528f1` |
+| `kindletozip-review.png` | `59a369212c5cbd50f783ffefd0fc09e9f4c5ef3c81abadcbb4763374ea05dade` |
+| `kindletozip-export.png` | `aac6ced619e25cf263838088ca3b9899b656268debebba997e8fe02e05af7061` |
+| `kindletozip-overview.png` | `1008a77b3b2de35c715851f6be0ab8b916c789bd75e7ffff6fc9e012ab436816` |
+
+This is **one self-authored sample flow**, not real-Kindle, clean-Windows, packaged-app, complete-book, or release acceptance. It does not fix, invalidate, or replace the historical 125-pass / 12-fail report. Initial capture-helper mistakes (a positional selector choosing a disabled button and a click changing scroll position) were corrected in the helper only; they are not application fixes.
+
+### Editorial and rendering checks
+
+The logged-in ChatGPT conversation was used for direct editorial rounds: first the published page, then the actual three-language draft and overview, then the revised overview and full gallery assets. Its suggestions are editorial advice, not independent app, security, or legal validation. Applied feedback includes shorter equivalent READMEs, natural two-page sample content, larger actual export-result text, an explicit montage label, and a less ambiguous English feature heading.
+
+Local documentation checks cover language/feature/FAQ parity, truthful status/risk references, **138 local links across 15 documents**, gallery anchors, exact image evidence and metadata, all six exported PNGs, narrow ignore rules, and exclusion of non-documentation files from staging. The new privacy scanner initially matched the ordinary word “frozen” and an existing generic IPC example path; those were scanner false positives, not public-data changes or application defects.
+
+Changed Markdown is rendered through the GitHub Markdown API. All three READMEs are displayed at **1280 × 960** and **390 × 844**, including image loading, first-screen source links, no horizontal overflow, working language/source navigation, and the full-size gallery. The standalone preview normalizes the API's `user-content-` ID prefix for native hash navigation; the actual GitHub anchor behavior is a separate publication check. Preview styling is local GitHub-style CSS, not GitHub's entire website chrome.
+
+New helpers and evidence remain under ignored `artifacts/github-page-polish/`. The broad app suite is not rerun for this documentation-only update. No tests are removed or waived to represent the application as passing.
+
+The final documentation run completed with **7 passed / 0 failed in 5.95 seconds** command elapsed. The three-language layouts and full-size gallery were visually inspected. Subsequent edits to this record receive targeted link/render/staging checks rather than repeating unchanged browser cases. The final editorial round requested the exact image allowlist and an updated historical-review boundary; both are included in this change.

@@ -2,108 +2,81 @@
 
 # KindleToZip
 
-Capture the Kindle web reader on Windows, review your PNG screenshots, and save them as an ordered ZIP or CBZ.
+**Capture. Review. Archive.**
+
+Capture displayed pages in the Kindle web reader on Windows, review and split your PNG screenshots, then save them as an ordered **ZIP or CBZ**.
 
 **Free & open source · Windows x64 · No KindleToZip account · No paid DLC**
 
-> **Experimental: source available, no public Portable executable yet.**
-> Known test failures remain. This is not a verified, ready-to-use release.
+> **Experimental source release — no public Portable executable yet.**
+> Known test failures remain; this is not a verified, ready-to-use release.
 
-**[Get started from source](docs/getting-started.md)** · [Check release availability](https://github.com/zufall-upon/KindleToZip/releases)
+**[Try from source](docs/getting-started.md)** · [Release availability](https://github.com/zufall-upon/KindleToZip/releases)
 
-## Three stages, from reader to archive
-
-**Open → Capture → Review & save**
+## From reader to archive
 
 1. **Open.** Sign in on the official Kindle page in the dedicated browser, open a book, and select its reader tab.
-2. **Capture.** Select the reading area and check its preview. Approve it, then start capture in a separate action.
-3. **Review & save.** Stop, inspect the saved images, adjust their order or crop, and export ZIP / CBZ.
+2. **Capture.** Select the reading area and check the preview. Approve it, then start capture in a separate action.
+3. **Review & save.** Stop, inspect the images, adjust splits, order or crop, and export ZIP / CBZ.
 
-These are **three stages, not three clicks**. Follow the app's next-action guidance and its three main controls: **Confirm / Next**, **Cancel / Back**, and **Finish / Start over**.
+[![Actual KindleToZip UI: preview split pages, review three reordered captures, and a verified six-image ZIP export](docs/images/kindletozip-overview.png)](docs/screenshots.md)
 
-## App preview
+*Real English UI with self-authored sample content; cropped views, not a mockup. Local export paths are masked. This sample success does not verify real-book capture or a packaged release.*
 
-![KindleToZip's Japanese control window, with language selection, reader-tab selection, and three main controls](docs/images/kindletozip-workflow.png)
+**Full-size:** [Preview](docs/screenshots.md#preview) · [Review & split](docs/screenshots.md#review) · [ZIP saved](docs/screenshots.md#export) · [Japanese UI](docs/screenshots.md#japanese-ui)
 
-*Actual app screenshot supplied by the author, cropped to the control window. Japanese UI is shown before sign-in has been verified; no book content is displayed. [Open full-size image](docs/images/kindletozip-workflow.png).*
+## Review and organize your captures
 
-## What you can do
+Implemented in the source, subject to the known issues below:
 
-The following features are implemented in the source, but remain subject to the known issues below.
+- **Check before capturing.** Dedicated browser profile, reading-area selection, preview, and explicit approval before a separate start action.
+- **Split and organize.** Optional left/right spread splitting, reading direction, and image reordering.
+- **Keep the originals.** Include or exclude images and apply non-destructive crops; review committed images after stopping without recapturing them.
+- **Save an ordered archive.** Export included PNGs to ZIP / CBZ without overwriting an existing file.
+- **Choose your language.** Japanese, English, and Simplified Chinese UI.
 
-- **Dedicated browser:** display the Kindle web reader separately from your usual browser profile.
-- **Area selection & preview:** choose the displayed reading area and verify it before capture.
-- **Page capture:** explicitly start page turning and save displayed pages as PNG screenshots.
-- **Spread splitting & order:** optionally split left/right pages, choose reading direction, and reorder captured images.
-- **Image review:** include or exclude images without deleting originals, and apply non-destructive crops.
-- **ZIP / CBZ export:** save the included PNGs in the chosen order, without overwriting existing output files.
-- **Review after stopping:** inspect and export already committed images without capturing them again.
-- **Three UI languages:** Japanese, English, and Simplified Chinese, selected in the app's language menu.
+## Try from source
 
-## Getting started
+You need **Windows x64, Git, Node.js 22+, and PowerShell 7**. The [setup guide](docs/getting-started.md) installs an isolated Rust toolchain and dedicated browser, then launches the app with `npm start`. Start with its self-authored sample, without an Amazon login or a real book.
 
-**There is currently no public Windows Portable download.** To try this experimental version, use the [source setup guide](docs/getting-started.md). It requires **Windows x64, Git, Node.js 22 or later, and PowerShell 7**; the guide installs the isolated Rust toolchain and dedicated browser.
+Prefer an app without a development setup? Wait for a [public release](https://github.com/zufall-upon/KindleToZip/releases). Portable build scripts exist, but a tested public executable is **not available yet**.
 
-After setup, run `npm start` from the project folder. The local control window guides you through opening the dedicated reader, previewing, capturing, and saving. For a check without a real book, use the self-authored sample described in the guide.
+## Before you use it
 
-If you want an installer-free app without a development setup, check [Releases](https://github.com/zufall-upon/KindleToZip/releases) later. The portable build scripts exist, but that does **not** mean a tested public executable is available.
+- **Quality:** the initial published source recorded **125 passed / 12 failed** in `npm test`. That historical result is not a fresh result for ongoing fixes; this page update does not resolve it. See [validation and known failures](docs/validation.md).
+- **Login & local data:** sign in only on the official page. **Login state is saved by default.** Turn retention off for a separate temporary profile; normal shutdown removes temporary data, but crashes may leave files. Never share profiles, cookies, book data, or captured pages. See [privacy and storage details](docs/security-and-trust.md).
+- **Network & trust:** no app-operated login server, application telemetry, or automatic update checks. Reader, authentication, browser, and setup traffic still occurs. Open source is **not a security guarantee**; see [network destinations and trust boundaries](docs/security-and-trust.md).
+- **Compatibility:** the current entry point targets Japan's Kindle web reader. Other regions, every layout, clean Windows PCs, whole-book capture, ZIP64, and every CBZ viewer are unverified. Standard / 2× rendering has a **16-megapixel / 32 MiB limit per PNG**; it cannot restore missing source detail.
+- **Terms & rights:** no DRM bypass does **not** establish legal permission. Amazon's conditions exclude robot-like data gathering tools from the granted permission; automated capture and tool distribution still raise unresolved contractual and copyright questions. Use only content you are authorized to capture, and do not redistribute pages without permission. Read the [legal notes](docs/legal-notes-ja.md) (Japanese).
 
-### FAQ
+KindleToZip is **unofficial and independent**, not affiliated with, endorsed by, or sponsored by Amazon. Amazon and Kindle are trademarks of Amazon.com, Inc. or its affiliates. No Amazon approval or professional legal clearance is claimed.
 
-**Is KindleToZip free? Do I need another account?**
+## FAQ
 
-Yes, it is free and open source. No KindleToZip account or paid feature unlock is required. The official Kindle service still requires your Amazon account and any applicable content purchase or subscription.
+**Is it free? Do I need another account?**
 
-**Where can I download the Windows portable EXE?**
-
-No public executable is available yet. Use the source guide now, or wait for a published release.
+KindleToZip is free and open source, with no separate account, paid quotas, watermarks, or paid feature unlocks. Amazon's account requirements and any content purchase or subscription still apply.
 
 **Does it remove DRM or work with the Windows Kindle desktop app?**
 
-No. It captures displayed content in the Kindle web reader. It does not decrypt ebook files, bypass DRM or capture restrictions, or operate the desktop app.
+No. It screenshots displayed web-reader content; it does not decrypt ebook files, bypass DRM or capture restrictions, or operate the desktop app.
 
-**Will it capture an entire book in the correct order automatically?**
+**Will it save a whole book in the correct order?**
 
-That is not guaranteed. Check the captured range, page order, spread splits, and stopping point yourself. A valid ZIP does not prove the whole book was captured.
+That is not guaranteed. Check the range, page order, spread splits, and stopping point yourself. A verified ZIP does not prove complete-book capture; splits are not semantic page recognition.
 
 **Can I change the app language?**
 
-Yes. Use the language menu to select Japanese, English, or Simplified Chinese. Language support is implemented; the validation report still includes a failed language-flow test.
-
-## Safety & privacy
-
-- **Sign in only on the official page.** The app has no independent login server and does not intentionally read password fields or upload Amazon cookies to an app-operated service.
-- **Login state is saved by default.** Disable sign-in retention to use a separate temporary profile. Temporary data is removed on normal shutdown; crashes can leave files behind.
-- **Keep local data private.** Development uses `artifacts/mvp-data/`; portable builds use `runtime/`, `data/`, and `temp/` beside the EXE. These can hold cookies, history, book information, and captured pages. Do not share them or attach them to issues.
-- **Network access is still required.** The official reader, authentication services, browser, and initial setup make network requests. The app has no application telemetry, automatic update checks, or automatic support-page access; this does not mean Chromium or the official site makes no other requests.
-
-See [authentication, network destinations, and trust boundaries](docs/security-and-trust.md). Open source enables inspection; it is **not a security guarantee**. Local tokens and Windows permissions do not protect against malware, administrators, or other processes running as the same Windows user.
-
-## Limitations & responsible use
-
-- **Known failures:** the initial published source's `npm test` run reported **125 passed / 12 failed** in about **576 seconds**, including parent/subtest failures. Rust, IPC/local-store, and deployment checks passed separately. This documentation update does not fix or waive those failures. See the [validation report](docs/validation.md).
-- **Compatibility is not guaranteed:** clean Windows PCs, every Kindle layout, complete-book capture, ZIP64, and every CBZ viewer are not verified. The current entry point targets the Japanese Kindle web reader. Other regions are unverified; the Windows Kindle desktop app is unsupported.
-- **Image limits:** standard or 2× rendering is available, with a safety limit of **16 megapixels / 32 MiB per PNG**. Higher density cannot restore detail absent from the displayed source. Review spread splits yourself; they are not semantic page recognition.
-- **No DRM bypass does not establish legal permission.** Amazon's conditions exclude robot-like data gathering tools from the granted permission. Automated capture and distribution of this tool can still raise contractual and copyright issues. Use only content you are authorized to capture; GPLv3 does not grant rights to books or permission to redistribute captured pages.
-
-KindleToZip is **unofficial and independent**, not affiliated with, endorsed by, or sponsored by Amazon. Amazon and Kindle are trademarks of Amazon.com, Inc. or its affiliates. No clearance from Amazon or a legal professional is claimed. Read the [legal questions and review limits](docs/legal-notes-ja.md) (Japanese) before use.
+Yes, in the language menu: Japanese, English, or Simplified Chinese. Language support is implemented, but the historical validation includes a failed language-flow test.
 
 ## Support development
 
-KindleToZip is free and open source. If it saves you time, consider supporting its development through **[zufall-upon on GitHub Sponsors](https://github.com/sponsors/zufall-upon)**.
+Feedback and [bug reports](https://github.com/zufall-upon/KindleToZip/issues) are welcome. You can also consider **[GitHub Sponsors](https://github.com/sponsors/zufall-upon)**; support is entirely optional and unlocks no features. The link may redirect to the author's profile while unavailable; accepting contributions has **not been confirmed**.
 
-Support is **entirely optional**. Basic features have no usage fees, paid quotas, watermarks, or paid DLC. The Sponsors page may redirect to the author's profile while the listing is pending or unavailable; accepting financial support has **not** been confirmed. Feedback and bug reports are also welcome.
+## Documentation & license
 
-## License & developer documentation
+[Documentation index](docs/README.md) · [Development & builds](docs/development.md) · [Release verification](docs/releasing.md) · [Screenshot review](docs/readme-review.md)
 
-Copyright (C) 2026 **[zufall-upon](https://github.com/zufall-upon)**. Licensed under **GNU GPL v3.0 only** (`GPL-3.0-only`); see [LICENSE](LICENSE). The software is provided without warranty. Third-party dependencies retain their own licenses.
+[GitHub Actions](https://github.com/zufall-upon/KindleToZip/actions) includes source checks and a separate manual draft-release workflow, not proof of release readiness, an independent audit, or bit-for-bit reproducibility.
 
-- [Documentation index](docs/README.md) — source guides and document languages
-- [Development, tests, and portable builds](docs/development.md)
-- [Validation results and known failures](docs/validation.md)
-- [Releases, SHA-256, and build provenance](docs/releasing.md)
-- [Security and network details](docs/security-and-trust.md)
-- [Legal notes](docs/legal-notes-ja.md) (Japanese)
-- [Rust JSONL IPC contract](docs/09-mvp-ipc-ja.md) (Japanese)
-
-[GitHub Actions](https://github.com/zufall-upon/KindleToZip/actions) provides source checks and a separate manual **draft-release** workflow. Its presence is not proof of a passing release, independent audit, legal clearance, or bit-for-bit reproducibility.
+Copyright (C) 2026 **[zufall-upon](https://github.com/zufall-upon)**. **GNU GPL v3.0 only** (`GPL-3.0-only`); see [LICENSE](LICENSE). Provided without warranty. Dependencies retain their own licenses; GPLv3 grants no rights to books or captured pages.
