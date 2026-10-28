@@ -13,6 +13,10 @@ Capture displayed pages in the Kindle web reader on Windows, review and split yo
 
 **[Try from source](docs/getting-started.md)** · [Release availability](https://github.com/zufall-upon/KindleToZip/releases)
 
+<a href="docs/screenshots.md#animation"><img src="docs/images/kindletozip-demo.gif" alt="Author-recorded sample: image review and ZIP saving in the Japanese UI" width="400"></a>
+
+*8-second sample demo · Japanese UI · Edited, with local paths masked. [Recording notes & still images](docs/screenshots.md#animation).*
+
 ## From reader to archive
 
 1. **Open.** Sign in on the official Kindle page in the dedicated browser, open a book, and select its reader tab.
@@ -24,15 +28,6 @@ Capture displayed pages in the Kindle web reader on Windows, review and split yo
 *Real English UI with self-authored sample content; cropped views, not a mockup. Local export paths are masked. This sample success does not verify real-book capture or a packaged release.*
 
 **Full-size:** [Preview](docs/screenshots.md#preview) · [Review & split](docs/screenshots.md#review) · [ZIP saved](docs/screenshots.md#export) · [Japanese UI](docs/screenshots.md#japanese-ui)
-
-<details>
-<summary>Watch a short demo (GIF · Japanese UI · about 8 seconds)</summary>
-
-![Author-recorded sample: image review and ZIP saving in the Japanese UI](docs/images/kindletozip-demo.gif)
-
-*Edited, silent sample footage: save dialogs omitted and local paths masked. Not real-book or release verification. [Recording notes and non-animated alternatives](docs/screenshots.md#animation).*
-
-</details>
 
 ## Review and organize your captures
 
