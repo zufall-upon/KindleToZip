@@ -1,6 +1,6 @@
 {
   "name": "kindle-to-zip-g02-poc",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Capture displayed Kindle web reader pages, review and crop images, and export ordered PNG archives on Windows. No DRM bypass.",
   "author": "zufall-upon",
   "license": "GPL-3.0-only",

@@ -6,6 +6,22 @@ import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { selectLatestPortable } from '../scripts/portable-reports.mjs';
 
+test('Portable準備: Windowsのheaded引数とアプリ・lockfile・launcherの版を一致させる', async () => {
+  for (const file of ['.github/workflows/ci.yml', '.github/workflows/release.yml']) {
+    const source = await readFile(file, 'utf8');
+    assert.match(source, /^\s+node scripts\/install-browser\.mjs --headed\s*$/m, 'npm.ps1を経由せずheaded引数を渡す');
+    assert.doesNotMatch(source, /npm run browser:install -- --headed/);
+  }
+  const pkg = JSON.parse(await readFile('package.json', 'utf8'));
+  const lock = JSON.parse(await readFile('package-lock.json', 'utf8'));
+  const launcher = await readFile('poc/launcher/Cargo.toml', 'utf8');
+  const launcherLock = await readFile('poc/launcher/Cargo.lock', 'utf8');
+  assert.equal(lock.version, pkg.version);
+  assert.equal(lock.packages[''].version, pkg.version);
+  assert.equal(/^version = "([^"]+)"$/m.exec(launcher)[1], pkg.version);
+  assert.equal(/name = "kindle-to-zip-launcher"\r?\nversion = "([^"]+)"/.exec(launcherLock)[1], pkg.version);
+});
+
 test('Portable固定名: 新旧metadata選択とPowerShell consumerが同じ最新を選ぶ', async () => {
   const root = path.resolve('artifacts/distribution-tests', `selection-${randomUUID()}`);
   const releases = path.join(root, 'artifacts/releases');

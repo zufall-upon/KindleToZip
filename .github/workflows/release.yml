@@ -50,9 +50,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & ./artifacts/toolchains/cargo/bin/cargo.exe fetch --manifest-path poc/launcher/Cargo.toml --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npm run browser:install
+           node scripts/install-browser.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npm run browser:install -- --headed
+           node scripts/install-browser.mjs --headed
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Rust and IPC tests
         run: ./scripts/test-rust.ps1

@@ -29,8 +29,8 @@ cd KindleToZip
 npm ci --ignore-scripts --no-fund --no-audit
 ./scripts/install-rust.ps1 -FetchDependencies
 & ./artifacts/toolchains/cargo/bin/cargo.exe fetch --manifest-path poc/launcher/Cargo.toml --locked
-npm run browser:install
-npm run browser:install -- --headed
+node scripts/install-browser.mjs
+node scripts/install-browser.mjs --headed
 pwsh -NoProfile -File scripts/test-rust.ps1
 npm start
 ```
