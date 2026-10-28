@@ -2,6 +2,8 @@
 
 # KindleToZip
 
+[![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-2563eb?style=flat-square)](LICENSE) [![Platform: Windows x64](https://img.shields.io/badge/Windows-x64-0078d4?style=flat-square)](docs/getting-started.md) [![UI: English, Japanese, Simplified Chinese](https://img.shields.io/badge/UI-EN%20%7C%20JA%20%7C%20ZH--CN-8b5cf6?style=flat-square)](docs/screenshots.md)
+
 **Capture. Review. Archive.**
 
 Capture displayed pages in the Kindle web reader on Windows, review and split your PNG screenshots, then save them as an ordered **ZIP or CBZ**.
@@ -13,9 +15,11 @@ Capture displayed pages in the Kindle web reader on Windows, review and split yo
 
 **[Try from source](docs/getting-started.md)** · [Release availability](https://github.com/zufall-upon/KindleToZip/releases)
 
-<a href="docs/screenshots.md#animation"><img src="docs/images/kindletozip-demo.gif" alt="Author-recorded sample: image review and ZIP saving in the Japanese UI" width="400"></a>
+<a href="docs/screenshots.md#animation"><img src="docs/images/kindletozip-demo.gif" alt="Author-recorded sample: image review and ZIP saving in the Japanese UI" width="340"></a>
 
 *8-second sample demo · Japanese UI · Edited, with local paths masked. [Recording notes & still images](docs/screenshots.md#animation).*
+
+[![Status: experimental](https://img.shields.io/badge/status-experimental-f59e0b?style=flat-square)](docs/validation.md) [![Latest main-branch source checks](https://img.shields.io/github/actions/workflow/status/zufall-upon/KindleToZip/ci.yml?branch=main&style=flat-square&label=source%20checks)](https://github.com/zufall-upon/KindleToZip/actions/workflows/ci.yml) [![GitHub stars](https://img.shields.io/github/stars/zufall-upon/KindleToZip?style=flat-square&label=stars)](https://github.com/zufall-upon/KindleToZip/stargazers) [![Last repository commit](https://img.shields.io/github/last-commit/zufall-upon/KindleToZip?style=flat-square)](https://github.com/zufall-upon/KindleToZip/commits/main/)
 
 ## From reader to archive
 
@@ -75,7 +79,11 @@ Yes, in the language menu: Japanese, English, or Simplified Chinese. Language su
 
 ## Support development
 
-Feedback and [bug reports](https://github.com/zufall-upon/KindleToZip/issues) are welcome. You can also consider **[GitHub Sponsors](https://github.com/sponsors/zufall-upon)**; support is entirely optional and unlocks no features. The link may redirect to the author's profile while unavailable; accepting contributions has **not been confirmed**.
+If you find this project useful, you can [buy me a coffee on Ko-fi](https://ko-fi.com/zufallupon). **Support is entirely optional** and unlocks no features.
+
+[![Support development on Ko-fi](https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-ff5e5b?style=flat-square&logo=kofi&logoColor=white)](https://ko-fi.com/zufallupon)
+
+Feedback and [bug reports](https://github.com/zufall-upon/KindleToZip/issues) are also welcome. [GitHub Sponsors](https://github.com/sponsors/zufall-upon) remains another option, but its listing may redirect to the author's profile; accepting contributions **through GitHub Sponsors** has not been confirmed.
 
 ## Documentation & license
 

@@ -2,6 +2,8 @@
 
 # KindleToZip
 
+[![ライセンス：GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-2563eb?style=flat-square)](LICENSE) [![対象環境：Windows x64](https://img.shields.io/badge/Windows-x64-0078d4?style=flat-square)](docs/getting-started.ja.md) [![UI：英語・日本語・簡体字中国語](https://img.shields.io/badge/UI-EN%20%7C%20JA%20%7C%20ZH--CN-8b5cf6?style=flat-square)](docs/screenshots.md)
+
 **取得して、整えて、アーカイブ。**
 
 WindowsでKindle Webの表示画面をPNG画像として取得。点検・見開き分割・並べ替えをして、順序付きの **ZIP / CBZ** に保存できます。
@@ -12,6 +14,8 @@ WindowsでKindle Webの表示画面をPNG画像として取得。点検・見開
 > 既知のテスト失敗が残っており、動作確認済みの完成版ではありません。
 
 **[ソースから試す](docs/getting-started.ja.md)** · [公開リリースの状況](https://github.com/zufall-upon/KindleToZip/releases)
+
+[![開発状況：実験段階](https://img.shields.io/badge/status-experimental-f59e0b?style=flat-square)](docs/validation.md) [![mainブランチの最新ソース検査](https://img.shields.io/github/actions/workflow/status/zufall-upon/KindleToZip/ci.yml?branch=main&style=flat-square&label=source%20checks)](https://github.com/zufall-upon/KindleToZip/actions/workflows/ci.yml) [![GitHubスター数](https://img.shields.io/github/stars/zufall-upon/KindleToZip?style=flat-square&label=stars)](https://github.com/zufall-upon/KindleToZip/stargazers) [![リポジトリの最終コミット](https://img.shields.io/github/last-commit/zufall-upon/KindleToZip?style=flat-square)](https://github.com/zufall-upon/KindleToZip/commits/main/)
 
 ## 読書画面からアーカイブまで
 
@@ -80,7 +84,11 @@ KindleToZipは無料・オープンソースです。独自登録、有料の枚
 
 ## 開発を支援する
 
-感想や[不具合報告](https://github.com/zufall-upon/KindleToZip/issues)を歓迎します。**[GitHub Sponsors](https://github.com/sponsors/zufall-upon)** からの支援も完全に任意で、機能の解放条件にはなりません。未公開などの場合は作者プロフィールへ転送されることがあり、**支援受付の開始は確認できていません**。
+役に立ったら、[Ko-fiでコーヒー1杯分の支援](https://ko-fi.com/zufallupon)をしていただけるとうれしいです。**支援は完全に任意**で、機能の利用条件にはなりません。
+
+[![Ko-fiで開発を応援する](https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-ff5e5b?style=flat-square&logo=kofi&logoColor=white)](https://ko-fi.com/zufallupon)
+
+感想や[不具合報告](https://github.com/zufall-upon/KindleToZip/issues)も歓迎します。[GitHub Sponsors](https://github.com/sponsors/zufall-upon)への導線も残していますが、作者プロフィールへ転送される場合があり、**GitHub Sponsorsでの支援受付**はまだ確認できていません。
 
 ## 文書・ライセンス
 

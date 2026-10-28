@@ -2,6 +2,8 @@
 
 # KindleToZip
 
+[![许可证：GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-2563eb?style=flat-square)](LICENSE) [![目标平台：Windows x64](https://img.shields.io/badge/Windows-x64-0078d4?style=flat-square)](docs/getting-started.zh-CN.md) [![界面：英语、日语、简体中文](https://img.shields.io/badge/UI-EN%20%7C%20JA%20%7C%20ZH--CN-8b5cf6?style=flat-square)](docs/screenshots.md)
+
 **截取、整理、归档。**
 
 在 Windows 上截取 Kindle 网页阅读器中显示的页面，检查、拆分并整理 PNG 截图，再按顺序保存为 **ZIP / CBZ**。
@@ -12,6 +14,8 @@
 > 仍有已知测试失败，不是已经验证、开箱即用的正式版本。
 
 **[从源代码体验](docs/getting-started.zh-CN.md)** · [查看发布情况](https://github.com/zufall-upon/KindleToZip/releases)
+
+[![开发状态：实验阶段](https://img.shields.io/badge/status-experimental-f59e0b?style=flat-square)](docs/validation.md) [![main 分支最新源代码检查](https://img.shields.io/github/actions/workflow/status/zufall-upon/KindleToZip/ci.yml?branch=main&style=flat-square&label=source%20checks)](https://github.com/zufall-upon/KindleToZip/actions/workflows/ci.yml) [![GitHub 星标数](https://img.shields.io/github/stars/zufall-upon/KindleToZip?style=flat-square&label=stars)](https://github.com/zufall-upon/KindleToZip/stargazers) [![仓库最近提交](https://img.shields.io/github/last-commit/zufall-upon/KindleToZip?style=flat-square)](https://github.com/zufall-upon/KindleToZip/commits/main/)
 
 ## 从阅读页面到压缩包
 
@@ -80,7 +84,11 @@ KindleToZip 免费且开源，无需另行注册，没有付费配额、水印�
 
 ## 支持开发
 
-欢迎反馈与[问题报告](https://github.com/zufall-upon/KindleToZip/issues)。也可考虑 **[GitHub Sponsors](https://github.com/sponsors/zufall-upon)**；支持完全自愿，不影响功能使用。链接在尚未开放等情况下可能跳转至作者主页，**目前未确认已开始接受赞助**。
+如果这个项目对你有帮助，欢迎[通过 Ko-fi 请我喝杯咖啡](https://ko-fi.com/zufallupon)。**支持完全自愿**，不影响任何功能的使用。
+
+[![通过 Ko-fi 支持开发](https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-ff5e5b?style=flat-square&logo=kofi&logoColor=white)](https://ko-fi.com/zufallupon)
+
+也欢迎反馈与[问题报告](https://github.com/zufall-upon/KindleToZip/issues)。同时保留 [GitHub Sponsors](https://github.com/sponsors/zufall-upon) 链接，但可能跳转至作者主页；目前尚未确认**通过 GitHub Sponsors 接受赞助**。
 
 ## 文档与许可证
 

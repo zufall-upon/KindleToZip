@@ -110,4 +110,14 @@ The animation documentation check completed with **6 passed / 0 failed in 7.33 s
 
 ### Subsequent English top-of-page placement
 
-At the author's request, the English README now shows the same GIF directly in its opening section at **400 px wide**, without a collapsed control, and links to the larger gallery version. The Japanese and Simplified Chinese placements are unchanged. The all-collapsed layout described above is the earlier animation-publication checkpoint. The GIF bytes, editing, masks, source status, and app code are unchanged.
+At the author's request, the English README now shows the same GIF directly in its opening section, without a collapsed control, and links to the larger gallery version. It was initially displayed at 400 px and then adjusted to **340 px wide** so the new badges and the full GIF still fit the first phone-size README screen. The Japanese and Simplified Chinese placements are unchanged. The all-collapsed layout described above is the earlier animation-publication checkpoint. The GIF bytes, editing, masks, source status, and app code are unchanged.
+
+### Product and activity badges
+
+All three READMEs add matching GPL-3.0-only, Windows x64, three-language UI, experimental status, source-check workflow, GitHub stars, and last-commit badges. The workflow badge reports the real latest `main` run of `ci.yml`; it is not a hard-coded passing badge or a claim that the current release was accepted. Activity counts and timestamps are live repository metadata, not completeness or quality guarantees. No download, release-ready, or security-audit badge is added. Badges use Shields.io images and link to their relevant license, guide, gallery, validation report, workflow, or repository page. The English GIF remains directly visible above the activity badges.
+
+### Optional Ko-fi support
+
+The author requested `ko_fi: zufallupon` in `.github/FUNDING.yml`; the existing `github: zufall-upon` entry is retained. All three READMEs add matching optional-support text and a Ko-fi badge linking to `https://ko-fi.com/zufallupon`, for eight badges in total. The public Ko-fi page identifies the creator as `zufall-upon`. No payment is made or tested, no paid feature is introduced, and the separate GitHub Sponsors availability caveat remains explicitly scoped to GitHub Sponsors.
+
+The focused badge/support check completed with **3 passed / 0 failed in 3.33 seconds** command elapsed. All eight badge endpoints returned valid SVGs; the source-check badge's failing state matched the observed completed public workflow run. Fresh GitHub Markdown rendering and all three languages at desktop/phone sizes were checked, including badge wrapping, optional-support links, no horizontal overflow, and the full English GIF remaining in the first README screen. Layout previews use the just-fetched badge SVGs, not invented status images. Existing GIF bytes and other application behavior are unchanged.
