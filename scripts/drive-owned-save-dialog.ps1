@@ -26,6 +26,27 @@ public static class OwnedDialogCapture {
     }, IntPtr.Zero);
     return result.ToArray();
   }
+  public static IntPtr[] FilenameEdits(IntPtr hwnd) {
+    var result = new List<IntPtr>();
+    EnumChildWindows(hwnd, (child, _) => {
+      var name = new StringBuilder(256);
+      GetClassName(child, name, name.Capacity);
+      int id = GetDlgCtrlID(child);
+      if (name.ToString() == "Edit" && (id == 1001 || id == 1148 || id == 1152)) result.Add(child);
+      return true;
+    }, IntPtr.Zero);
+    return result.ToArray();
+  }
+  public static IntPtr[] ActionButtons(IntPtr hwnd, int id) {
+    var result = new List<IntPtr>();
+    EnumChildWindows(hwnd, (child, _) => {
+      var name = new StringBuilder(256);
+      GetClassName(child, name, name.Capacity);
+      if (name.ToString() == "Button" && GetDlgCtrlID(child) == id) result.Add(child);
+      return true;
+    }, IntPtr.Zero);
+    return result.ToArray();
+  }
 }
 '@
 $deadline = [DateTime]::UtcNow.AddSeconds(15)
@@ -55,6 +76,15 @@ do {
         $_.Current.AutomationId -in @('1001', '1148', '1152') -and -not $_.Current.IsOffscreen -and $_.Current.IsEnabled
     })
     if ($matches.Count -eq 1) { $file = $matches[0] }
+    if ($matches.Count -eq 0) {
+        # A cold classic dialog may have real child HWNDs before its root UIA
+        # provider exposes descendants. Resolve only its unique known Edit.
+        $handles = [OwnedDialogCapture]::FilenameEdits([IntPtr]$window.Current.NativeWindowHandle)
+        if ($handles.Count -eq 1) {
+            $candidate = [Windows.Automation.AutomationElement]::FromHandle($handles[0])
+            if ($candidate.Current.ProcessId -eq $window.Current.ProcessId -and -not $candidate.Current.IsOffscreen -and $candidate.Current.IsEnabled) { $file = $candidate }
+        }
+    }
     if (-not $file) { Start-Sleep -Milliseconds 100 }
 } while (-not $file -and [DateTime]::UtcNow -lt $readyDeadline)
 if (-not $file) {
@@ -67,16 +97,24 @@ $filenameEditId = $file.Current.AutomationId
 $initial = $value.Current.Value
 $timings.filenameRead = $watch.ElapsedMilliseconds
 [Console]::Error.WriteLine('KTZ_DIALOG:filename_read')
-if ($Screenshot) {
+function Save-OwnedDialogScreenshot([string]$Path) {
     $bounds = $window.Current.BoundingRectangle
     $bitmap = [Drawing.Bitmap]::new([int]$bounds.Width, [int]$bounds.Height)
     $graphics = [Drawing.Graphics]::FromImage($bitmap)
     $hdc = $graphics.GetHdc()
     try { if (-not [OwnedDialogCapture]::PrintWindow([IntPtr]$window.Current.NativeWindowHandle, $hdc, 2)) { throw 'PrintWindow failed.' } }
     finally { $graphics.ReleaseHdc($hdc); $graphics.Dispose() }
-    try { $bitmap.Save($Screenshot, [Drawing.Imaging.ImageFormat]::Png) } finally { $bitmap.Dispose() }
+    try { $bitmap.Save($Path, [Drawing.Imaging.ImageFormat]::Png) } finally { $bitmap.Dispose() }
+}
+if ($Screenshot) { Save-OwnedDialogScreenshot $Screenshot }
+function Set-OwnedControlFocus($Control) {
+    $Control.SetFocus()
+    $focusDeadline = [DateTime]::UtcNow.AddSeconds(2)
+    while (-not $Control.Current.HasKeyboardFocus -and [DateTime]::UtcNow -lt $focusDeadline) { Start-Sleep -Milliseconds 50 }
+    if (-not $Control.Current.HasKeyboardFocus) { throw 'Owned dialog control did not receive focus.' }
 }
 if ($Action -eq 'select') {
+    Set-OwnedControlFocus $file
     $value.SetValue($Destination)
     if ($value.Current.Value -ne $Destination) { throw 'Native filename edit did not retain the selected destination.' }
 }
@@ -87,15 +125,29 @@ $buttonCondition = [Windows.Automation.AndCondition]::new(
 $button = $window.FindAll([Windows.Automation.TreeScope]::Descendants, $buttonCondition) | Where-Object {
     -not $_.Current.IsOffscreen -and $_.Current.IsEnabled -and $(if ($Action -eq 'select') { $_.Current.Name -match '^(Save|保存)' } else { $_.Current.Name -match '^(Cancel|キャンセル)' })
 } | Select-Object -First 1
+if (-not $button) {
+    $handles = [OwnedDialogCapture]::ActionButtons([IntPtr]$window.Current.NativeWindowHandle, [int]$buttonId)
+    if ($handles.Count -eq 1) {
+        $candidate = [Windows.Automation.AutomationElement]::FromHandle($handles[0])
+        if ($candidate.Current.ProcessId -eq $window.Current.ProcessId -and -not $candidate.Current.IsOffscreen -and $candidate.Current.IsEnabled -and
+            $(if ($Action -eq 'select') { $candidate.Current.Name -match '^(Save|保存)' } else { $candidate.Current.Name -match '^(Cancel|キャンセル)' })) { $button = $candidate }
+    }
+}
 if (-not $button) { throw 'Native dialog action not found.' }
 $invokedName = $button.Current.Name
 $dialogPid = $window.Current.ProcessId
 $timings.beforeInvoke = $watch.ElapsedMilliseconds
 [Console]::Error.WriteLine('KTZ_DIALOG:invoking_owned_button')
+# Commit the filename edit through a normal focus change. The upgraded shell
+# can otherwise return its old selected name even though ValuePattern changed.
+if ($Action -eq 'select') { Set-OwnedControlFocus $button }
 $button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
 $exitDeadline = [DateTime]::UtcNow.AddSeconds(8)
 while ((Get-Process -Id $dialogPid -ErrorAction SilentlyContinue) -and [DateTime]::UtcNow -lt $exitDeadline) { Start-Sleep -Milliseconds 100 }
-if (Get-Process -Id $dialogPid -ErrorAction SilentlyContinue) { throw 'Owned native dialog did not finish after its public button.' }
+if (Get-Process -Id $dialogPid -ErrorAction SilentlyContinue) {
+    if ($Screenshot) { Save-OwnedDialogScreenshot ($Screenshot + '.failure.png') }
+    throw 'Owned native dialog did not finish after its public button.'
+}
 $timings.hostExited = $watch.ElapsedMilliseconds
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 @{ initialFilename = $initial; filenameEditId = $filenameEditId; action = $Action; invokedButton = $invokedName; nativeWindowFound = $true; osInputOrClipboardUsed = $false; timingsMs = $timings } | ConvertTo-Json -Compress

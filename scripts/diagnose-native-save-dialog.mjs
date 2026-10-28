@@ -4,14 +4,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, mkdtemp, readFile, writeFile, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 test('owned native save dialogs: first-use readiness and exact Unicode selection', async t => {
   const root = path.resolve('artifacts/native-dialog-diagnostics');
   await mkdir(root, { recursive: true });
   const directory = await mkdtemp(path.join(root, 'anonymous-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  // Retain only these anonymous diagnostic screenshots/scripts under artifacts.
   const source = await readFile('app/save-dialog.ps1', 'utf8');
   const declaration = '$dialog = [System.Windows.Forms.SaveFileDialog]::new()';
   assert.equal(source.split(declaration).length, 2);
@@ -31,7 +31,8 @@ test('owned native save dialogs: first-use readiness and exact Unicode selection
       const destination = path.join(directory, '本人が選んだ匿名名.zip');
       host.stdin.end(JSON.stringify({ destination: initial, format: 'zip' }) + '\n');
       const { stdout } = await promisify(execFile)('pwsh', ['-NoProfile', '-File', 'scripts/drive-owned-save-dialog.ps1',
-        '-OwnerPid', String(process.pid), '-Action', action, '-Destination', destination], { timeout: 45000, encoding: 'utf8' });
+        '-OwnerPid', String(process.pid), '-Action', action, '-Destination', destination,
+        '-Screenshot', path.join(directory, `${style}-${action}.png`)], { timeout: 45000, encoding: 'utf8' });
       t.diagnostic(stdout.trim());
       assert.equal(await finished, 0, errors);
       const selected = JSON.parse(output.trim());
