@@ -16,6 +16,30 @@ public static class OwnedDialogCapture {
   [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr hwnd, EnumProc callback, IntPtr param);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr hwnd, StringBuilder text, int size);
   [DllImport("user32.dll")] private static extern int GetDlgCtrlID(IntPtr hwnd);
+  [DllImport("user32.dll")] private static extern IntPtr GetParent(IntPtr hwnd);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint msg, IntPtr wparam, StringBuilder text, uint flags, uint timeout, out IntPtr result);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint msg, IntPtr wparam, string text, uint flags, uint timeout, out IntPtr result);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint msg, IntPtr wparam, IntPtr lparam, uint flags, uint timeout, out IntPtr result);
+  public static int ControlId(IntPtr hwnd) { return GetDlgCtrlID(hwnd); }
+  public static string ReadText(IntPtr hwnd) {
+    var text = new StringBuilder(32768);
+    IntPtr result;
+    if (SendMessageTimeout(hwnd, 0x000D, (IntPtr)text.Capacity, text, 2, 1000, out result) == IntPtr.Zero) throw new Exception("Owned edit read timed out.");
+    return text.ToString();
+  }
+  public static void SetText(IntPtr hwnd, string text) {
+    IntPtr result;
+    if (SendMessageTimeout(hwnd, 0x000C, IntPtr.Zero, text, 2, 1000, out result) == IntPtr.Zero || result == IntPtr.Zero) throw new Exception("Owned edit write failed.");
+    // Some shell providers update the displayed edit without notifying the
+    // dialog's selected-name model. Deliver the edit's normal EN_CHANGE to
+    // its own parent, never keyboard/mouse input to the desktop.
+    IntPtr command = (IntPtr)((0x0300 << 16) | (GetDlgCtrlID(hwnd) & 0xffff));
+    if (SendMessageTimeout(GetParent(hwnd), 0x0111, command, hwnd, 2, 1000, out result) == IntPtr.Zero) throw new Exception("Owned edit notification timed out.");
+  }
+  public static void Click(IntPtr hwnd) {
+    IntPtr result;
+    if (SendMessageTimeout(hwnd, 0x00F5, IntPtr.Zero, IntPtr.Zero, 2, 1000, out result) == IntPtr.Zero) throw new Exception("Owned button invocation timed out.");
+  }
   public static string[] ChildStructure(IntPtr hwnd) {
     var result = new List<string>();
     EnumChildWindows(hwnd, (child, _) => {
@@ -92,9 +116,17 @@ if (-not $file) {
     $structure = [OwnedDialogCapture]::ChildStructure([IntPtr]$window.Current.NativeWindowHandle) -join ','
     throw "Native filename edit not found or ambiguous (edit IDs: $ids; native structure: $structure)."
 }
-$value = $file.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
-$filenameEditId = $file.Current.AutomationId
-$initial = $value.Current.Value
+$nativeEdits = [OwnedDialogCapture]::FilenameEdits([IntPtr]$window.Current.NativeWindowHandle)
+$fileHandle = if ($nativeEdits.Count -eq 1) { $nativeEdits[0] } else { [IntPtr]::Zero }
+$value = $null
+if ($fileHandle -ne [IntPtr]::Zero) {
+    $filenameEditId = [string][OwnedDialogCapture]::ControlId($fileHandle)
+    $initial = [OwnedDialogCapture]::ReadText($fileHandle)
+} else {
+    $value = $file.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
+    $filenameEditId = $file.Current.AutomationId
+    $initial = $value.Current.Value
+}
 $timings.filenameRead = $watch.ElapsedMilliseconds
 [Console]::Error.WriteLine('KTZ_DIALOG:filename_read')
 function Save-OwnedDialogScreenshot([string]$Path) {
@@ -114,9 +146,14 @@ function Set-OwnedControlFocus($Control) {
     if (-not $Control.Current.HasKeyboardFocus) { throw 'Owned dialog control did not receive focus.' }
 }
 if ($Action -eq 'select') {
-    Set-OwnedControlFocus $file
-    $value.SetValue($Destination)
-    if ($value.Current.Value -ne $Destination) { throw 'Native filename edit did not retain the selected destination.' }
+    if ($fileHandle -ne [IntPtr]::Zero) {
+        [OwnedDialogCapture]::SetText($fileHandle, $Destination)
+        if ([OwnedDialogCapture]::ReadText($fileHandle) -ne $Destination) { throw 'Native filename edit did not retain the selected destination.' }
+    } else {
+        Set-OwnedControlFocus $file
+        $value.SetValue($Destination)
+        if ($value.Current.Value -ne $Destination) { throw 'Native filename edit did not retain the selected destination.' }
+    }
 }
 $buttonId = if ($Action -eq 'select') { '1' } else { '2' }
 $buttonCondition = [Windows.Automation.AndCondition]::new(
@@ -140,8 +177,14 @@ $timings.beforeInvoke = $watch.ElapsedMilliseconds
 [Console]::Error.WriteLine('KTZ_DIALOG:invoking_owned_button')
 # Commit the filename edit through a normal focus change. The upgraded shell
 # can otherwise return its old selected name even though ValuePattern changed.
-if ($Action -eq 'select') { Set-OwnedControlFocus $button }
-$button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+if ($Action -eq 'select' -and $fileHandle -eq [IntPtr]::Zero) { Set-OwnedControlFocus $button }
+$invoke = $null
+if ($button.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$invoke)) { $invoke.Invoke() }
+else {
+    $nativeButtons = [OwnedDialogCapture]::ActionButtons([IntPtr]$window.Current.NativeWindowHandle, [int]$buttonId)
+    if ($nativeButtons.Count -ne 1) { throw 'Owned native dialog action is unavailable or ambiguous.' }
+    [OwnedDialogCapture]::Click($nativeButtons[0])
+}
 $exitDeadline = [DateTime]::UtcNow.AddSeconds(8)
 while ((Get-Process -Id $dialogPid -ErrorAction SilentlyContinue) -and [DateTime]::UtcNow -lt $exitDeadline) { Start-Sleep -Milliseconds 100 }
 if (Get-Process -Id $dialogPid -ErrorAction SilentlyContinue) {
