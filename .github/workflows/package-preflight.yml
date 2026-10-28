@@ -1,0 +1,65 @@
+name: Tag-free package preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - name: Install fixed package dependencies
+        run: |
+          npm ci --ignore-scripts --no-fund --no-audit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./scripts/install-rust.ps1 -FetchDependencies
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./artifacts/toolchains/cargo/bin/cargo.exe fetch --manifest-path poc/launcher/Cargo.toml --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/install-browser.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/install-browser.mjs --headed
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build without an existing local test destination
+        run: |
+          if (Test-Path -LiteralPath _testenv) { throw 'Fresh-checkout preflight must begin without _testenv.' }
+          npm run dist:build
+      - name: Packaged public selection and export regressions
+        run: node scripts/test-distribution.mjs --latest-portable
+      - name: Collect the same package and notices as the release workflow
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          ./scripts/package-release.ps1 -Tag "v$version" -SourceCommit $env:GITHUB_SHA -WorkflowRun $env:GITHUB_RUN_ID
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tag-free-package-preflight
+          path: release/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
+  verify-transfer:
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tag-free-package-preflight
+          path: release
+      - name: Verify transferred package checksums without publishing
+        working-directory: release
+        run: sha256sum --check SHA256SUMS.txt

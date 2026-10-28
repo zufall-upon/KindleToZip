@@ -20,6 +20,16 @@ test('Portable準備: Windowsのheaded引数とアプリ・lockfile・launcher�
   assert.equal(lock.packages[''].version, pkg.version);
   assert.equal(/^version = "([^"]+)"$/m.exec(launcher)[1], pkg.version);
   assert.equal(/name = "kindle-to-zip-launcher"\r?\nversion = "([^"]+)"/.exec(launcherLock)[1], pkg.version);
+  const build = await readFile('scripts/build-distribution.ps1', 'utf8');
+  assert.match(build, /\$testDestination = Join-Path \$root '_testenv'\s+\[IO\.Directory\]::CreateDirectory\(\$testDestination\) \| Out-Null\s+\$deployment =/);
+  const release = await readFile('.github/workflows/release.yml', 'utf8');
+  const preflight = await readFile('.github/workflows/package-preflight.yml', 'utf8');
+  for (const workflow of [release, preflight]) {
+    assert.match(workflow, /\.\/scripts\/package-release\.ps1/);
+    assert.match(workflow, /node scripts\/test-distribution\.mjs --latest-portable/);
+    assert.match(workflow, /sha256sum --check SHA256SUMS\.txt/);
+  }
+  assert.doesNotMatch(preflight, /gh release create|attest-build-provenance|contents: write/);
 });
 
 test('Portable固定名: 新旧metadata選択とPowerShell consumerが同じ最新を選ぶ', async () => {

@@ -197,7 +197,12 @@ try {
         $reportStream = [System.IO.FileStream]::new($reportPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
         try { $reportStream.Write($reportBytes, 0, $reportBytes.Length); $reportStream.Flush($true) }
         finally { $reportStream.Dispose() }
-        $deployment = & (Join-Path $PSScriptRoot 'deploy-portable.ps1') -Source $destination -DestinationDirectory (Join-Path $root '_testenv') -ExpectedSha256 $exeHash
+        # A fresh checkout has no ignored local test destination. Prepare only
+        # this fixed workspace folder; the deploy helper still validates it and
+        # refuses reparse points, locked files, and any existing-data damage.
+        $testDestination = Join-Path $root '_testenv'
+        [IO.Directory]::CreateDirectory($testDestination) | Out-Null
+        $deployment = & (Join-Path $PSScriptRoot 'deploy-portable.ps1') -Source $destination -DestinationDirectory $testDestination -ExpectedSha256 $exeHash
         $deployment | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $buildDirectory 'deployment.json') -Encoding utf8
         $stopwatch.Stop()
         Write-Output "Portable single-file Windows package created without replacing an existing release."

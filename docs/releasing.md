@@ -32,11 +32,11 @@ Those paths describe this local historical evidence, not files a fresh clone sho
 ### 2. Commit the release source and version tag
 
 - Preserve author and committer `zufall-upon`. Commit the reviewed final source, required tests/helpers, and release documentation; keep unrelated local work out of staging.
-- The tag must match `package.json` (`v0.1.1` for `0.1.1`). Record the complete source commit. An existing tag or release is not overwritten or deleted to make a retry work. The earlier `v0.1.0` tag is retained after its failed draft build; it has no published executable.
+- The tag must match `package.json` (`v0.1.2` for `0.1.2`). Record the complete source commit. An existing tag or release is not overwritten or deleted to make a retry work. Earlier `v0.1.0` and `v0.1.1` tags are retained after failed draft preparation; neither has a published executable.
 - Push the source first and require successful source CI for that exact commit before creating its annotated tag. Never call a failing or unrelated run green.
 
 ```powershell
-$tag = 'v0.1.1'
+$tag = 'v0.1.2'
 $source = (git rev-parse HEAD).Trim()
 git push origin HEAD:main
 gh run list --workflow ci.yml --commit $source --limit 1
@@ -45,6 +45,10 @@ gh run watch <source-ci-run-id> --exit-status
 git tag -a $tag $source -m "KindleToZip $tag"
 git push origin $tag
 ```
+
+After a hosted packaging blocker, validate the packaging path **before creating another tag** with the manual **Tag-free package preflight** workflow (`package-preflight.yml`). It starts without `_testenv`, builds the package, runs the packaged public selection/export regression, collects notices through the same `scripts/package-release.ps1` used by the release workflow, and verifies transferred ZIP/EXE checksums on Linux. It creates no tag, attestation, draft, or public release and does not repeat the unchanged source UI/Rust/deployment suites as diagnostics.
+
+For this bounded repair, push the candidate with `[skip ci]` only to avoid launching a broad diagnostic trial. After package preflight succeeds, explicitly dispatch the existing `ci.yml` on the **same unchanged commit**, verify its exact `headSha` and all required steps, and only then tag it. The manual source CI is mandatory; a skipped push run or a passing preflight is never source acceptance. The final tagged release workflow still runs every existing mandatory gate.
 
 ### 3. Run the existing mandatory release workflow once
 
@@ -70,7 +74,7 @@ If a hosted failure is isolated to native save-dialog automation, use the manual
 
 ### 5. Publish only the authorized scope
 
-The workflow creates a **draft**, never a public release automatically. Publish only when the user explicitly requests general availability. The first public `v0.1.1` is an experimental prerelease, not a stable/clean-Windows or complete-book certification.
+The workflow creates a **draft**, never a public release automatically. Publish only when the user explicitly requests general availability. The first public `v0.1.2` is an experimental prerelease, not a stable/clean-Windows or complete-book certification.
 
 ```powershell
 gh release edit $tag --draft=false --prerelease --latest=false --notes-file <reviewed-release-notes.md>
@@ -91,8 +95,8 @@ GitHub Actions artifacts are uploaded to GitHub and are not private storage, eve
 Only use release assets from [zufall-upon/KindleToZip](https://github.com/zufall-upon/KindleToZip/releases). Download the ZIP and `SHA256SUMS.txt` from the same release.
 
 ```powershell
-Get-FileHash .\KindleToZip-Portable-v0.1.1-win-x64.zip -Algorithm SHA256
-gh attestation verify .\KindleToZip-Portable-v0.1.1-win-x64.zip --repo zufall-upon/KindleToZip --signer-workflow zufall-upon/KindleToZip/.github/workflows/release.yml
+Get-FileHash .\KindleToZip-Portable-v0.1.2-win-x64.zip -Algorithm SHA256
+gh attestation verify .\KindleToZip-Portable-v0.1.2-win-x64.zip --repo zufall-upon/KindleToZip --signer-workflow zufall-upon/KindleToZip/.github/workflows/release.yml
 ```
 
 Compare the hash with the matching line in `SHA256SUMS.txt`. The attestation verification must succeed, and its source commit, repository, and workflow must match the release you intend to use. The detached `.sigstore.json` bundle is also attached for inspection and offline-verification workflows; consult the current GitHub CLI documentation before relying on offline verification.
