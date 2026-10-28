@@ -7,6 +7,7 @@ AGENTS.md
 !/docs/security-and-trust.md
 !/docs/releasing.md
 !/docs/legal-notes-ja.md
+!/docs/validation.md
 /scripts/check-records.mjs
 
 # Dependencies, build outputs, and local test environments

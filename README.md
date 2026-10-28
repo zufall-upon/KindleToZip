@@ -8,6 +8,8 @@ KindleToZip is free and open source. If this project saves you time, consider su
 
 **Status: experimental / 開発中。** This is a source-code release, not a verified production release. Compatibility with every Kindle layout, complete-book capture, and operation on a clean Windows PC are not guaranteed. No executable is included in this initial publication.
 
+**Known validation failures:** the initial published implementation's isolated Windows `npm test` run reported **125 passed / 12 failed** in about 576 seconds (including parent/subtest failures). Rust, IPC/local-store, and deployment checks passed separately. The failing UI tests are not fixed or waived; see the [validation report](docs/validation.md). Do not treat this snapshot as a passing release candidate.
+
 **Terms / legal risk remains unresolved:** Amazon's conditions exclude robot-like data gathering tools from the granted permission. No DRM bypass does not establish compliance. See the [terms review and outstanding legal questions](docs/legal-notes-ja.md). This project has not received legal clearance from Amazon or a legal professional.
 
 ## 3つの工程 / Three stages
