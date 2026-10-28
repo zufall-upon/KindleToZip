@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KindleToZip — 手順ガイド</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/ui.mjs"></script>
+</head>
+<body>
+  <aside class="workflow-bar" aria-label="現在の状態と主操作">
+    <div class="workflow-context">
+      <div class="flow-status"><strong id="state">接続中</strong><span id="reason"></span></div>
+      <div class="next-action"><strong>次の1操作</strong><p id="nextAction">アプリへ接続しています。</p><button id="reconnect" hidden>接続を確認し直す</button></div>
+      <p id="message" role="status" aria-live="polite"></p>
+    </div>
+    <div id="operationStatus" data-status="idle" aria-busy="false">
+      <div class="operation-heading"><span id="operationLabel" role="status">待機中</span><span id="operationPercent">0%</span></div>
+      <div id="operationBar" role="progressbar" aria-label="現在の処理工程" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="operationFill"></div></div>
+      <small id="operationDetail">操作待ち</small>
+    </div>
+    <div class="workflow-actions">
+      <button id="decisionButton" class="primary">決定・次へ</button>
+      <button id="cancelBackButton">キャンセル・前へ</button>
+      <button id="finishBookButton">終了・最初から</button>
+    </div>
+  </aside>
+  <dialog id="resetDialog" aria-labelledby="resetTitle">
+    <h2 id="resetTitle">取得画像をリセットしますか？</h2>
+    <p id="resetScope"></p>
+    <p>現在の作業の取得原本（除外分を含む）・クロップ・分割・採用順・重複判定・再開状態を削除します。他の作業・既存ZIP・保存先・設定・ログインは残します。読書位置は動かしません。</p>
+    <button id="resetConfirm">取得画像を削除して最初からやり直す</button>
+    <button id="resetKeep">画像を残して戻る</button>
+    <button id="resetCancel">キャンセル</button>
+  </dialog>
+  <header><h1>KindleToZip <small>手順ガイド</small></h1><p>1冊の画像を点検してZIP / CBZへ。既存ファイルは上書きしません。</p></header>
+  <p id="connection"></p>
+  <aside>ログイン・本の選択・プレビュー承認・取得開始は本人が行ってください。</aside>
+  <details id="stageTools"><summary>点検・再開の画面を直接開く（補助）</summary>
+  <nav class="steps" aria-label="作業手順">
+    <button data-stage-target="setup">1 作業を用意</button><button data-stage-target="browser">2 本を開く</button><button data-stage-target="capture">3 指定・取り込み</button><button data-stage-target="review">4 点検・編集</button><button data-stage-target="export">5 保存</button>
+  </nav></details>
+  <section data-stage="setup"><h2>1. 作業を用意する</h2>
+    <p>「決定・次へ」で新しい1冊の作業を用意します。前回の続きだけ、補助設定から中断データを開けます。</p>
+    <details><summary>作業先・中断データ・終了</summary>
+    <button id="create">新規1冊ジョブ（個別操作）</button>
+    <label>作業先（空欄はアプリ専用領域）<input id="baseDir" placeholder="既存のローカルフォルダの絶対パス"></label>
+    <label>中断ジョブのフォルダ<input id="recoverPath" placeholder="…\jobs\ジョブID"></label>
+    <button id="recover">中断データを開く（自動取得しない）</button><button id="closeJob">ジョブを閉じる</button>
+    <p id="jobPath"></p><p id="issues"></p></details>
+  </section>
+  <section data-stage="browser"><h2>2. 専用ブラウザで本を開く</h2>
+    <p>日本向けKindleを開き、本人がログインして1冊を開きます。本棚タブは閉じなくてかまいません。</p>
+    <p>ログイン状態はEXE横に保存します。同じPC・Windows利用者で再利用でき、再認証が必要な場合もあります。</p>
+    <p>「決定・次へ」で専用Kindleを開きます。本を開いた後も同じボタンで対象タブの選択へ進みます。</p>
+    <details><summary>専用セッション・自作試料（補助）</summary>
+    <button id="openKindle">日本向けKindle Webを開く（個別操作）</button>
+    <label>テスト画像 <select id="sampleFixture"><option value="">標準の自作試料</option><option value="kindle-chrome-dynamic">Kindle風：位置変化・操作バーの一時非表示</option><option value="kindle-chrome-hidden">Kindle風：初回から識別・位置・操作バー非表示（自動復帰なし）</option><option value="kindle-chrome-recoverable">Kindle風：初期非表示から上端DOMイベント列で復帰</option><option value="kindle-chrome-tabs">Kindle風：読書タブとライブラリの再プレビュー切分け</option><option value="kindle-chrome-ambiguous">匿名見開き：136位置で次へ候補が増える</option></select></label>
+    <button id="openSample">選択した自作試料を開く</button>
+    <label><input type="checkbox" id="keep" checked> ログイン状態を次回も保存する（既定ON。OFFで新しい一時領域を使用）</label>
+    <label>既存の専用セッション<select id="session"><option value="">前回の専用領域を再利用（なければ新規）</option><option value="new">新しい専用領域</option></select></label>
+    <button id="closeBrowser">専用ブラウザを閉じる</button>
+    <p>公式画面でログイン・追加認証・1冊選択・開始位置の調整を行ってください。パスワードをこのアプリへ入力しないでください。取得中の操作は別アプリ・通常ブラウザで行ってください。</p>
+    <p>専用領域にはログイン情報・履歴が残ります。一時領域は通常終了時に削除します。残った領域は下で削除できます。</p>
+    <ul id="sessions"></ul></details>
+  </section>
+  <section data-stage="capture"><h2>3. 指定 → プレビュー → 取り込み</h2>
+    <label>対象の専用タブ<select id="readerTab"><option value="">対象タブを選択</option></select></label>
+    <p>読書画面のタブを選んで「決定・次へ」。選び直すとプレビューと承認をやり直します。</p>
+    <label>Kindleプリセット<select id="preset"></select></label>
+    <p>タイトル・位置バーのある画面はKindleプリセットでプレビューできます。合わない場合は詳細指定へ。編集はEXE横に保存します。</p>
+    <details id="presetEditor"><summary>プリセットの追加・編集</summary>
+      <label>名前<input id="presetName" maxlength="100"></label>
+      <label>検査方法<select id="presetMode"><option value="visible">表示中の項目を一意に自動検査</option><option value="selectors">プリセットの4項目を使用</option></select></label>
+      <button id="savePreset">選択中へ保存</button><button id="addPreset">別のプリセットとして追加</button>
+      <button id="addKindlePreset">旧設定にKindle初期定義を追加（既存は保持）</button>
+      <p>4項目とiframeを保存します。既存の編集は初期値で上書きしません。</p>
+    </details>
+    <div class="capture-settings">
+      <h3>取り込みと保存のおすすめ設定</h3>
+      <label>画面の描画密度<select id="captureScale"><option value="2">高解像度（2倍・おすすめ）</option><option value="1">標準（1倍）</option></select></label>
+      <p>2倍は高密度PNGで保存します。上限は16メガピクセルです。</p>
+      <label>1回の表示を何枚として保存<select id="pageOutputMode"><option value="single_image">表示範囲を1枚のまま保存</option><option value="split_spread">見開きを左右2ページに分けて保存</option></select></label>
+      <label>左右の読み順<select id="readingDirection"><option value="right_to_left">右ページから（右→左・おすすめ）</option><option value="left_to_right">左ページから（左→右）</option></select></label>
+      <p id="settingsNote">設定はジョブに保存されます。変更後はプレビューと承認をやり直します。分割設定はこれから取得する画像に適用し、すでに取得した画像は変えません。</p>
+    </div>
+    <p id="captureHelp">先に作業と専用ブラウザを用意してください。追従バーの「決定・次へ」から進めます。</p>
+    <details id="safetyActions"><summary>取得中の補助操作（一時停止・安全停止）</summary>
+      <button id="pause">一時停止</button><button id="stop">停止して点検へ</button>
+    </details>
+    <details id="captureActions"><summary>表示の再検査・個別確認（補助）</summary>
+    <button id="selectReaderTab">このタブを対象にする</button>
+    <button id="quickPreview">表示を確かめてプレビュー</button>
+    <button id="approve">プレビューを承認 / 復帰を確認</button>
+    <button id="start">この表示条件で取り込み開始</button>
+    </details>
+    <p>自動判定できない場合は、詳細指定で対象を選んでください。</p>
+    <details id="manualOptions"><summary>自動判定できない場合（詳細指定）</summary>
+      <p>画面の4項目を指定してプレビューします。専用ブラウザの可視UIを使い、指定クリックでページは送りません。CSS・iframeを使う方法はさらに下の詳細設定にあります。</p>
+      <button id="pickAll">4項目を続けて指定</button><button id="cancelPick" hidden>指定を取り消す</button>
+      <p id="mappingStatus" role="status">4項目を指定してください。</p>
+      <div class="grid mapping-cards">
+        <div><strong>① 読書領域</strong><p>ページ画像の内側</p><output id="readerStatus">未指定</output><button id="pickReader">読書領域を選ぶ</button><button id="expandReader" disabled>選んだ領域を1段広げて選ぶ</button></div>
+        <div><strong>② 本の識別表示</strong><p>画面に見えている書名の文字</p><output id="identityStatus">未指定</output><button id="pickIdentity">本の識別表示を選ぶ</button></div>
+        <div><strong>③ 位置表示</strong><p>ページ・位置番号の文字か数値欄</p><output id="positionStatus">未指定</output><button id="pickPosition">位置表示を選ぶ</button></div>
+        <div><strong>④ 次へボタン</strong><p>画面に見えている次のページ操作</p><output id="nextStatus">未指定</output><button id="pickNext">次へボタンを選ぶ</button></div>
+      </div>
+      <button id="preview">現在の指定でプレビュー</button>
+      <details id="mappingDetails"><summary>範囲が合わない場合・CSS/iframe設定</summary>
+        <button id="parentReader">読書枠を1段広げてプレビュー</button>
+        <p>読書枠を変えたときも、本・範囲・方向が正しいことを確認するまでは開始しないでください。</p>
+        <div class="grid"><label>共通iframe（通常は変更不要）<input id="frame"></label><label>読書領域のCSS<input id="reader"></label><label>本の識別表示のCSS<input id="identity"></label><label>位置表示のCSS<input id="position"></label><label>次へボタンのCSS<input id="next"></label></div>
+      </details>
+    </details>
+    <p id="previewPlaceholder">プレビューはまだありません。表示範囲のPNG画素寸法と保存単位を確認できます。</p>
+    <p id="previewInfo"></p>
+    <aside id="resumeComparison" hidden>
+      <h3>最後の確定画像と再開位置</h3>
+      <img id="resumeImage" alt="最後の確定原本" hidden>
+      <p id="resumeStatus" role="status"></p>
+      <p>現在位置が最後の画像の直後か、本人が照合してください。違う場合は公式画面で手動調整し、再プレビューしてください。</p>
+    </aside>
+    <img id="previewImage" alt="保存前の元画像プレビュー" hidden>
+    <div id="previewPages" class="preview-pages" aria-label="実際に出力するページのプレビュー"></div>
+    <fieldset id="approval"><legend>プレビューを見てから開始</legend>
+    <label><input id="previewConfirmed" type="checkbox"> この本・領域・次へ方向・位置が正しい</label>
+    <label id="resumeLabel" hidden><input id="resumeConfirmed" type="checkbox"> 最後の確定画像と現在位置を目視照合した（必要なら公式画面で手動調整）</label>
+    </fieldset>
+    <p>終端候補・白紙・重複・ログアウト・不明な送りで停止します。取得範囲は目視確認してください。</p>
+  </section>
+  <section data-stage="review"><h2>4. 画像を点検・並べ替え・クロップ</h2>
+    <button id="resumeCapture">画像を残して途中から再開</button>
+    <p id="counts"></p>
+    <p>画像カードの「前へ」「後へ」で出力順を変更できます。「除外」しても原本は消えません。</p>
+    <button id="restoreOrder">全画像を取得順で採用</button>
+    <details id="orderDetails"><summary>画像番号を指定して順序・採用を変更</summary><button id="review">点検モードへ</button><label>画像番号をカンマ区切り（省いた画像は除外・原本保持）<input id="order"></label><button id="saveOrder">順序・採用を保存</button></details>
+    <p id="imageLoadStatus" role="status"></p>
+    <div id="images" class="images"></div>
+    <h3>選択画像の非破壊クロップ</h3><img id="inspectImage" alt="選択した原本" hidden>
+    <div class="grid"><label>画像ID<input type="number" id="cropId" min="1"></label><label>x<input type="number" id="cropX" value="0" min="0"></label><label>y<input type="number" id="cropY" value="0" min="0"></label><label>幅<input type="number" id="cropWidth" min="1"></label><label>高さ<input type="number" id="cropHeight" min="1"></label></div>
+    <button id="crop">クロップして結果を点検（原本保持）</button><button id="resetCrop">全原寸へ戻す</button>
+    <p>点検後は「決定・次へ」でZIP保存へ進みます。</p>
+  </section>
+  <section data-stage="export"><h2>5. ZIPを保存</h2>
+    <p>初期保存先はこの作業のフォルダです。既存ファイルは上書きしません。</p>
+    <label>保存先のファイル名<input id="destination" placeholder="既存フォルダ\作品.zip"></label>
+    <button id="chooseDestination">保存先を選ぶ…</button><p>ダイアログで選ぶだけでは保存・取得を開始しません。手入力も利用できます。</p>
+    <p>停止・プレビュー失敗後も、保存済みの採用画像をZIPにできます。</p>
+    <p id="exportHelp" role="status"></p>
+    <details id="exportOptions"><summary>範囲確認・点検済みの印（任意）</summary>
+    <label>別形式（必要な場合のみ）<select id="format"><option value="zip">ZIP（通常）</option><option value="cbz">CBZ（任意）</option></select></label>
+    <label><input id="rangeConfirmed" type="checkbox"> 取得した範囲・終端を目視確認した（未確認でも出力可能）</label>
+    <label><input id="warningsAccepted" type="checkbox"> 点検済みの印（任意・保存条件ではありません）</label>
+    <button id="export">ZIPを検証して保存（個別操作）</button></details><pre id="exportResult"></pre>
+  </section>
+  <footer>画像・書名の外部送信やテレメトリはありません。Kindleと公式認証先への通信は必要です。</footer>
+</body>
+</html>

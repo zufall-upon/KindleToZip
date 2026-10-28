@@ -1,0 +1,147 @@
+name: Draft Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag pointing to the current main commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'zufall-upon/KindleToZip' && github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate source tag and version
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$') { throw 'Invalid version tag' }
+          $revision = git rev-parse --verify "refs/tags/$($env:RELEASE_TAG)^{commit}"
+          if ($LASTEXITCODE -ne 0 -or $revision -ne $env:GITHUB_SHA) { throw 'Tag must point to the workflow main commit' }
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($env:RELEASE_TAG -ne "v$($package.version)") { throw 'Tag and package version differ' }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - name: Install locked dependencies
+        run: |
+          npm ci --ignore-scripts --no-fund --no-audit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./scripts/install-rust.ps1 -FetchDependencies
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./artifacts/toolchains/cargo/bin/cargo.exe fetch --manifest-path poc/launcher/Cargo.toml --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run browser:install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run browser:install -- --headed
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Rust and IPC tests
+        run: ./scripts/test-rust.ps1
+      - name: Public source UI regressions
+        run: npm test
+      - name: Deployment regressions
+        run: npm run test:distribution
+      - name: Build portable executable
+        run: npm run dist:build
+      - name: Packaged public selection and export regressions
+        run: node scripts/test-distribution.mjs --latest-portable
+      - name: Collect release files and notices
+        run: |
+          . ./scripts/portable-reports.ps1
+          $build = Get-LatestPortableReport (Get-Location).Path
+          $report = $build.Report
+          $packageDir = New-Item -ItemType Directory -Path release/package
+          Copy-Item -LiteralPath $build.Executable -Destination "$packageDir/KindleToZip-Portable.exe"
+          Copy-Item -LiteralPath LICENSE,README.md -Destination $packageDir
+          $notices = New-Item -ItemType Directory -Path "$packageDir/third-party-notices"
+          foreach ($name in @('playwright','playwright-core')) {
+            $destination = New-Item -ItemType Directory -Path "$notices/$name"
+            Get-ChildItem -Path "node_modules/$name/*" -File | Where-Object { $_.Name -match '^(LICENSE|NOTICE|COPYING)' } | Copy-Item -Destination $destination
+          }
+          Invoke-WebRequest -Uri https://raw.githubusercontent.com/nodejs/node/v22.14.0/LICENSE -OutFile "$notices/Node.js-LICENSE"
+          $browsers = (Resolve-Path artifacts/browsers).Path
+          Get-ChildItem -LiteralPath $browsers -Recurse -File | Where-Object { $_.Name -match '^(LICENSE|NOTICE|ABOUT|COPYING|COPYRIGHT)([._-]|$)' } | ForEach-Object {
+            $relative = [IO.Path]::GetRelativePath($browsers, $_.FullName)
+            $destination = Join-Path "$notices/browser" $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path $destination -Parent) | Out-Null
+            Copy-Item -LiteralPath $_.FullName -Destination $destination
+          }
+          [ordered]@{ repository = $env:GITHUB_REPOSITORY; sourceCommit = $env:GITHUB_SHA; tag = $env:RELEASE_TAG; workflowRun = $env:GITHUB_RUN_ID; build = $report } | ConvertTo-Json -Depth 10 | Set-Content "$packageDir/build-metadata.json" -Encoding utf8NoBOM
+          $archive = "release/KindleToZip-Portable-$($env:RELEASE_TAG)-win-x64.zip"
+          Compress-Archive -Path "$packageDir/*" -DestinationPath $archive
+          $entries = @($archive, "$packageDir/KindleToZip-Portable.exe") | ForEach-Object {
+            $digest = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
+            $relative = [IO.Path]::GetRelativePath((Resolve-Path release).Path, (Resolve-Path $_).Path).Replace('\','/')
+            "$digest  $relative"
+          }
+          $entries | Set-Content release/SHA256SUMS.txt -Encoding ascii
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-release-candidate
+          path: release/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  draft:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-release-candidate
+          path: release
+      - name: Verify transferred files
+        working-directory: release
+        run: sha256sum --check SHA256SUMS.txt
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        id: provenance
+        with:
+          subject-path: |
+            release/*.zip
+            release/package/KindleToZip-Portable.exe
+      - name: Create draft without publishing or replacing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATTESTATION_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: |
+          cp "$ATTESTATION_BUNDLE" release/KindleToZip-build.sigstore.json
+          cat > release-notes.md <<'NOTES'
+          Experimental Windows x64 portable candidate. No independent security or legal clearance is claimed.
+
+          Built from this repository's tagged source in GitHub Actions. Review build-metadata.json inside the ZIP, SHA256SUMS.txt, provenance, third-party notices, and workflow logs before publication.
+
+          Outstanding gates: terms/legal review, third-party redistribution obligations, clean-Windows acceptance, and current Kindle compatibility. Fixture success does not close these gates.
+
+          The ZIP includes license and notice files. Login profiles and captured book content are not included. Keep runtime/, data/, and temp/ private after launch.
+
+          Verification instructions: docs/releasing.md at the tagged source revision.
+          NOTES
+          gh release create "$RELEASE_TAG" --verify-tag --draft --title "KindleToZip $RELEASE_TAG" --notes-file release-notes.md release/*.zip release/SHA256SUMS.txt release/KindleToZip-build.sigstore.json

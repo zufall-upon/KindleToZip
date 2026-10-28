@@ -1,0 +1,15 @@
+[package]
+name = "kindle-to-zip-launcher"
+version = "0.1.0"
+authors = ["zufall-upon"]
+license = "GPL-3.0-only"
+repository = "https://github.com/zufall-upon/KindleToZip"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "kindle-to-zip-launcher"
+path = "src/main.rs"
+
+[dependencies]
+sha2 = "=0.10.9"

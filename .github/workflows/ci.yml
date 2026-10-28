@@ -1,0 +1,48 @@
+name: Source checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - name: Install locked dependencies
+        run: |
+          npm ci --ignore-scripts --no-fund --no-audit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./scripts/install-rust.ps1 -FetchDependencies
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./artifacts/toolchains/cargo/bin/cargo.exe fetch --manifest-path poc/launcher/Cargo.toml --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run browser:install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run browser:install -- --headed
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Rust and IPC tests
+        run: ./scripts/test-rust.ps1
+      - name: Public source UI regressions
+        run: npm test
+      - name: Deployment regressions
+        run: npm run test:distribution

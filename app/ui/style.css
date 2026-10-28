@@ -1,0 +1,78 @@
+:root { color-scheme: light; font-family: system-ui, sans-serif; background: #f2f5fa; color: #172b44; }
+body { max-width: 1150px; margin: auto; padding: 20px; line-height: 1.65; }
+h1 { margin: 8px 0; } h2 { margin-top: 0; } small { font-size: .5em; color: #305e93; }
+section { background: #ffffff; border: 1px solid #cbd5e1; padding: 22px; border-radius: 12px; margin: 20px 0; }
+aside { border-left: 5px solid #b37613; padding: 12px; background: #fff8e8; }
+button { cursor: pointer; background: #3773bd; color: white; padding: 10px 15px; border: 1px solid #78abe9; border-radius: 6px; margin: 7px 5px 7px 0; }
+button:disabled { background: #e2e8f0; color: #526174; border-color: #a8b3c2; cursor: not-allowed; } #stop { background: #a23333; }
+input:not([type=checkbox]), select { box-sizing: border-box; display: block; width: 100%; background: #ffffff; color: #172b44; padding: 10px; border: 1px solid #64748b; border-radius: 5px; }
+input[type=checkbox] { width: 18px; height: 18px; vertical-align: middle; }
+label { display: block; margin: 12px 0; } .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+#reason { margin: 0 12px; color: #8b3b0a; overflow-wrap: anywhere; }
+#message { min-height: 0; margin: 6px 0 0; color: #943013; white-space: pre-wrap; overflow-wrap: anywhere; }
+#previewImage, #inspectImage { max-width: 100%; max-height: 650px; object-fit: contain; background: transparent; border: 1px solid #94a3b8; }
+.images { display: flex; flex-wrap: wrap; gap: 16px; } .images article { border: 1px solid #71879e; padding: 10px; width: 180px; }
+.images img { width: 180px; height: 160px; object-fit: contain; } .images p { margin: 3px 0; } pre, #jobPath, #issues { white-space: pre-wrap; overflow-wrap: anywhere; }
+footer { color: #465b72; margin: 30px 0; }
+output { display: block; color: #166534; font-weight: 600; }
+#mappingStatus, .next-action { padding: 12px; border-left: 4px solid #2364b0; background: #eaf2ff; }
+.steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0; }
+.steps button { background: #ffffff; color: #23476f; }
+.steps button[aria-current="step"] { background: #2364b0; color: #ffffff; }
+.primary { background: #155ab2; font-weight: 700; }
+.mapping-cards > div { border: 1px solid #b8c6d8; border-radius: 8px; padding: 12px; }
+.mapping-cards p { min-height: 3em; margin: 4px 0; }
+.capture-settings { padding: 12px; border: 1px solid #aabbd0; border-radius: 8px; background: #f8fbff; }
+.capture-settings h3 { margin: 0; }
+.preview-pages { display: flex; flex-wrap: wrap; align-items: start; gap: 16px; margin: 12px 0; }
+.preview-pages figure { margin: 0; padding: 10px; border: 1px solid #71879e; border-radius: 6px; max-width: 48%; }
+.preview-pages img { display: block; max-width: 100%; max-height: 560px; object-fit: contain; background: white; }
+.preview-pages figcaption { margin-top: 6px; font-weight: 600; }
+.images article[data-split="true"] { width: 270px; }
+.split-thumbnails { display: flex; gap: 6px; }
+.split-thumbnails img { width: 120px; height: 160px; object-fit: contain; }
+.capture-setting-label { font-weight: 700; }
+details { margin: 16px 0; padding: 12px; border: 1px solid #b8c6d8; border-radius: 8px; }
+summary { cursor: pointer; font-weight: 600; }
+fieldset { border: 1px solid #b8c6d8; border-radius: 8px; margin-top: 16px; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 3px solid #b45309; outline-offset: 3px; }
+.workflow-bar { position: fixed; z-index: 100; left: 50%; bottom: 0; transform: translateX(-50%); box-sizing: border-box; width: min(calc(100% - 24px), 1150px); max-height: 42vh; display: grid; grid-template-rows: minmax(0, 1fr) auto; overflow: hidden; padding: 10px 12px max(10px, env(safe-area-inset-bottom)); border: 2px solid #476c96; border-bottom: 0; border-radius: 12px 12px 0 0; background: #ffffff; box-shadow: 0 -5px 18px #172b4433; }
+.workflow-context { min-height: 0; overflow: auto; }
+.workflow-bar { grid-template-rows: minmax(0, 1fr) auto auto; }
+#operationStatus { padding: 4px 0; font-weight: 600; color: #23476f; min-width: 0; }
+.operation-heading { display: flex; justify-content: space-between; gap: 10px; }
+#operationPercent { font-variant-numeric: tabular-nums; flex-shrink: 0; }
+#operationBar { height: 10px; background: #dbe5ee; border: 1px solid #657e98; border-radius: 4px; overflow: hidden; margin: 3px 0; }
+#operationFill { height: 100%; width: 0%; background: #246da8; }
+#operationDetail { display: block; font-weight: normal; font-size: 12px; line-height: 1.3; overflow-wrap: anywhere; }
+[data-status="failure"] #operationFill { background: #a92f34; }
+[data-status="cancelled"] #operationFill { background: #876425; }
+[data-status="success"] #operationFill { background: #278051; }
+[data-status="success"] { color: #166534 !important; }
+[data-status="failure"] { color: #943013 !important; }
+[data-status="cancelled"] { color: #8b5800 !important; }
+html { scroll-padding-bottom: 48vh; }
+.flow-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.flow-status strong { font-size: 1.1rem; }
+.next-action { margin-top: 5px; padding: 7px 10px; border-left: 4px solid #2364b0; background: #eaf2ff; }
+.next-action p { margin: 2px 0; max-height: 4.8em; overflow: auto; overflow-wrap: anywhere; }
+#message:not(:empty) { background: #fff6dc; border-left: 4px solid #9c6510; padding: 5px 8px; }
+.workflow-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding-top: 6px; }
+.workflow-actions button { min-width: 0; min-height: 42px; margin: 0; padding: 7px 5px; font-weight: 700; line-height: 1.2; }
+.workflow-actions #finishBookButton { background: #8a3535; }
+#resetDialog { max-width: 52rem; border: 2px solid #34536e; border-radius: .6rem; padding: 1.2rem; }
+#resetDialog::backdrop { background: rgb(20 35 50 / 30%); }
+#resetConfirm { background: #8a3535; }
+.workflow-actions button:disabled { background: #e2e8f0; color: #526174; }
+body { padding-bottom: max(260px, 46vh); }
+@media (max-width: 650px) {
+  body { padding: 12px; padding-bottom: max(270px, 50vh); }
+  .preview-pages figure { max-width: 100%; }
+  .workflow-bar { width: calc(100% - 12px); max-height: 46vh; padding: 8px 8px max(8px, env(safe-area-inset-bottom)); }
+  .workflow-actions { gap: 4px; }
+  .workflow-actions button { font-size: .88rem; min-height: 44px; }
+  #reason { margin: 0; }
+}
+.language-selector { float: right; display: flex; align-items: center; gap: .5rem; margin: .25rem; }
+.language-selector select { width: auto; }

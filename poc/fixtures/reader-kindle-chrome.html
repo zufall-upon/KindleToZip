@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>匿名の構造試料 — 実Kindleではありません</title>
+  <link rel="stylesheet" href="/reader-kindle-chrome.css">
+  <script src="/reader-kindle-chrome.js" defer></script>
+</head>
+<body>
+  <main id="reader" data-book="sample-a" data-session="active" data-overlay="false">
+    <div id="chromeSurface">
+      <canvas width="560" height="360" aria-label="架空の番号画像"></canvas>
+      <div><div><div><div><span id="readerChromeTitle">匿名の自作試料タイトル</span></div></div></div></div>
+      <nav>
+        <button aria-label="前のページへ">→</button>
+        <input id="position" type="range" min="1" max="12" value="7" aria-label="現在位置">
+        <button id="next" aria-label="次のページへ">←</button>
+      </nav>
+    </div>
+  </main>
+  <aside aria-label="匿名試料だけの状態操作">
+    <p>上端DOM復帰試料は観測した復帰列をモデル化しています。以下の表示切替は試料専用で、実Kindleの非表示タイマーは再現していません。</p>
+    <button id="revealChrome">同一ノードを明示的に再表示（試料のみ）</button>
+    <button id="hideChrome">同一ノードを再非表示（試料のみ）</button>
+    <button id="openSameBookTab" hidden>同じ試料を別タブで開き、このタブをライブラリにする（試料のみ）</button>
+    <button id="hideDuplicate" hidden>追加候補を非表示（匿名試料のみ）</button>
+    <button id="extendSample" hidden>終端後に2見開きを追加（匿名試料のみ）</button>
+    <button id="startNearBoundary" hidden>130位置から試す（匿名試料のみ）</button>
+  </aside>
+</body>
+</html>

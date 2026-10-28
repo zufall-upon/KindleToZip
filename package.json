@@ -1,0 +1,33 @@
+{
+  "name": "kindle-to-zip-g02-poc",
+  "version": "0.1.0",
+  "description": "Capture displayed Kindle web reader pages, review and crop images, and export ordered PNG archives on Windows. No DRM bypass.",
+  "author": "zufall-upon",
+  "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zufall-upon/KindleToZip.git"
+  },
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 tests/sample-safety.test.mjs tests/manual-launch.test.mjs tests/mvp-workflow.test.mjs tests/portable-repair-flow.test.mjs",
+    "test:recovery": "node --test --test-concurrency=1 --test-name-pattern=\"Kindleプリセットの可視証拠|動的Kindle試料の公開復帰|案内追従\" tests/portable-repair-flow.test.mjs",
+    "test:resources": "node --test --test-concurrency=1 --test-name-pattern=\"点検画像待機分離|ブラウザ終了だけの失敗|3ボタン公開導線\" tests/portable-repair-flow.test.mjs",
+    "test:ui": "node --test --test-concurrency=1 tests/mvp-workflow.test.mjs tests/portable-repair-flow.test.mjs",
+    "test:store": "node --test --test-concurrency=1 tests/rust-ipc.test.mjs tests/local-store.test.mjs",
+    "start": "node app/main.mjs",
+    "test:headed": "node --test --test-concurrency=1 tests/headed-non-interference.test.mjs",
+    "dist:build": "pwsh -NoProfile -File scripts/build-distribution.ps1",
+    "dist:smoke": "node scripts/test-distribution.mjs",
+    "test:distribution": "node --test tests/portable-distribution.test.mjs",
+    "poc": "node poc/browser/demo.mjs",
+    "poc:manual": "node poc/browser/manual-probe.mjs",
+    "browser:install": "node scripts/install-browser.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.64.1",
+    "pngjs": "7.0.0"
+  }
+}

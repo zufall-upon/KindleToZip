@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>自作番号試料 — Kindle接続なし</title>
+  <link rel="stylesheet" href="/reader.css">
+  <script src="/reader.js" defer></script>
+</head>
+<body>
+  <h1>自作試料 / 12画面 / 実書籍ではありません</h1>
+  <main id="reader" data-fixture="ktz-self-authored-v1" data-book="sample-a" data-session="active" data-generation="1" data-position="1" data-total="12" data-overlay="false">
+    <canvas id="sheet" width="600" height="480" aria-label="番号入り自作画像"></canvas>
+  </main>
+  <nav><button id="next">次の画面</button><output id="position">1 / 12</output></nav>
+  <fieldset>
+    <legend>試料専用の障害注入（実サービス操作ではありません）</legend>
+    <button id="logout">ログアウト相当</button>
+    <button id="other-book">別対象相当</button>
+    <button id="overlay">認証オーバーレイ相当</button>
+    <button id="stall">次の送りを無変化にする</button>
+    <button id="blank">白紙試料</button>
+    <button id="black">黒画面試料</button>
+    <button id="duplicate">次画面を同じ画像にする</button>
+  </fieldset>
+</body>
+</html>

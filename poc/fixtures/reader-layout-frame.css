@@ -1,0 +1,73 @@
+html, body {
+  width: 1100px;
+  height: 900px;
+  margin: 0;
+  overflow: hidden;
+  background: #f7f0df;
+  color: #142e48;
+  font: 14px system-ui, sans-serif;
+}
+
+#readerSurface {
+  position: relative;
+  width: 1100px;
+  height: 900px;
+  overflow: hidden;
+}
+
+#zeroBox { width: 0; height: 0; }
+#contentsBox { display: contents; }
+
+#pageSurface {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  width: 1100px;
+  height: 900px;
+}
+
+#readerChromeTitle {
+  position: absolute;
+  z-index: 2;
+  left: 12px;
+  top: 8px;
+  padding: 5px 8px;
+  background: #fff;
+  border: 1px solid #294d73;
+}
+
+#readerToolbar {
+  position: absolute;
+  z-index: 3;
+  left: 500px;
+  top: 6px;
+  width: 52px;
+  height: 44px;
+  overflow: hidden;
+  background: #f2bb45;
+  border: 1px solid #18324f;
+  text-align: center;
+}
+
+#readerControls {
+  position: fixed;
+  z-index: 4;
+  left: 10px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid #294d73;
+}
+
+#readerControls button {
+  width: 48px;
+  height: 36px;
+}
+
+#position {
+  width: 160px;
+}
