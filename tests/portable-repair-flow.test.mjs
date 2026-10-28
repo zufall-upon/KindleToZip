@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, writeFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { bookFilename } from '../app/export-name.mjs';
 import { PNG } from 'pngjs';
@@ -224,6 +224,40 @@ test('3ボタン公開導線・処理インジケーター: 開始直後のpaint
   await ui.locator('#create').click(); await wait(r.app, s => s.job && !s.busy);
   assert.match(await ui.locator('#destination').inputValue(), /export\.zip$/);
   await ui.screenshot({ path: path.join(evidence, 'anonymous-next-job.png') });
+});
+
+test('保存先ドライバ: 従来型Windowsダイアログのファイル名欄で取消と非保存の選択ができる', async t => {
+  const evidence = path.resolve('artifacts/indicator-review'); await mkdir(evidence, { recursive: true });
+  const directory = await mkdtemp(path.join(evidence, 'legacy-dialog-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const source = await readFile('app/save-dialog.ps1', 'utf8');
+  const declaration = '$dialog = [System.Windows.Forms.SaveFileDialog]::new()';
+  assert.equal(source.split(declaration).length, 2);
+  // Exercise the platform's older common-dialog control IDs without changing
+  // the application's default dialog or replacing any native interaction.
+  const script = path.join(directory, 'legacy-dialog.ps1');
+  await writeFile(script, source.replace(declaration, `${declaration}\n$dialog.AutoUpgradeEnabled = $false`));
+  for (const action of ['cancel', 'select']) await t.test(action, async t => {
+    const host = spawn(path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+      ['-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass', '-File', script],
+      { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    let output = '', errors = '';
+    host.stdout.setEncoding('utf8'); host.stdout.on('data', chunk => { output += chunk; });
+    host.stderr.setEncoding('utf8'); host.stderr.on('data', chunk => { errors += chunk; });
+    const finished = new Promise((resolve, reject) => { host.once('error', reject); host.once('close', resolve); });
+    t.after(async () => { if (host.exitCode === null) host.kill(); await finished; }); // Only this disposable test-owned host.
+    const destination = path.join(directory, 'legacy-selected.zip');
+    host.stdin.end(JSON.stringify({ destination: path.join(directory, 'legacy-initial.zip'), format: 'zip' }) + '\n');
+    const { stdout } = await promisify(execFile)('pwsh', ['-NoProfile', '-File', 'scripts/drive-owned-save-dialog.ps1',
+      '-OwnerPid', String(process.pid), '-Action', action, '-Destination', destination], { timeout: 25000, encoding: 'utf8' });
+    const result = JSON.parse(stdout.trim());
+    assert.equal(result.initialFilename, 'legacy-initial.zip');
+    assert.equal(result.nativeWindowFound, true);
+    assert.equal(result.osInputOrClipboardUsed, false);
+    assert.equal(await finished, 0, errors);
+    assert.equal(JSON.parse(output.trim()), action === 'select' ? destination : null);
+    await assert.rejects(stat(destination), { code: 'ENOENT' }, '選択だけでZIPを作成しない');
+  });
 });
 
 test('3ボタン公開導線・保存先ダイアログ: 実Windows表示・書名初期値・選択・取消・ZIP・再開後の所有名', async t => {

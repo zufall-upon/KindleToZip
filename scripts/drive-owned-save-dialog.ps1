@@ -28,10 +28,19 @@ $file = $null
 $readyDeadline = [DateTime]::UtcNow.AddSeconds(8)
 do {
     $edits = $window.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Edit))
-    foreach ($edit in $edits) { if ($edit.Current.AutomationId -eq '1001') { $file = $edit; break } }
+    # Vista-style dialogs expose 1001; classic common dialogs expose the
+    # filename combo's edit as 1148 (or edt1 / 1152 on older variants).
+    # Never fall back to an arbitrary edit (for example the search/address box).
+    $matches = @($edits | Where-Object {
+        $_.Current.AutomationId -in @('1001', '1148', '1152') -and -not $_.Current.IsOffscreen -and $_.Current.IsEnabled
+    })
+    if ($matches.Count -eq 1) { $file = $matches[0] }
     if (-not $file) { Start-Sleep -Milliseconds 100 }
 } while (-not $file -and [DateTime]::UtcNow -lt $readyDeadline)
-if (-not $file) { throw 'Native filename edit not found.' }
+if (-not $file) {
+    $ids = @($edits | ForEach-Object { $_.Current.AutomationId }) -join ','
+    throw "Native filename edit not found or ambiguous (edit IDs: $ids)."
+}
 $value = $file.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
 $initial = $value.Current.Value
 if ($Screenshot) {

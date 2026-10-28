@@ -33,13 +33,16 @@ Those paths describe this local historical evidence, not files a fresh clone sho
 
 - Preserve author and committer `zufall-upon`. Commit the reviewed final source, required tests/helpers, and release documentation; keep unrelated local work out of staging.
 - The tag must match `package.json` (`v0.1.0` for `0.1.0`). Record the complete source commit. An existing tag or release is not overwritten or deleted to make a retry work.
-- Push the source and its annotated tag. Source CI is associated with that exact commit, not merely the most recent badge value. Never call a failing or unrelated run green.
+- Push the source first and require successful source CI for that exact commit before creating its annotated tag. Never call a failing or unrelated run green.
 
 ```powershell
 $tag = 'v0.1.0'
 $source = (git rev-parse HEAD).Trim()
-git tag -a $tag $source -m "KindleToZip $tag"
 git push origin HEAD:main
+gh run list --workflow ci.yml --commit $source --limit 1
+gh run watch <source-ci-run-id> --exit-status
+# Only after the exact source CI succeeds:
+git tag -a $tag $source -m "KindleToZip $tag"
 git push origin $tag
 ```
 

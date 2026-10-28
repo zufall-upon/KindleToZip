@@ -985,7 +985,7 @@ test('公開MVP画面: 試料プレビュー・明示開始・一時停止/復�
   await page.locator('#format').selectOption('zip');
   await page.locator('#destination').fill(zipDestination);
   await page.locator('#export').click();
-  const zipInfo = await waitFor(r.app, s => s.job.manifest.exports.length === 2);
+  const zipInfo = await waitFor(r.app, s => s.job.manifest.exports.length === 2 && !s.busy);
   const zipOutput = await readFile(zipDestination);
   assert.equal(zipOutput.readUInt32LE(0), 0x04034b50);
   assert.equal(zipInfo.job.manifest.exports[1].entry_count, 2);
@@ -1040,7 +1040,8 @@ test('MVP取得: 12画面後は終端候補で停止し全範囲成功と混同�
   await r.request('preview', { config: sampleConfig });
   await r.request('approve', { confirmed: true });
   await r.request('start', { confirmed: true });
-  const ended = await waitFor(r.app, s => s.state === 'NeedsAttention');
+  // This covers all 12 real captures/commits/guarded turns, not one UI action.
+  const ended = await waitFor(r.app, s => s.state === 'NeedsAttention', 60_000);
   assert.equal(ended.reason, 'end_candidate');
   assert.equal(ended.job.manifest.images.length, 12);
   assert.equal(ended.job.manifest.range_confirmed, false);
@@ -1472,7 +1473,7 @@ test('MVP送り待機競合: クリック可能待ちの取消・対象変更で
         await r.request('preview', { config: sampleConfig });
         await r.request('approve', { confirmed: true, resumeConfirmed: true });
         await r.request('start', { confirmed: true });
-        await waitFor(r.app, s => s.state === 'NeedsAttention');
+        await waitFor(r.app, s => s.state === 'NeedsAttention', 60_000);
         await r.app.loop;
         const resumed = await r.app.snapshot();
         assert.equal(resumed.reason, 'end_candidate', '本人の照合・明示再開後は未送信の1回だけを送り、同じ位置を保存し直さない');
@@ -1540,7 +1541,7 @@ test('MVP直下iframe送り: 通常送りを維持し座標取得中の要素・
       }
       await r.request('start', { confirmed: true });
       if (mode === 'stable') {
-        await page.waitForFunction(() => document.querySelector('#position').textContent === '2 / 12');
+        await page.waitForFunction(() => document.querySelector('#position').textContent === '2 / 12', null, { timeout: 10_000 });
         await r.request('pause');
       } else {
         await waitFor(r.app, s => s.state === 'NeedsAttention');
@@ -1607,20 +1608,22 @@ test('MVP高解像度: 2倍描画を実測し1倍切替で古い承認を破棄�
 });
 
 test('MVP高解像度: スクロール後も選択した可視範囲の画素を1倍・2倍で保存する', async t => {
-  const r = await setup(t);
-  await r.request('create'); await r.request('openBrowser', { mode: 'sample' });
-  const page = r.app.reader.page;
-  await r.request('selectReaderTab', { id: (await r.app.snapshot()).readerTabs[0].id });
-  await page.evaluate(() => {
-    document.body.style.cssText = 'margin:0;width:2000px;height:2000px';
-    document.querySelector('h1').style.cssText = 'position:fixed;left:700px;top:0';
-    document.querySelector('#reader').style.cssText = 'position:absolute;left:140px;top:250px;width:600px;height:480px;border:0';
-    document.querySelector('nav').style.cssText = 'position:fixed;left:700px;top:80px';
-    document.querySelector('fieldset').style.cssText = 'position:fixed;left:700px;top:200px;width:300px';
-    window.scrollTo(100, 150);
-  });
-  await page.locator('#stall').click();
-  for (const [index, scale] of [1, 2].entries()) await t.test(`${scale}倍`, async () => {
+  // Each scale is a separate acquisition, not a resume at the same position
+  // with different pixels/dimensions (which must remain safely blocked).
+  for (const scale of [1, 2]) await t.test(`${scale}倍`, async t => {
+    const r = await setup(t);
+    await r.request('create'); await r.request('openBrowser', { mode: 'sample' });
+    const page = r.app.reader.page;
+    await r.request('selectReaderTab', { id: (await r.app.snapshot()).readerTabs[0].id });
+    await page.evaluate(() => {
+      document.body.style.cssText = 'margin:0;width:2000px;height:2000px';
+      document.querySelector('h1').style.cssText = 'position:fixed;left:700px;top:0';
+      document.querySelector('#reader').style.cssText = 'position:absolute;left:140px;top:250px;width:600px;height:480px;border:0';
+      document.querySelector('nav').style.cssText = 'position:fixed;left:700px;top:80px';
+      document.querySelector('fieldset').style.cssText = 'position:fixed;left:700px;top:200px;width:300px';
+      window.scrollTo(100, 150);
+    });
+    await page.locator('#stall').click();
     await r.request('setCaptureSettings', { capture_scale: scale, page_output_mode: 'single_image', reading_direction: 'right_to_left' });
     await page.locator('#sheet').evaluate(canvas => {
       const dpr = devicePixelRatio;
@@ -1644,11 +1647,11 @@ test('MVP高解像度: スクロール後も選択した可視範囲の画素を
       }
     };
     assertVisiblePixels(r.app.previewImage);
-    await r.request('approve', { confirmed: true, resumeConfirmed: true });
+    await r.request('approve', { confirmed: true });
     await r.request('start', { confirmed: true });
-    const captured = await waitFor(r.app, s => s.job.manifest.images.length === index + 1);
+    const captured = await waitFor(r.app, s => s.job.manifest.images.length === 1);
     await r.request('pause');
-    assertVisiblePixels(await r.app.image(captured.job.manifest.images[index].capture_id, true));
+    assertVisiblePixels(await r.app.image(captured.job.manifest.images[0].capture_id, true));
   });
 });
 
@@ -1752,6 +1755,10 @@ test('MVP単ページ: 見開きプレビューの左右順・奇数幅契約・
     const saved = (await r.app.snapshot()).job.manifest.images[0];
     assert.equal(saved.split, null, 'Rust確定画像でも表紙を分割しない');
     assert.deepEqual([saved.width, saved.height], [1200, 960]);
+    // Align the reader to the next unsaved position before replacing the
+    // cover fixture. Same-position/different-pixels must not authorize resume.
+    const count = (await r.app.snapshot()).job.manifest.images.length;
+    if (Number(await r.app.reader.page.locator('#reader').getAttribute('data-position')) === count) await r.app.reader.page.locator('#next').click();
     await r.app.reader.page.locator('#sheet').evaluate(canvas => canvas.getContext('2d').putImageData(window.savedSpread, 0, 0));
   });
   await ui.locator('#quickPreview').click(); await ui.locator('#previewImage').waitFor({ state: 'visible' });

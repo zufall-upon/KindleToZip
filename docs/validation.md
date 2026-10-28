@@ -52,3 +52,18 @@ The retained-image regression records a safe stop after **67 images**, continuat
 Release preparation reuses these saved results. The existing read-only collector matched **33 packaged source/controller files**, the original build, deployed EXE, and retained evidence copy, including the payload hash. It completed in **2.78 seconds** command elapsed without rebuilding or launching the app. The evidence paths remain local/private; the source collector is `scripts/check-resume-delivery.mjs`.
 
 The final source is frozen separately for the [release workflow](releasing.md). A GitHub Actions rebuild has its own hash and required checks; local evidence is not a substitute for that workflow or a claim that a different executable was tested. Clean-Windows acceptance and complete current real-book capture remain unverified.
+
+## Release admission follow-up — 2026-10-28
+
+Source CI [40662182897](https://github.com/zufall-upon/KindleToZip/actions/runs/40662182897) tested `c69ed730b88931ef5b129bf0d5b4cfd194db5d0d`. Rust/IPC passed; the public source UI run reported **129 passed / 10 failed / 139 tests** in **670.96 seconds**, including failed parents and subtests. Deployment was skipped. No tag, draft, or executable release was created from that failure.
+
+The corrections are limited to test admission; the application and accepted local EXE are unchanged:
+
+- Wait for export operation ownership to be released, not merely a newly appended export record, before testing overwrite refusal.
+- Give the complete 12-image acquisition/resume a bounded 60-second wait; the original 25-second whole-fixture wait also failed locally. Give the first real iframe turn its own test wait instead of inheriting the reader's 1.8-second single-action timeout. Production timeouts and assertions are unchanged.
+- Test each capture scale in an independent job. Align the split-page fixture to its next unsaved position before resuming. The same-position/different-pixels guard stays intact; it must not be bypassed to make these image-format tests pass.
+- Discover the known filename edit IDs in both upgraded and classic owned Windows save dialogs, rejecting missing/ambiguous matches rather than choosing an arbitrary edit. A forced classic-dialog regression reproduced edit ID `1148` locally. Its cancel/selection tests plus the existing public-UI native save/export regression passed **4/4 in 16.43 seconds**. Selecting a destination alone still creates no archive.
+
+The six affected workflow groups passed **17/17 reported tests in 106.03 seconds**, including overwrite refusal, 12-image end detection/resume, cancellation and same-position collision blocking, stable/moving iframe controls, both scrolled capture scales, and split-page ZIP/CBZ output. Together with the native-dialog checks, the bounded local regression result is **21/21**, without repeating unchanged Rust, broad UI, packaged-app, real-book, or cleanup checks.
+
+These local affected checks do not make the failed hosted run successful. The correction commit still requires its own successful mandatory source CI before tagging and the separate hosted packaged-release gates before publication.
