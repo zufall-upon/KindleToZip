@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import { bookFilename } from '../app/export-name.mjs';
 import { PNG } from 'pngjs';
 import { startApplication } from '../app/server.mjs';
+import { Application } from '../app/application.mjs';
 import { openControlWindow as openWindow } from '../app/control-window.mjs';
 import { withPublicDisclosures } from '../poc/browser/public-ui-controls.mjs';
 import { checkLanguageFlow } from './support/language-flow.mjs';
@@ -19,7 +20,23 @@ async function openControlWindow(...args) {
 }
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+test('再開判定は送信済み・不明の同位置を再送せず、旧作業の同一画像も重複取得しない', () => {
+  const app = Object.create(Application.prototype);
+  const png = Buffer.from('anonymous image');
+  app.job = { manifest: { last_capture_id: 67, images: [{ capture_id: 67, sha256: hash(png) }],
+    checkpoint: { capture_id: 67, position: '134', dispatch: 'not_sent' } } };
+  assert.equal(app.planResume({ png, position: '134' }).mode, 'advance');
+  for (const dispatch of ['unknown', 'sent', 'confirmed']) {
+    app.job.manifest.checkpoint.dispatch = dispatch;
+    assert.equal(app.planResume({ png, position: '134' }).mode, 'blocked');
+    assert.equal(app.planResume({ png: Buffer.from('next image'), position: '136' }).mode, 'capture');
+  }
+  delete app.job.manifest.checkpoint;
+  assert.equal(app.planResume({ png, position: '134' }).mode, 'blocked');
+  assert.equal(app.planResume({ png: Buffer.from('next image'), position: '136' }).mode, 'capture');
+});
 test('136位置next not_uniqueから公開再開し重複なしで継続', async t => {
+  await mkdir(path.resolve('artifacts/indicator-review'), { recursive: true });
   const directory = await mkdtemp(path.resolve('artifacts/indicator-review/resume-source-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   await checkCaptureResume({ startApplication, openControlWindow, evidence: directory, nearBoundary: true });
@@ -39,6 +56,7 @@ function storedPngEntries(archive) {
 }
 
 test('日英中の簡易切替: 公開選択・動的残数・隣接エラー・確認・入力と承認の保持', async t => {
+  await mkdir(path.resolve('artifacts/indicator-review'), { recursive: true });
   const directory = await mkdtemp(path.resolve('artifacts/indicator-review/language-'));
   const r = await startApplication({ dataDir: path.join(directory, 'data'), sampleFixture: 'kindle-chrome-dynamic' });
   const control = await openControlWindow(r.url, { headless: true });

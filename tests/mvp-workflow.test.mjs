@@ -1400,7 +1400,7 @@ test('MVP停止競合: 撮影待ちの一時停止で未確定画像と送りを
 });
 
 test('MVP送り待機競合: クリック可能待ちの取消・対象変更で遅延送りせず確定原本を保つ', async t => {
-  for (const interruption of ['pause', 'stop', 'other-book', 'logout']) {
+  for (const interruption of ['pause', 'pause-position-collision', 'stop', 'other-book', 'logout']) {
     await t.test(interruption, async t => {
       const r = await setup(t);
       await r.request('create');
@@ -1434,9 +1434,9 @@ test('MVP送り待機競合: クリック可能待ちの取消・対象変更で
       // next button is covered; the bound reader and position remain visible.
       await sleep(450);
       let cancellation;
-      if (interruption === 'pause' || interruption === 'stop') {
-        cancellation = r.request(interruption);
-        await waitFor(r.app, s => s.state === (interruption === 'pause' ? 'Paused' : 'Review'));
+      if (interruption.startsWith('pause') || interruption === 'stop') {
+        cancellation = r.request(interruption.startsWith('pause') ? 'pause' : 'stop');
+        await waitFor(r.app, s => s.state === (interruption.startsWith('pause') ? 'Paused' : 'Review'));
       } else {
         await page.locator(`#${interruption}`).click();
       }
@@ -1451,13 +1451,34 @@ test('MVP送り待機競合: クリック可能待ちの取消・対象変更で
       assert.equal(ended.job.manifest.range_confirmed, false);
       assert.equal(ended.job.manifest.exports.length, 0);
       assert.deepEqual(await readFile(originalPath), original);
+      if (interruption === 'pause-position-collision') {
+        // A percentage-like position can remain identical across distinct
+        // images. Move the anonymous reader to image 2 but retain its label.
+        await page.locator('#next').click();
+        await page.locator('#position').evaluate(element => { element.textContent = '1 / 12'; });
+        await r.request('preview', { config: sampleConfig });
+        const preview = await r.app.snapshot();
+        assert.equal(preview.resumePlan.imageMatches, false);
+        assert.equal(preview.resumePlan.currentPosition, preview.resumePlan.lastPosition);
+        assert.equal(preview.resumePlan.dispatch, 'not_sent');
+        assert.equal(preview.resumePlan.mode, 'blocked');
+        await assert.rejects(r.app.command('approve', { confirmed: true, resumeConfirmed: true }), /resume_position_required/);
+        await assert.rejects(r.app.command('start', { confirmed: true }), /explicit_start_required/);
+        assert.equal(await page.evaluate(() => window.mvpAdvanceClicks), 1, '承認・明示開始を試みても未取得画像2を飛ばさない');
+        assert.equal((await r.app.snapshot()).job.manifest.images.length, 1);
+        assert.deepEqual(await readFile(originalPath), original);
+      }
       if (interruption === 'pause') {
         await r.request('preview', { config: sampleConfig });
         await r.request('approve', { confirmed: true, resumeConfirmed: true });
         await r.request('start', { confirmed: true });
         await waitFor(r.app, s => s.state === 'NeedsAttention');
         await r.app.loop;
-        assert.equal((await r.app.snapshot()).reason, 'image_review_required', '同じ位置の再取得は重複候補として保持して停止');
+        const resumed = await r.app.snapshot();
+        assert.equal(resumed.reason, 'end_candidate', '本人の照合・明示再開後は未送信の1回だけを送り、同じ位置を保存し直さない');
+        assert.equal(resumed.job.manifest.images.length, 12);
+        assert.equal(resumed.job.manifest.images.some(image => image.duplicate_candidate), false);
+        assert.deepEqual(await readFile(originalPath), original);
       }
     });
   }

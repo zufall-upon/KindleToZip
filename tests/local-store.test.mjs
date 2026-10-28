@@ -47,6 +47,26 @@ function expectError(response, code) {
   assert.equal(response.code, code);
 }
 
+test('送りの不明状態は送信前に永続化し再起動後も未送信へ戻さない', async t => {
+  await mkdir(root, { recursive: true });
+  const directory = await mkdtemp(path.join(root, 'advance-checkpoint-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const created = expectOk(run([request(1, 'create_job', { base_dir: directory }), request(2, 'close')])[0]).snapshot;
+  const image = png(80, 80, (x, y) => x > y ? [220, 120, 30] : [20, 70, 120]);
+  const result = run([
+    request(1, 'open_job', { path: created.job_path }), request(2, 'capture_start'), request(3, 'capture_begin'),
+    request(4, 'capture_chunk', { capture_id: 1, data_base64: image.toString('base64') }),
+    request(5, 'capture_commit', { position: '134' }),
+    request(6, 'record_advance', { capture_id: 1, dispatch: 'sent' }),
+    request(7, 'record_advance', { capture_id: 1, dispatch: 'unknown' }), request(8, 'close'),
+  ]);
+  expectOk(result[4]); expectError(result[5], 'invalid_advance_checkpoint'); expectOk(result[6]);
+  const reopened = expectOk(run([request(1, 'open_job', { path: created.job_path }), request(2, 'close')])[0]).snapshot;
+  assert.deepEqual(reopened.manifest.checkpoint, { capture_id: 1, position: '134', dispatch: 'unknown' });
+  assert.equal(reopened.manifest.images.length, 1);
+  assert.deepEqual(await readFile(path.join(created.job_path, 'originals/000001.png')), image);
+});
+
 function liveClient() {
   const child = spawn(guardExecutable, [], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
   child.stdout.setEncoding('utf8');

@@ -212,6 +212,9 @@ function destinationAlreadyRegistered() {
   // Unknown destinations still go through the store's no-overwrite check.
   return state.job.manifest.exports.some(item => item.destination && normalize(destination) === normalize(item.destination));
 }
+function needsResumeConfirmation() {
+  return Boolean(state?.job && (state.job.manifest.images.length || state.job.manifest.state !== 'ready'));
+}
 function mappingStatus() {
   const fields = Object.keys(mappingLabels);
   const complete = fields.filter(field => $(field).value.trim());
@@ -274,7 +277,7 @@ function mappingStatus() {
   $('reconnect').hidden = connected;
   const validPreview = connected && displayedPreview && !configurationDirty && state?.previewReady;
   $('approval').disabled = !validPreview || busy;
-  const needsResume = state?.job && state.job.manifest.state !== 'ready';
+  const needsResume = needsResumeConfirmation();
   $('resumeLabel').hidden = !needsResume;
   $('resumeCapture').disabled = !connected || busy || !state?.job?.manifest.images.length;
   $('resumeComparison').hidden = !validPreview || !state?.resumePlan;
@@ -295,7 +298,7 @@ function updateWorkflowControls({ busy = pendingActions > 0 || state?.busy, vali
   const selectedImages = state?.job?.manifest?.selected_capture_ids?.length ?? 0;
   const capturing = state?.state === 'Capturing';
   const cancelableOperation = ['preview', 'quickPreview', 'pick', 'pickAll', 'expandReader', 'selectReaderTab', 'chooseDestination'].includes(state?.activeOperation);
-  const needsResume = hasJob && state.job.manifest.state !== 'ready';
+  const needsResume = needsResumeConfirmation();
   const alreadyExportedHere = destinationAlreadyRegistered();
   const confirmed = $('previewConfirmed').checked;
   const resumeConfirmed = $('resumeConfirmed').checked;
@@ -597,7 +600,7 @@ async function renderPreviewOutput(configRevision) {
     requirePreview(revision, configRevision);
     $('resumeStatus').textContent = `確定画像 #${resume.lastCaptureId}：${resume.lastPosition ?? '位置記録なし'} ／ 現在：${resume.currentPosition}。`;
     $('resumeStatus').append(document.createTextNode(resume.mode === 'advance'
-      ? '最後の確定画像と一致・送り未送信。明示開始後、重複保存せず1回送って続けます。'
+      ? '最後の確定位置と一致・送り未送信。画像を目視照合してください。明示開始後、重複保存せず1回送って続けます。'
       : resume.mode === 'capture' ? '明示開始後、現在の未取得位置から保存します。送りの再送はしません。'
       : 'この位置では再開できません。送り済み・不明、または画像と位置の照合不一致です。最後の確定画像の直後へ手動調整し、再プレビューしてください。'));
   }
@@ -772,7 +775,7 @@ async function advanceFlow() {
   if (validPreview) {
     if (!state.previewApproved || state.state !== 'Ready') {
       if (!$('previewConfirmed').checked) throw new Error('プレビューで本・範囲・位置を確認し、チェックを入れてください。');
-      if (state.job.manifest.state !== 'ready' && !$('resumeConfirmed').checked) throw new Error('最後の確定画像と現在位置を照合したチェックが必要です。');
+      if (needsResumeConfirmation() && !$('resumeConfirmed').checked) throw new Error('最後の確定画像と現在位置を照合したチェックが必要です。');
       await command('approve', { confirmed: true, resumeConfirmed: $('resumeConfirmed').checked });
       return 'プレビューを承認しました。次の「決定・次へ」は本人の明示開始です。';
     }

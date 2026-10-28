@@ -462,11 +462,13 @@ export class Application {
           try { await this.reader.requireBound(); }
           catch (error) { this.invalidate(error.code ?? 'target_changed'); throw error; }
           this.job = (await this.store.call('job_info')).snapshot;
+          // Ready records the store transition, not consent for a later preview.
+          // Retained images always need comparison against this preview again.
+          if ((this.job.manifest.images.length || this.job.manifest.state !== 'ready') && input.resumeConfirmed !== true) throw new AppError('resume_confirmation_required');
+          if (this.job.manifest.images.length && (!this.resumePlan || this.resumePlan.mode === 'blocked')) throw new AppError('resume_position_required');
+          const owner = this.job.manifest.images.find(image => image.book)?.book;
+          if (owner && owner.identity !== this.previewBook?.identity) throw new AppError('book_identity_changed');
           if (this.job.manifest.state !== 'ready') {
-            if (input.resumeConfirmed !== true) throw new AppError('resume_confirmation_required');
-            if (this.job.manifest.images.length && (!this.resumePlan || this.resumePlan.mode === 'blocked')) throw new AppError('resume_position_required');
-            const owner = this.job.manifest.images.find(image => image.book)?.book;
-            if (owner && owner.identity !== this.previewBook?.identity) throw new AppError('book_identity_changed');
             await this.store.call('resume_confirm', { last_capture_id: this.job.manifest.last_capture_id, target_confirmed: true });
           }
           if (this.epoch !== epoch) throw new AppError('cancelled');
@@ -564,7 +566,7 @@ export class Application {
       mode = samePixels && samePosition && checkpoint.dispatch === 'not_sent'
         && !last.blank_candidate && !last.duplicate_candidate ? 'advance' : 'blocked';
     }
-    return { mode, lastCaptureId: last?.capture_id, lastPosition: checkpoint?.position ?? null,
+    return { mode, imageMatches: samePixels, lastCaptureId: last?.capture_id, lastPosition: checkpoint?.position ?? null,
       currentPosition: preview.position, dispatch: checkpoint?.dispatch ?? 'unknown' };
   }
 
@@ -589,9 +591,18 @@ export class Application {
       });
     };
     try {
-      // Only a freshly previewed, byte-identical last original with a durable
-      // not-sent checkpoint may advance without capturing that page twice.
-      if (advanceFirst && !cancelled()) await advance(job.manifest.last_capture_id);
+      // Only the identical last image at its checkpoint with a durable
+      // not-sent record may advance without saving it twice. Position labels
+      // alone can collide across different, not-yet-captured images.
+      if (advanceFirst && !cancelled()) {
+        const current = await reader.capture();
+        await this.inspectLayout(current); // Preserve black/invalid PNG guards even without another commit.
+        if (cancelled()) return;
+        if (!this.previewImage || createHash('sha256').update(current).digest('hex') !== createHash('sha256').update(this.previewImage).digest('hex')) {
+          throw new AppError('resume_position_required');
+        }
+        await advance(job.manifest.last_capture_id);
+      }
       while (!cancelled()) {
         progress.detail = '総数・残数・割合は未確定。次の画像の取得待ち';
         stage = 'capture';

@@ -71,7 +71,8 @@ jobs:
           $report = $build.Report
           $packageDir = New-Item -ItemType Directory -Path release/package
           Copy-Item -LiteralPath $build.Executable -Destination "$packageDir/KindleToZip-Portable.exe"
-          Copy-Item -LiteralPath LICENSE,README.md -Destination $packageDir
+           Copy-Item -LiteralPath LICENSE -Destination $packageDir
+           Copy-Item -LiteralPath docs/portable.md -Destination "$packageDir/README.md"
           $notices = New-Item -ItemType Directory -Path "$packageDir/third-party-notices"
           foreach ($name in @('playwright','playwright-core')) {
             $destination = New-Item -ItemType Directory -Path "$notices/$name"

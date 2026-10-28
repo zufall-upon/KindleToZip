@@ -207,6 +207,8 @@ function Test-PackagedWholeProgress($Window) {
     try {
         $result = & (Join-Path $bundle.FullName 'node/node.exe') (Join-Path $root 'tests/support/portable-whole-progress.mjs')
         if ($LASTEXITCODE -ne 0) { throw 'Packaged multiple-image public UI regression failed.' }
+        & (Join-Path $bundle.FullName 'node/node.exe') (Join-Path $root 'tests/support/portable-capture-resume.mjs') | Write-Host
+        if ($LASTEXITCODE -ne 0) { throw 'Packaged retained-image resume public UI regression failed.' }
         return $result | ConvertFrom-Json
     } finally {
         Remove-Item Env:KTZ_REVIEW_BUNDLE, Env:KTZ_REVIEW_JOB, Env:KTZ_REVIEW_EVIDENCE -ErrorAction SilentlyContinue

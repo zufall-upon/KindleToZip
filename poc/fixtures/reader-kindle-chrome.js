@@ -63,7 +63,11 @@ if (new URLSearchParams(location.search).get('tabs') === '1') {
 }
 
 if (ambiguous) {
-  for (const id of ['hideDuplicate', 'extendSample', 'startNearBoundary']) document.querySelector(`#${id}`).hidden = false;
+  for (const id of ['hideDuplicate', 'extendSample', 'startNearBoundary', 'addDuplicate']) document.querySelector(`#${id}`).hidden = false;
+  document.querySelector('#addDuplicate').addEventListener('click', () => {
+    if (position.value !== '136' || document.querySelector('#duplicateNext')) return;
+    const duplicate = next.cloneNode(true); duplicate.id = 'duplicateNext'; toolbar.append(duplicate);
+  });
   document.querySelector('#startNearBoundary').addEventListener('click', () => { position.value = '130'; paint(130); });
   document.querySelector('#hideDuplicate').addEventListener('click', () => { const duplicate = document.querySelector('#duplicateNext'); if (duplicate) duplicate.hidden = true; });
   document.querySelector('#extendSample').addEventListener('click', () => { anonymousEnd += 4; next.setAttribute('aria-disabled', 'false'); });
@@ -73,10 +77,6 @@ if (ambiguous) {
     window.anonymousTurns++;
     position.value = String(Number(position.value) + 2);
     paint(Number(position.value));
-    if (position.value === '136') setTimeout(() => {
-      const duplicate = next.cloneNode(true); duplicate.id = 'duplicateNext';
-      toolbar.append(duplicate);
-    }, 550);
     next.setAttribute('aria-disabled', String(Number(position.value) >= anonymousEnd));
   });
 } else if (dynamic) {

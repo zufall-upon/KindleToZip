@@ -11,6 +11,7 @@ label { display: block; margin: 12px 0; } .grid { display: grid; grid-template-c
 #reason { margin: 0 12px; color: #8b3b0a; overflow-wrap: anywhere; }
 #message { min-height: 0; margin: 6px 0 0; color: #943013; white-space: pre-wrap; overflow-wrap: anywhere; }
 #previewImage, #inspectImage { max-width: 100%; max-height: 650px; object-fit: contain; background: transparent; border: 1px solid #94a3b8; }
+#resumeImage { max-width: 100%; max-height: 650px; object-fit: contain; background: transparent; border: 1px solid #94a3b8; box-sizing: border-box; }
 .images { display: flex; flex-wrap: wrap; gap: 16px; } .images article { border: 1px solid #71879e; padding: 10px; width: 180px; }
 .images img { width: 180px; height: 160px; object-fit: contain; } .images p { margin: 3px 0; } pre, #jobPath, #issues { white-space: pre-wrap; overflow-wrap: anywhere; }
 footer { color: #465b72; margin: 30px 0; }

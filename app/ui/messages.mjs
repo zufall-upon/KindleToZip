@@ -6,7 +6,7 @@ export const messages = [
   ['現在位置が最後の画像の直後か、本人が照合してください。違う場合は公式画面で手動調整し、再プレビューしてください。', 'Compare the current position with the page immediately after the last image. If needed, adjust manually on the official page and preview again.', '请本人核对当前位置是否紧接最后图像。必要时在官方页面手动调整并重新预览。'],
   ['画像を残して途中から再開', 'Resume with retained images', '保留图像并继续获取'],
   ['画像を保持して再開準備へ戻りました。再プレビュー・本人確認後、別操作で開始してください。', 'Images retained. Preview again, confirm personally, then explicitly start in a separate action.', '已保留图像。请重新预览并由本人确认，再单独明确开始。'],
-  ['最後の確定画像と一致・送り未送信。明示開始後、重複保存せず1回送って続けます。', 'Matches the last committed image; turn not sent. Explicit start turns once without saving it twice.', '与最后确定图像一致，尚未翻页。明确开始后翻一页继续，不重复保存。'],
+  ['最後の確定位置と一致・送り未送信。画像を目視照合してください。明示開始後、重複保存せず1回送って続けます。', 'Matches the last committed position; turn not sent. Compare the images visually. Explicit start turns once without saving it twice.', '与最后确定位置一致，尚未翻页。请目视核对图像。明确开始后翻一页继续，不重复保存。'],
   ['明示開始後、現在の未取得位置から保存します。送りの再送はしません。', 'Explicit start saves from the current uncaptured position. No previous turn is resent.', '明确开始后从当前未获取位置保存，不重发之前的翻页。'],
   ['この位置では再開できません。送り済み・不明、または画像と位置の照合不一致です。最後の確定画像の直後へ手動調整し、再プレビューしてください。', 'Cannot resume here: turn sent / unknown, or image and position do not match. Manually move immediately after the last committed image and preview again.', '无法从此处继续：翻页已发送／未知，或图像与位置不一致。请手动移到最后确定图像之后并重新预览。'],
   ['確定画像 #', 'Committed image #', '确定图像 #'], ['位置記録なし', 'No position record', '无位置记录'], [' ／ 現在：', ' / Current: ', ' ／ 当前：'],

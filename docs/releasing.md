@@ -10,13 +10,74 @@
 
 There is no claim of bit-for-bit reproducible builds, independent security review, clean-Windows acceptance, real-Kindle acceptance, or legal clearance. Until the first successful workflow run, the workflow itself remains unverified on GitHub-hosted runners.
 
-## Maintainer procedure
+## Maintainer routine: freeze, draft, verify, publish
 
-1. Review [security and network disclosures](security-and-trust.md), [legal questions](legal-notes-ja.md), third-party license/notice/corresponding-source obligations, and the exact source revision. Do not put authentication state or real book content into CI.
-2. After source CI succeeds, create and push a version tag such as `v0.1.0` for the current `main` commit. The tag version must match `package.json`.
-3. In Actions, select **Draft Windows release**, select `main`, and enter that tag. Use no Amazon credentials or repository secrets; the workflow uses the short-lived GitHub token only.
-4. Check the complete build and packaged-test logs, checksums, provenance, build metadata, and bundled license notices. Check the package on a clean Windows PC. A fixture test is not acceptance of every Kindle layout.
-5. Review the draft's known limitations and outstanding legal questions before deciding whether to make it public. The workflow never publishes the draft automatically. Rerunning against an existing release fails instead of replacing its assets.
+Treat a release request as a bounded handoff, not a new improvement project. Group the related final fixes, reuse passed checks for the unchanged candidate, and stop adding tests or features once the required evidence and public deliverable agree.
+
+### 1. Freeze the accepted local candidate
+
+- Record version, executable SHA-256, build report, saved packaged-UI evidence, and the exact source files included in the EXE. Inspect the Git diff and staging list; do not blindly commit unrelated work.
+- Reuse existing native test results. A read-only hash/source/evidence comparison is not another app run. Do not rebuild, repeat broad tests, restart the reader, re-open real books, or repeat cleanup merely to obtain a fresh-looking timestamp.
+- If code or the executable differs, refresh only the affected evidence. Never relabel an older result as a pass for different bytes.
+- Exclude profiles, runtime/data/temp folders, captured pages, private records, and original recordings. Do not delete them or forcibly stop an app as part of release preparation.
+
+For the accepted 2026-10-28 retained-image-resume candidate, the existing read-only collector is:
+
+```powershell
+node scripts/check-resume-delivery.mjs artifacts/releases/build-20261028-080646-046e7c08/KindleToZip-Portable.json artifacts/indicator-review/p1028171110
+```
+
+Those paths describe this local historical evidence, not files a fresh clone should contain or a command to replay every release. Keep a new release's own report/evidence paths in its local handoff record.
+
+### 2. Commit the release source and version tag
+
+- Preserve author and committer `zufall-upon`. Commit the reviewed final source, required tests/helpers, and release documentation; keep unrelated local work out of staging.
+- The tag must match `package.json` (`v0.1.0` for `0.1.0`). Record the complete source commit. An existing tag or release is not overwritten or deleted to make a retry work.
+- Push the source and its annotated tag. Source CI is associated with that exact commit, not merely the most recent badge value. Never call a failing or unrelated run green.
+
+```powershell
+$tag = 'v0.1.0'
+$source = (git rev-parse HEAD).Trim()
+git tag -a $tag $source -m "KindleToZip $tag"
+git push origin HEAD:main
+git push origin $tag
+```
+
+### 3. Run the existing mandatory release workflow once
+
+In Actions, select **Draft Windows release**, choose `main`, and enter the existing tag. Or use an authenticated GitHub CLI:
+
+```powershell
+gh workflow run release.yml --ref main -f "tag=$tag"
+gh run list --workflow release.yml --commit $source --limit 1
+gh run watch <run-id> --exit-status
+```
+
+The hosted workflow builds a **new** executable and runs its mandatory Rust, source UI, deployment, and packaged selection/export gates. These gates are not removed to reuse local evidence, and its executable hash need not equal the locally accepted build. Do not manually repeat already-passed local suites alongside it. On a failure, inspect that step and fix the smallest actual blocker; do not dispatch repeated full runs without a cause.
+
+The ZIP uses the trilingual [Portable guide](portable.md) as its root `README.md`, rather than the source-setup overview. No development environment is required to use the bundled executable.
+
+### 4. Verify the draft's actual assets
+
+- Require successful source CI for the frozen commit and a successful release workflow. Match the tag, workflow commit, build metadata, provenance, checksum list, ZIP, and EXE. The draft is not proof of success by itself.
+- Read back the actual transferred archive and verify its hashes and attestation. Check the allowlisted contents, license/notices, and absence of private user data. Reuse the workflow's packaged public selection/export result; do not re-run unchanged acceptance without a specific gap.
+- Keep clean-Windows, current Kindle layout, whole-book acquisition, legal clearance, and third-party redistribution review distinct from fixture success. Record any unverified item honestly. A stable-ready claim requires its applicable acceptance; an explicitly authorized experimental public prerelease must state the remaining limits instead of marking them passed.
+
+### 5. Publish only the authorized scope
+
+The workflow creates a **draft**, never a public release automatically. Publish only when the user explicitly requests general availability. The first public `v0.1.0` is an experimental prerelease, not a stable/clean-Windows or complete-book certification.
+
+```powershell
+gh release edit $tag --draft=false --prerelease --latest=false --notes-file <reviewed-release-notes.md>
+```
+
+Review [security disclosures](security-and-trust.md), [legal questions](legal-notes-ja.md), and the bundled third-party notices/source obligations when preparing the notes. Do not claim an independent audit or legal clearance. Existing releases/assets are never silently replaced.
+
+### 6. Update the public entry points and stop
+
+- Check the public release URL and download names, then verify a public asset against its published checksum. Retain version, source commit, run URLs, asset hashes, and publication result in the handoff record.
+- After publication succeeds, update English/Japanese/Simplified Chinese availability text and Portable/source entry links. Keep the historical initial validation report and distinguish it from current CI/results.
+- Keep project release instructions in this document and the local `AGENTS.md` work memo. In an interrupted run, inspect the existing tag, run, and release first; do not start over, create another candidate, or overwrite a completed release.
 
 GitHub Actions artifacts are uploaded to GitHub and are not private storage, even when a release is a draft. The release workflow is not run as part of initial source publication.
 

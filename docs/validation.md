@@ -42,3 +42,13 @@ The source was intentionally frozen for initial publication. Concurrent local im
 No new portable executable was built, accepted, or published during this task. GitHub-hosted CI and the manual release workflow are separate executions; consult [Actions](https://github.com/zufall-upon/KindleToZip/actions) for their actual results. The manual release workflow must stop when source tests fail, and must not be bypassed to publish an unverified candidate.
 
 The initial build attempt in the active development directory also encountered a locked controller executable. Testing moved to an isolated copy without terminating the running app. An initial junction-based browser test setup was replaced by a plain browser copy before the results above were collected. These harness corrections are not application fixes.
+
+## Final local Portable candidate — 2026-10-28
+
+This later record does not erase the initial failed run above. The accepted local `0.1.0` Portable candidate is **859,432,525 bytes**, SHA-256 **`d0edebae5e3f7609c8e2ad27a36df5ee2830570a0753e61b2055e8910ae9593d`**. Saved native UI evidence records the self-authored sample, public selection of all three languages, distinct-folder ZIP destinations, cancel/keep/reset consent, preserved exports, and retaken output.
+
+The retained-image regression records a safe stop after **67 images**, continuation to **71**, and a separately confirmed continuation to **73**. Saved originals remain intact, duplicate/missing captures are absent in that sample, fresh resume comparison is required, and a same-position/different-pixels case is blocked. This is anonymous fixture evidence, not Amazon authentication or whole-real-book acceptance.
+
+Release preparation reuses these saved results. The existing read-only collector matched **33 packaged source/controller files**, the original build, deployed EXE, and retained evidence copy, including the payload hash. It completed in **2.78 seconds** command elapsed without rebuilding or launching the app. The evidence paths remain local/private; the source collector is `scripts/check-resume-delivery.mjs`.
+
+The final source is frozen separately for the [release workflow](releasing.md). A GitHub Actions rebuild has its own hash and required checks; local evidence is not a substitute for that workflow or a claim that a different executable was tested. Clean-Windows acceptance and complete current real-book capture remain unverified.
