@@ -294,7 +294,7 @@ async function publicLayoutPreview() {
         await ui.locator('[data-stage-target="export"]').first().click();
         assert.equal(await ui.locator('#format').inputValue(), 'zip');
         const destination = await ui.locator('#destination').inputValue();
-        assert.match(destination, /export\.zip$/);
+        assert.equal(destination, path.join(stopped.job.job_path, '匿名の自作試料タイトル.zip'), 'bundled_public_export_uses_the_selected_book_name');
         await ui.locator('#export').click();
         await ui.waitForFunction(() => document.querySelector('#exportResult').textContent.includes('保存先：'));
         const zip = await readFile(destination);
@@ -407,7 +407,8 @@ async function publicTwoBookFlow() {
     const firstOriginal = await running.app.image(1, true);
     await next(); await next(); await next();
     await ui.waitForFunction(() => document.querySelector('#exportResult').textContent.includes('保存先：'));
-    const firstZipPath = path.join(firstPath, 'export.zip');
+    const firstZipPath = await ui.locator('#destination').inputValue();
+    assert.equal(firstZipPath, path.join(firstPath, '匿名の自作試料タイトル.zip'));
     const firstZip = await readFile(firstZipPath);
     const firstExport = await wait(snapshot => snapshot.job.manifest.exports.length === 1 && !snapshot.busy);
     const firstPngEntries = readStoredPngEntries(firstZip);
@@ -427,6 +428,9 @@ async function publicTwoBookFlow() {
     await ui.locator('#start').click();
     await wait(snapshot => snapshot.job.manifest.images.length >= 2);
     await ui.locator('#cancelBackButton').click();
+    await ui.locator('#resetDialog').waitFor({ state: 'visible' });
+    await ui.locator('#resetKeep').click();
+    await ui.waitForFunction(() => !document.querySelector('#resetDialog').open && document.querySelector('#operationStatus').dataset.status !== 'pending');
     const resumed = await wait(snapshot => snapshot.state === 'Review' && !snapshot.busy);
     assert.deepEqual(await running.app.image(1, true), firstOriginal);
     await ui.locator('[data-stage-target="export"]').click();
@@ -470,12 +474,17 @@ async function publicTwoBookFlow() {
     await assert.rejects(running.app.command('export', { destination: path.join(secondPath, 'must-not-exist.zip') }), /operation_busy/);
     releaseDelayedAdvance();
     const secondStopped = await wait(snapshot => snapshot.state === 'Review' && !snapshot.busy && snapshot.job.manifest.images.length === 1);
+    await ui.locator('#resetDialog').waitFor({ state: 'visible' });
+    await ui.locator('#resetKeep').click();
+    await ui.waitForFunction(() => !document.querySelector('#resetDialog').open && document.querySelector('#operationStatus').dataset.status !== 'pending');
     reader.advance = advance;
     assert.equal(secondStopped.previewApproved, false);
     await ui.waitForFunction(() => !document.querySelector('#decisionButton').disabled);
     await next(); await next();
     await ui.waitForFunction(() => document.querySelector('#exportResult').textContent.includes('保存先：'));
-    const secondZipPath = path.join(secondPath, 'export.zip');
+    const secondZipPath = await ui.locator('#destination').inputValue();
+    assert.equal(secondZipPath, path.join(secondPath, '匿名の自作試料タイトル.zip'));
+    assert.notEqual(secondZipPath, firstZipPath, 'book_named_defaults_are_owned_by_distinct_jobs');
     const secondZip = await readFile(secondZipPath);
     const secondExport = await wait(snapshot => snapshot.job.manifest.exports.length === 1 && !snapshot.busy);
     const secondPngEntries = readStoredPngEntries(secondZip);
