@@ -292,7 +292,11 @@ test('3ボタン公開導線・保存先ダイアログ: 実Windows表示・書�
   await ui.waitForFunction(() => document.querySelector('#operationStatus').dataset.status === 'cancelled');
   assert.equal(await ui.locator('#destination').inputValue(), initial);
   const chosen = path.join(directory, '本人が選んだ匿名名.zip');
+  const selectionResponse = ui.waitForResponse(response => response.url().endsWith('/api/command')
+    && response.request().postDataJSON()?.action === 'chooseDestination', { timeout: 45000 });
   await ui.locator('#chooseDestination').click(); const selected = await driver('select', chosen);
+  const selection = await (await selectionResponse).json();
+  assert.equal(selection.chosenDestination, chosen, JSON.stringify(selection));
   await ui.waitForFunction(value => document.querySelector('#destination').value === value, chosen);
   assert.equal((await r.app.snapshot()).job.manifest.exports.length, 0);
   await saveRepairContextArchive(ui, r.app, 1);

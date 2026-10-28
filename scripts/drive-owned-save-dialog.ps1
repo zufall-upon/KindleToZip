@@ -8,8 +8,24 @@ Add-Type -AssemblyName System.Drawing
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Collections.Generic;
 public static class OwnedDialogCapture {
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
+  private delegate bool EnumProc(IntPtr hwnd, IntPtr param);
+  [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr hwnd, EnumProc callback, IntPtr param);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr hwnd, StringBuilder text, int size);
+  [DllImport("user32.dll")] private static extern int GetDlgCtrlID(IntPtr hwnd);
+  public static string[] ChildStructure(IntPtr hwnd) {
+    var result = new List<string>();
+    EnumChildWindows(hwnd, (child, _) => {
+      var name = new StringBuilder(256);
+      GetClassName(child, name, name.Capacity);
+      result.Add(GetDlgCtrlID(child) + ":" + name);
+      return true;
+    }, IntPtr.Zero);
+    return result.ToArray();
+  }
 }
 '@
 $deadline = [DateTime]::UtcNow.AddSeconds(15)
@@ -43,9 +59,11 @@ do {
 } while (-not $file -and [DateTime]::UtcNow -lt $readyDeadline)
 if (-not $file) {
     $ids = @($edits | ForEach-Object { $_.Current.AutomationId }) -join ','
-    throw "Native filename edit not found or ambiguous (edit IDs: $ids)."
+    $structure = [OwnedDialogCapture]::ChildStructure([IntPtr]$window.Current.NativeWindowHandle) -join ','
+    throw "Native filename edit not found or ambiguous (edit IDs: $ids; native structure: $structure)."
 }
 $value = $file.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
+$filenameEditId = $file.Current.AutomationId
 $initial = $value.Current.Value
 $timings.filenameRead = $watch.ElapsedMilliseconds
 [Console]::Error.WriteLine('KTZ_DIALOG:filename_read')
@@ -58,7 +76,10 @@ if ($Screenshot) {
     finally { $graphics.ReleaseHdc($hdc); $graphics.Dispose() }
     try { $bitmap.Save($Screenshot, [Drawing.Imaging.ImageFormat]::Png) } finally { $bitmap.Dispose() }
 }
-if ($Action -eq 'select') { $value.SetValue($Destination) }
+if ($Action -eq 'select') {
+    $value.SetValue($Destination)
+    if ($value.Current.Value -ne $Destination) { throw 'Native filename edit did not retain the selected destination.' }
+}
 $buttonId = if ($Action -eq 'select') { '1' } else { '2' }
 $buttonCondition = [Windows.Automation.AndCondition]::new(
     [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty, $buttonId),
@@ -77,4 +98,4 @@ while ((Get-Process -Id $dialogPid -ErrorAction SilentlyContinue) -and [DateTime
 if (Get-Process -Id $dialogPid -ErrorAction SilentlyContinue) { throw 'Owned native dialog did not finish after its public button.' }
 $timings.hostExited = $watch.ElapsedMilliseconds
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
-@{ initialFilename = $initial; action = $Action; invokedButton = $invokedName; nativeWindowFound = $true; osInputOrClipboardUsed = $false; timingsMs = $timings } | ConvertTo-Json -Compress
+@{ initialFilename = $initial; filenameEditId = $filenameEditId; action = $Action; invokedButton = $invokedName; nativeWindowFound = $true; osInputOrClipboardUsed = $false; timingsMs = $timings } | ConvertTo-Json -Compress

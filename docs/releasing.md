@@ -60,6 +60,8 @@ The hosted workflow builds a **new** executable and runs its mandatory Rust, sou
 
 The ZIP uses the trilingual [Portable guide](portable.md) as its root `README.md`, rather than the source-setup overview. No development environment is required to use the bundled executable.
 
+If a hosted failure is isolated to native save-dialog automation, use the manual **Native save dialog diagnostics** workflow (`native-dialog-diagnostics.yml`) to inspect that symptom without repeating the broad suites. It runs only owned Windows dialogs with anonymous paths, without dependencies, a reader, or credentials. Its success is diagnostic evidence only: it cannot replace successful `ci.yml` for the final release commit or any `release.yml` gate. Intermediate diagnostic-only commits are not release candidates.
+
 ### 4. Verify the draft's actual assets
 
 - Require successful source CI for the frozen commit and a successful release workflow. Match the tag, workflow commit, build metadata, provenance, checksum list, ZIP, and EXE. The draft is not proof of success by itself.
