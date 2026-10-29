@@ -31,7 +31,7 @@ try {
         @{ name = 'jpeg-decoder'; version = '0.3.2' },
         @{ name = 'jpeg-encoder'; version = '0.6.1' }
     )) {
-        $lockEntry = '(?m)^name = "' + [regex]::Escape($crate.name) + '"\r?\nversion = "' + [regex]::Escape($crate.version) + '"$'
+        $lockEntry = '(?m)^name = "' + [regex]::Escape($crate.name) + '"\r?\nversion = "' + [regex]::Escape($crate.version) + '"\r?$'
         if ($controllerLock -notmatch $lockEntry) { throw "JPEG notice version does not match the controller lock: $($crate.name)" }
         $crateName = "$($crate.name)-$($crate.version)"
         $sources = @(Get-ChildItem -LiteralPath $registry -Directory | ForEach-Object {

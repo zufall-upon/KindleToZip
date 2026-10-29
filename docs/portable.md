@@ -12,7 +12,7 @@ Windows x64 Portable application. A source-tagged snapshot of this guide is incl
 4. Choose English, Japanese, or Simplified Chinese in the language menu. First try the self-authored sample available from the app's auxiliary controls, without an Amazon login or real book.
 5. For the official reader, sign in yourself on the official page, select its reader tab, check the preview, approve it, and **start in a separate action**. After stopping, review images and save ZIP / CBZ. To resume with retained images, compare the last saved image and current position, preview and approve again, then explicitly start.
 
-Capture can run in the background while you do other work, but keep the dedicated reader window open and not minimized; operation while the screen is locked or the PC sleeps is not guaranteed. In v0.1.3, PNG or lossy JPEG capture, JPEG quality, individual page layout, and manual crop are selectable; review the results because automatic layout detection can be wrong.
+Capture can run in the background while you do other work, but keep the dedicated reader window open and not minimized; operation while the screen is locked or the PC sleeps is not guaranteed. In v0.1.4, PNG or lossy JPEG capture, JPEG quality, individual page layout, and manual crop are selectable; review the results because automatic layout detection can be wrong.
 
 The EXE creates `runtime/`, `data/`, and `temp/` beside itself. **Login state is retained by default.** These folders can contain cookies, settings, and captured content; do not upload them or redistribute an already-used installation folder. Distribute the original release ZIP instead. Close the app normally before moving or updating its folder; do not forcibly terminate it or replace a running EXE.
 
@@ -26,7 +26,7 @@ The user reported clean-Windows operation and complete real-book capture for v0.
 4. 言語メニューで日本語・英語・簡体字中国語を選べます。最初は補助操作から、Amazonへのログインや実書籍が不要な自作サンプルを試してください。
 5. 公式読書画面では本人がログインし、読書タブを選択してプレビューを点検・承認した後、**別の操作で開始**します。停止後は画像を点検し、ZIP / CBZへ保存します。画像を残して再開する場合も、最後の保存画像と現在位置を照合し、再プレビュー・再承認後に明示開始します。
 
-バックグラウンドで取得し、待ち時間に別の作業ができます。ただし専用読書ウィンドウは開いたまま最小化せず、画面ロック中やスリープ中の継続は保証されません。v0.1.3ではPNGまたは非可逆JPEGの取得、JPEG画質、画像ごとのページ構成、手動クロップを選べます。自動判定は誤ることがあるため点検してください。
+バックグラウンドで取得し、待ち時間に別の作業ができます。ただし専用読書ウィンドウは開いたまま最小化せず、画面ロック中やスリープ中の継続は保証されません。v0.1.4ではPNGまたは非可逆JPEGの取得、JPEG画質、画像ごとのページ構成、手動クロップを選べます。自動判定は誤ることがあるため点検してください。
 
 EXEの横に `runtime/`・`data/`・`temp/` を作成します。**ログイン状態は既定で保存します。** Cookie・設定・取得内容を含む場合があるため、使用済みフォルダを公開・再配布しないでください。共有する場合は元のリリースZIPを使ってください。移動・更新前には通常終了し、強制終了や起動中のEXEの置換は避けてください。
 
@@ -40,7 +40,7 @@ v0.1.2のクリーンなWindowsでの動作と実書籍全冊の取得は、2026
 4. 在语言菜单选择日语、英语或简体中文。建议先从辅助操作打开自制样本，无需 Amazon 登录或真实书籍。
 5. 使用官方阅读器时，请自行登录官方页面、选择阅读标签页、检查并确认预览，再通过 **单独操作开始**。停止后检查图像并保存 ZIP / CBZ。保留图像继续时，也须比较最后保存的图像与当前位置，重新预览并确认，再明确开始。
 
-获取可在后台进行，等待时可以做其他工作；但专用阅读窗口须保持打开且不最小化，不保证锁屏或睡眠期间继续运行。v0.1.3 可选择 PNG 或有损 JPEG 获取、JPEG 画质、逐图页面布局和手动裁剪；自动判断可能出错，请检查结果。
+获取可在后台进行，等待时可以做其他工作；但专用阅读窗口须保持打开且不最小化，不保证锁屏或睡眠期间继续运行。v0.1.4 可选择 PNG 或有损 JPEG 获取、JPEG 画质、逐图页面布局和手动裁剪；自动判断可能出错，请检查结果。
 
 EXE 旁会创建 `runtime/`、`data/`、`temp/`。**默认保留登录状态。** 这些目录可能包含 Cookie、设置与截图，请勿上传或再分发使用过的安装目录；分享时请使用原始发布 ZIP。移动或更新前正常关闭应用，不要强制终止进程或替换运行中的 EXE。
 

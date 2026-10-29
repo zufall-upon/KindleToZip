@@ -32,6 +32,25 @@ test('Portable準備: Windowsのheaded引数とアプリ・lockfile・launcher�
   assert.doesNotMatch(preflight, /gh release create|attest-build-provenance|contents: write/);
 });
 
+test('Portable包装: JPEG lockのLF・CRLFを許可し異版を拒否する', async () => {
+  const source = await readFile('scripts/package-release.ps1', 'utf8');
+  const expression = source.split(/\r?\n/).find(line => line.trim().startsWith('$lockEntry ='));
+  assert.ok(expression, '実際の包装処理の照合式を使う');
+  const script = `
+    foreach ($newline in @("\u0060n", "\u0060r\u0060n")) {
+      foreach ($name in @('jpeg-decoder', 'jpeg-encoder')) {
+        $crate = @{ name = $name; version = '0.3.2' }
+        ${expression}
+        $text = 'name = "' + $name + '"' + $newline + 'version = "0.3.2"' + $newline
+        if ($text -notmatch $lockEntry) { throw 'Valid lock rejected' }
+        if ($text.Replace('0.3.2', '0.3.20') -match $lockEntry) { throw 'Wrong version accepted' }
+      }
+    }
+  `;
+  const result = spawnSync('pwsh', ['-NoProfile', '-Command', script], { encoding: 'utf8' });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});
+
 test('Portable固定名: 新旧metadata選択とPowerShell consumerが同じ最新を選ぶ', async () => {
   const root = path.resolve('artifacts/distribution-tests', `selection-${randomUUID()}`);
   const releases = path.join(root, 'artifacts/releases');
