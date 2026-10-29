@@ -1,4 +1,4 @@
-# Store adapters and Kindle regions (unreleased source)
+# Store adapters and Kindle regions (v0.1.6)
 
 ## Current boundary
 
@@ -41,4 +41,4 @@ For **each** of BOOK☆WALKER, ebookjapan and コミックシーモア:
 3. Verify official entrypoints and visible reader/tab, book and position identities; define a conservative adapter and safe-stop behavior for authentication, target changes, ambiguity and failed turns.
 4. Exercise background capture, shared review/crop/split, archive image bytes/order and packaged public selection using those permitted samples before advertising support.
 
-No legal audit, service compatibility, credentials, live login or book acquisition for these candidates is claimed. The existing automatic-crop work is retained; this plan does not accelerate or authorize a release. Published v0.1.4, its assets and all existing tags remain unchanged.
+No legal audit, service compatibility, credentials, live login or book acquisition for these candidates is claimed. The existing automatic-crop work is retained; future-store plans do not imply implemented support. v0.1.6 was separately authorized and released through the standard routine; published v0.1.4, its assets and all earlier tags remain unchanged.

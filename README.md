@@ -12,10 +12,10 @@ Capture displayed pages in the Kindle web reader on Windows, review and split yo
 
 **Free & open source · Windows x64 · No KindleToZip account · No paid DLC**
 
-> **Windows x64 Portable v0.1.4 is available.**
-> Mandatory source and packaged-fixture checks passed. The user confirmed the local image improvements; the earlier clean-Windows/whole-book report concerns v0.1.2, not this hosted EXE.
+> **Windows x64 Portable v0.1.6 is available.**
+> Mandatory source and packaged-fixture checks passed. The user confirmed the local crop/region candidate without specifying the scope; the earlier clean-Windows/whole-book report concerns v0.1.2, not this hosted EXE.
 
-**[Download Portable ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.4/KindleToZip-Portable-v0.1.4-win-x64.zip)** · [Portable quick start](docs/portable.md) · [Run from source](docs/getting-started.md)
+**[Download Portable ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.6/KindleToZip-Portable-v0.1.6-win-x64.zip)** · [Portable quick start](docs/portable.md) · [Run from source](docs/getting-started.md)
 
 <a href="docs/screenshots.md#animation"><img src="docs/images/kindletozip-demo.gif" alt="Author-recorded sample: image review and ZIP saving in the Japanese UI" width="340"></a>
 
@@ -55,22 +55,22 @@ Included in the Portable build and source, with the limits below:
 
 **Added in v0.1.4:** choose PNG or JPEG capture and JPEG quality from 1–100. JPEG is lossy at capture and is recompressed when cropped or split. In review, correct each image to one or two pages and choose their order. Crop margins manually and restore the original. Layout detection can be wrong, so check it visually. A small selected next button overlapping the capture area is hidden only during capture when safe; not all overlays can be removed.
 
-**Current source / local candidate (not in the published v0.1.4):** in review, select an image and choose “Detect margins on selected image” to compare a candidate for continuous white or black edge margins with the original. Previewing or cancelling does not change saved data. Check text, frames and page numbers before explicitly applying; manual crop and restoring full size remain available. This is not content recognition, and a safe candidate may not be found. Applying a JPEG crop recompresses at its capture quality; the original is retained.
+**Added in v0.1.6:** in review, select an image and choose “Detect margins on selected image” to compare a candidate for continuous white or black edge margins with the original. Previewing or cancelling does not change saved data. Check text, frames and page numbers before explicitly applying; manual crop and restoring full size remain available. This is not content recognition, and a safe candidate may not be found. Applying a JPEG crop recompresses at its capture quality; the original is retained.
 
-The same unreleased candidate adds a **Kindle region** selector for **Japan, United States and United Kingdom**, independent of UI language (initially Japan on each app run). Select before opening the dedicated browser; close it before changing regions, then reselect the target tab, preview and approve again. Real accounts/books in each region remain unverified. The [adapter foundation and future plan](docs/store-adapters.md) separate store-specific behavior from shared image handling. BOOK☆WALKER, ebookjapan and コミックシーモア are **not supported**; terms, copying conditions and authorized-sample checks are separate work for each future integration. Use the current source/local candidate for these new features, not the published v0.1.4 linked below.
+v0.1.6 also adds a **Kindle region** selector for **Japan, United States and United Kingdom**, independent of UI language (initially Japan on each app run). Select before opening the dedicated browser; close it before changing regions, then reselect the target tab, preview and approve again. Real accounts/books in each region remain unverified. The [adapter foundation and future plan](docs/store-adapters.md) separate store-specific behavior from shared image handling. BOOK☆WALKER, ebookjapan and コミックシーモア are **not supported**; terms, copying conditions and authorized-sample checks are separate work for each future integration. These features are included in the v0.1.6 Portable ZIP linked below.
 
 ## Get started
 
-**Portable:** download the [v0.1.4 release ZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.4), verify `SHA256SUMS.txt`, extract the entire ZIP into a writable folder, and run `KindleToZip-Portable.exe`. Node.js and the dedicated browser are bundled; no development setup is needed. See the [trilingual Portable guide](docs/portable.md).
+**Portable:** download the [v0.1.6 release ZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.6), verify `SHA256SUMS.txt`, extract the entire ZIP into a writable folder, and run `KindleToZip-Portable.exe`. Node.js and the dedicated browser are bundled; no development setup is needed. See the [trilingual Portable guide](docs/portable.md).
 
 **From source:** you need **Windows x64, Git, Node.js 22+, and PowerShell 7**. The [setup guide](docs/getting-started.md) installs an isolated Rust toolchain and browser, then launches the app with `npm start`. Start with the self-authored sample, without an Amazon login or a real book.
 
 ## Before you use it
 
-- **Quality:** v0.1.4 passed **147/147 public source UI tests**, **4/4 deployment checks**, and packaged public selection/export regressions. Earlier failed runs remain historical. The user's local-improvement confirmation and earlier v0.1.2 clean-Windows/whole-book report are separate from this hosted EXE's fixture checks; see [validation history and release evidence](docs/validation.md).
+- **Quality:** v0.1.6 passed every mandatory exact-source CI and tagged-release gate, including public source UI, deployment and packaged public selection/export regressions. Earlier failed runs remain historical. The user's local-improvement confirmation and earlier v0.1.2 clean-Windows/whole-book report are separate from this hosted EXE's fixture checks; see [validation history and release evidence](docs/validation.md).
 - **Login & local data:** sign in only on the official page. **Login state is saved by default.** Turn retention off for a separate temporary profile; normal shutdown removes temporary data, but crashes may leave files. Never share profiles, cookies, book data, or captured pages. See [privacy and storage details](docs/security-and-trust.md).
 - **Network & trust:** no app-operated login server, application telemetry, or automatic update checks. Reader, authentication, browser, and setup traffic still occurs. Open source is **not a security guarantee**; see [network destinations and trust boundaries](docs/security-and-trust.md).
-- **Compatibility:** published v0.1.4 opens Japan's Kindle web reader. The unreleased candidate's regions are described above; actual regional books, every layout, ZIP64, and every CBZ viewer are unverified. User-confirmed clean-Windows and real-book operation does not guarantee all environments or books. Standard / 2× rendering has a **16-megapixel / 32 MiB limit per image**; it cannot restore missing source detail.
+- **Compatibility:** v0.1.6 offers Japan, US and UK Kindle entry points independently of UI language; actual regional books, every layout, ZIP64, and every CBZ viewer are unverified. User-confirmed clean-Windows and real-book operation does not guarantee all environments or books. Standard / 2× rendering has a **16-megapixel / 32 MiB limit per image**; it cannot restore missing source detail.
 - **Terms & rights:** no DRM bypass does **not** establish legal permission. Amazon's conditions exclude robot-like data gathering tools from the granted permission; automated capture and tool distribution still raise unresolved contractual and copyright questions. Use only content you are authorized to capture, and do not redistribute pages without permission. Read the [legal notes](docs/legal-notes-ja.md) (Japanese).
 
 KindleToZip is **unofficial and independent**, not affiliated with, endorsed by, or sponsored by Amazon. Amazon and Kindle are trademarks of Amazon.com, Inc. or its affiliates. No Amazon approval or professional legal clearance is claimed.

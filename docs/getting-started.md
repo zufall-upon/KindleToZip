@@ -6,7 +6,7 @@
 
 ## What is available now?
 
-[Windows x64 Portable v0.1.4](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.4) is publicly available as a normal Release + Latest from **2026-10-29**. Mandatory source and packaged-fixture checks passed. The user confirmed the local image improvements; their earlier clean-Windows/whole-book report concerns v0.1.2, not this hosted EXE. [Validation history](validation.md) distinguishes these reports from automated checks and retains earlier failures.
+[Windows x64 Portable v0.1.6](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.6) is publicly available as a normal Release + Latest from **2026-10-29**. Mandatory source and packaged-fixture checks passed. The user confirmed the local image improvements; their earlier clean-Windows/whole-book report concerns v0.1.2, not this hosted EXE. [Validation history](validation.md) distinguishes these reports from automated checks and retains earlier failures.
 
 For use without a development setup, follow the [Portable guide](portable.md): download the release ZIP, verify its checksum, extract it completely, and run `KindleToZip-Portable.exe`. The instructions below are for **source execution only**. No Amazon credentials are needed to install the source or use the self-authored sample.
 
@@ -51,21 +51,21 @@ The sample uses self-authored shapes and text. Its success does not prove that t
 ## Use the Kindle web reader
 
 1. Open the dedicated Kindle browser from the app. Sign in and complete any additional verification **on the official page**, then open one book and choose its starting position yourself.
-2. Return to the app and select the actual reader tab, not the library. Published v0.1.4 opens the Japanese Kindle web reader. Try the matching Kindle preset; use manual area/identity/position/next-button selection if necessary.
+2. Return to the app and select the actual reader tab, not the library. v0.1.6 opens the Kindle web reader for the selected Japan, US or UK region. Try the matching Kindle preset; use manual area/identity/position/next-button selection if necessary.
 3. Check the preview's book, area, direction, and position. Approve, then explicitly start in a separate action. Unclear targets, authentication changes, or uncertain page turns may stop capture.
 4. After stopping, inspect included/excluded images, order, crops, and optional spread splits. Committed images can be exported even after capture or preview stops. Exporting a valid archive does not establish whole-book completeness.
 
 The three main controls are **Confirm / Next**, **Cancel / Back**, and **Finish / Start over**. Follow the displayed next action; the three stages are not a promise of only three clicks. Japanese, English, and Simplified Chinese are selectable in the language menu. Current source CI passes the public language-flow regression; historical failures and packaged-test limits remain in [validation](validation.md).
 
-### Unreleased source / local candidate additions
+### v0.1.6 region selection and margin comparison
 
 Before opening the dedicated browser, choose Japan, United States or United Kingdom in **Kindle region**. This is independent of display language and initially Japan on each app run. To change regions, stop capture and close that browser, then choose the region, reselect the tab, preview, approve and start separately. Official entrypoint identification and anonymous boundary tests do not establish actual regional book compatibility.
 
-In image review, select an image and use **Detect margins on selected image** to compare white/black edge candidates with the original. Check text, frames and page numbers before applying. Cancellation does not change saved data; manual crop and full-size restoration remain available. A candidate may not be found. JPEG application recompresses at capture quality. These additions are not in published v0.1.4. The three services in the [adapter plan](store-adapters.md) remain unsupported.
+In image review, select an image and use **Detect margins on selected image** to compare white/black edge candidates with the original. Check text, frames and page numbers before applying. Cancellation does not change saved data; manual crop and full-size restoration remain available. A candidate may not be found. JPEG application recompresses at capture quality. These additions are included in the v0.1.6 Portable release. The three services in the [adapter plan](store-adapters.md) remain unsupported.
 
 ## Images, saved data, and privacy
 
-In v0.1.4, select the capture image format and JPEG quality (1–100) before previewing. JPEG is compressed at capture and recompressed on crop or split; inspect the quality and size. The captured original bytes are retained. In review, correct each image to one or two pages and choose their order, crop margins manually, or restore the original with Restore original size. There is no automatic margin crop. Check layout and overlays yourself; detection and suppression are not complete.
+In v0.1.6, select the capture image format and JPEG quality (1–100) before previewing. JPEG is compressed at capture and recompressed on crop or split; inspect the quality and size. The captured original bytes are retained. In review, correct each image to one or two pages and choose their order, crop margins manually, or restore the original with Restore original size. Margin candidates require explicit comparison and application; they are not silently applied. Check layout and overlays yourself; detection and suppression are not complete.
 
 - Standard or 2× rendering density changes how the page is rendered, not the amount of detail available from the source. Each image is limited to **16 megapixels / 32 MiB** for safety, not as a paid quota.
 - Spread splitting is optional. Choose right-to-left or left-to-right reading order and check the result yourself; it is not semantic page recognition. Exclusion and cropping retain originals. Existing output files are not overwritten.

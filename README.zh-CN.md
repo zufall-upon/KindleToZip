@@ -12,10 +12,10 @@
 
 **完全免费、开源 · Windows x64 · 无需注册 KindleToZip 账户 · 无付费 DLC**
 
-> **Windows x64 Portable v0.1.4 现已提供。**
-> 必需的源代码检查与打包版本自制样本检查已通过；用户已确认本地图像改进。此前干净Windows与真实书籍完整获取报告针对v0.1.2，并非本次托管EXE的结果。
+> **Windows x64 Portable v0.1.6 现已提供。**
+> 必需的源代码检查与打包版本自制样本检查已通过；用户已确认本次本地裁剪与地区选择候选，但未说明详细范围。此前干净Windows与真实书籍完整获取报告针对v0.1.2，并非本次托管EXE的结果。
 
-**[下载 Portable ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.4/KindleToZip-Portable-v0.1.4-win-x64.zip)** · [Portable 使用指南](docs/portable.md) · [从源代码体验](docs/getting-started.zh-CN.md)
+**[下载 Portable ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.6/KindleToZip-Portable-v0.1.6-win-x64.zip)** · [Portable 使用指南](docs/portable.md) · [从源代码体验](docs/getting-started.zh-CN.md)
 
 [![发布状态：已发布](https://img.shields.io/badge/status-released-16a34a?style=flat-square)](docs/validation.md) [![main 分支最新源代码检查](https://img.shields.io/github/actions/workflow/status/zufall-upon/KindleToZip/ci.yml?branch=main&style=flat-square&label=source%20checks)](https://github.com/zufall-upon/KindleToZip/actions/workflows/ci.yml) [![GitHub 星标数](https://img.shields.io/github/stars/zufall-upon/KindleToZip?style=flat-square&label=stars)](https://github.com/zufall-upon/KindleToZip/stargazers) [![仓库最近提交](https://img.shields.io/github/last-commit/zufall-upon/KindleToZip?style=flat-square)](https://github.com/zufall-upon/KindleToZip/commits/main/)
 
@@ -55,27 +55,27 @@ Portable 版本与源代码包含以下功能，验证范围与限制见下文�
 - **获取前先检查。** 专用浏览器配置、区域选择、预览与明确确认，之后再单独开始。
 - **拆分与排序。** 可选左右跨页拆分、阅读方向选择和图像重排。
 - **保留原图。** 调整采用或排除状态，进行非破坏性裁剪；停止后无需重新获取即可检查已保存的图像。
-- **有序归档。** 将采用的 PNG 导出为 ZIP / CBZ，不覆盖已有文件。
+- **有序归档。** 将采用的 PNG／JPEG 导出为 ZIP / CBZ，不覆盖已有文件。
 - **选择界面语言。** 支持日语、英语和简体中文。
 
 **v0.1.4 新增功能：** 可选择 PNG 或 JPEG 获取，并将 JPEG 画质设为 1–100。JPEG 获取时为有损压缩，裁剪和拆分时会再次压缩。可在检查时逐张更正为一页或左右两页并选择顺序。可手动裁剪边距并恢复原图。自动判断可能出错，请务必目视检查。已选择的小型下一页按钮与获取区域重叠时，可在安全条件下仅于截图期间隐藏；不能保证消除所有遮挡。
 
-**当前源代码／本地候选（未包含在已发布的 v0.1.4 中）：** 在检查界面选择图像并点击“检测所选图像的空白”，可将连续白色或黑色边缘空白的候选与原图比较。仅预览或取消不会改变保存状态。确认正文、边框和页码保留后再明确应用；仍可手动裁剪或恢复原始尺寸。这不是内容识别，也可能找不到安全候选。应用 JPEG 裁剪时按获取时的画质重新压缩，原图仍会保留。
+**v0.1.6 新增功能：** 在检查界面选择图像并点击“检测所选图像的空白”，可将连续白色或黑色边缘空白的候选与原图比较。仅预览或取消不会改变保存状态。确认正文、边框和页码保留后再明确应用；仍可手动裁剪或恢复原始尺寸。这不是内容识别，也可能找不到安全候选。应用 JPEG 裁剪时按获取时的画质重新压缩，原图仍会保留。
 
-同一未发布候选新增 **Kindle 使用地区** 选择，可选 **日本、美国、英国**，独立于界面语言（每次启动默认为日本）。请在打开专用浏览器前选择；更改地区前先关闭浏览器，然后重新选择目标标签页、预览并确认。各地区真实账户与书籍仍未验证。[适配器基础与未来计划](docs/store-adapters.md)将商店专用行为与通用图像处理分离。BOOK☆WALKER、ebookjapan、コミックシーモア **尚不支持**；各自条款、复制条件及获准样本验证将于未来接入时另行处理。新功能请使用当前源代码／本地候选，不要与下方已发布的 v0.1.4 混淆。
+v0.1.6 新增 **Kindle 使用地区** 选择，可选 **日本、美国、英国**，独立于界面语言（每次启动默认为日本）。请在打开专用浏览器前选择；更改地区前先关闭浏览器，然后重新选择目标标签页、预览并确认。各地区真实账户与书籍仍未验证。[适配器基础与未来计划](docs/store-adapters.md)将商店专用行为与通用图像处理分离。BOOK☆WALKER、ebookjapan、コミックシーモア **尚不支持**；各自条款、复制条件及获准样本验证将于未来接入时另行处理。上述功能已包含在下方的 v0.1.6 Portable ZIP 中。
 
 ## 开始使用
 
-**Portable：** 下载 [v0.1.4 发布 ZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.4)，用 `SHA256SUMS.txt` 校验后完整解压到可写目录，再运行 `KindleToZip-Portable.exe`。已包含 Node.js 与专用浏览器，无需开发环境。详见[三语 Portable 指南](docs/portable.md)。
+**Portable：** 下载 [v0.1.6 发布 ZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.6)，用 `SHA256SUMS.txt` 校验后完整解压到可写目录，再运行 `KindleToZip-Portable.exe`。已包含 Node.js 与专用浏览器，无需开发环境。详见[三语 Portable 指南](docs/portable.md)。
 
 **从源代码：** 需要 **Windows x64、Git、Node.js 22+ 和 PowerShell 7**。[入门指南](docs/getting-started.zh-CN.md)会安装隔离的 Rust 工具链与浏览器，再通过 `npm start` 启动。建议先体验自制样本，无需 Amazon 登录或真实书籍。
 
 ## 使用前须知
 
-- **质量：** v0.1.4 的**公开源代码界面检查147/147通过**、**部署检查4/4通过**，打包版本公开选择及导出回归也已通过。早期失败保留为历史。用户对本地图像改进的确认及此前v0.1.2的干净Windows、真实书籍完整获取报告，与本次托管EXE的自动样本检查分开记录。详见[验证历史与发布记录](docs/validation.md)（英语）。
+- **质量：** v0.1.6 已通过精确源代码commit的必需CI与带标签发布的全部关卡，包括公开源代码界面、部署、打包版本公开选择及导出回归。早期失败保留为历史。用户对本地图像改进的确认及此前v0.1.2的干净Windows、真实书籍完整获取报告，与本次托管EXE的自动样本检查分开记录。详见[验证历史与发布记录](docs/validation.md)（英语）。
 - **登录与本地数据：** 只在官方页面登录。**默认保存登录状态。** 关闭保留设置后会使用独立的临时配置，正常退出时删除，但异常退出可能留下文件。不要分享配置、Cookie、书籍信息或截图。详见[隐私与存储说明](docs/security-and-trust.md)（英语）。
 - **网络与信任：** 没有应用自建的登录服务器、遥测或自动更新检查。官方阅读与认证服务、浏览器和安装过程仍会联网。开源**不等于安全保证**，详见[网络目标与信任边界](docs/security-and-trust.md)（英语）。
-- **兼容性：** 已发布的 v0.1.4 入口面向日本地区的 Kindle 网页阅读器。未发布候选的地区选择见上文；各地区真实书籍、所有布局、ZIP64 和所有 CBZ 阅读器均未验证。用户确认的干净 Windows 与真实书籍运行情况不保证所有环境和书籍。标准 / 2倍渲染有**每张图像 1600万像素 / 32 MiB** 的上限，无法恢复原始显示中不存在的细节。
+- **兼容性：** v0.1.6 可独立于界面语言选择日本、美国或英国的 Kindle 入口；各地区真实书籍、所有布局、ZIP64 和所有 CBZ 阅读器均未验证。用户确认的干净 Windows 与真实书籍运行情况不保证所有环境和书籍。标准 / 2倍渲染有**每张图像 1600万像素 / 32 MiB** 的上限，无法恢复原始显示中不存在的细节。
 - **条款与权利：** 不移除 DRM **不代表已获得法律或条款许可**。Amazon 的使用条件将机器人等数据收集工具排除在使用许可之外；自动获取和工具分发仍存在未解决的合同与版权问题。仅处理获准截取的内容，未经许可不要再分发页面。请阅读[法律注意事项](docs/legal-notes-ja.md)（日语）。
 
 KindleToZip 是**非官方、独立项目**，与 Amazon 无关联，未获其认可或赞助。Amazon 和 Kindle 是 Amazon.com, Inc. 或其关联公司的商标。本项目不声称已获得 Amazon 或法律专业人士的批准。

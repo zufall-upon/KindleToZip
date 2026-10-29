@@ -1,5 +1,32 @@
 # Initial source validation
 
+## v0.1.6 public release — 2026-10-29
+
+**Published:** [v0.1.6 — Windows x64 Portable](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.6), **2026-10-29T10:45:35Z**, as a normal Release + **Latest**, titled **v0.1.6**. The actual desktop TOP-right Releases component showed the complete title and Latest badge without an experimental label. The annotated tag, package/lock/launcher version and workflow source agree at **`50bde1f1561eb40b19022097b6ca5f61fc3cda59`**, with Author/Committer/tagger `zufall-upon`. Earlier tags and public releases/assets are unchanged.
+
+| Gate | Actual result |
+| --- | --- |
+| [Exact-source CI 40847394795, attempt 2](https://github.com/zufall-upon/KindleToZip/actions/runs/40847394795/attempts/2) | All mandatory gates passed before tagging; controller 24, launcher 3, IPC/store 25, public source UI 155/155 and deployment 4/4; job elapsed 15m21s |
+| [Tagged release 40857160980](https://github.com/zufall-upon/KindleToZip/actions/runs/40857160980) | All existing source, deployment, build, packaged public selection/export, transferred-hash, attestation and Draft gates passed; build job 18m21s, Draft job 35s; packaged EXE public selection/export smoke 89.41s |
+| Actual Draft | ZIP/EXE hash, size, source/tag/run, allowlisted archive contents, bundled source guide and notices matched; both provenance checks pinned source/signer digest, workflow and GitHub-hosted runner |
+| Public assets/UI | Anonymous downloads of ZIP, checksums and Sigstore bundle matched the Draft assets; public API normal Release + Latest and actual right-side Releases UI verified |
+| Local deployment | Public hosted EXE hash matched `_testenv/KindleToZip-Portable.exe`; the previous local EXE was copied under an exclusive lock to a new hash-named backup. No forced process termination or runtime/data/temp modification |
+
+| Public file | Bytes | SHA-256 |
+| --- | ---: | --- |
+| [`KindleToZip-Portable-v0.1.6-win-x64.zip`](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.6/KindleToZip-Portable-v0.1.6-win-x64.zip) | 380,987,509 | `3ab2dccc4e0a90fe4edbfc858b05e9cc3cb2728232109443b79c66713cbc3891` |
+| `KindleToZip-Portable.exe` inside ZIP | 860,033,264 | `aba27d20190701f25e0b1e8ef786fa3a08f167f86dd389c00636db317f336127` |
+
+Companion assets: [`SHA256SUMS.txt`](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.6/SHA256SUMS.txt) and [`KindleToZip-build.sigstore.json`](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.6/KindleToZip-build.sigstore.json). The archive contains only the executable, license, frozen trilingual Portable guide, metadata and component notices; no used runtime/data/temp, credentials, book images or private validation records. Online region/crop instructions were updated after publication without replacing the frozen ZIP guide.
+
+The user reported successful operation of the current local crop/region candidate without specifying every check. This is not a new all-region, all-book or clean-Windows acceptance of the hosted EXE; the earlier clean-Windows/complete-real-book report applies to v0.1.2. Hosted tests use self-authored anonymous fixtures. Independent security/legal review and complete redistribution compliance remain unverified. BOOK☆WALKER, ebookjapan and コミックシーモア remain unsupported future plans.
+
+The first source-CI attempt [40847394795/attempts/1](https://github.com/zufall-upon/KindleToZip/actions/runs/40847394795/attempts/1) was **cancelled** at the 30-minute job limit: Rust/IPC passed, public UI stopped after the last reported test 28, and deployment did not run. The next public-MVP test passed in a bounded focused local check (1/1, 16.791s TAP). One debug-enabled rerun of the **same source** passed all mandatory checks; the earlier cancellation is not reclassified as success and its root cause remains unproven.
+
+The first v0.1.6 tagged release [40854636627](https://github.com/zufall-upon/KindleToZip/actions/runs/40854636627) reported **154/155 public UI tests passed**, 807.690s, with a single 30-second reader-tab wait timeout in `captureRepairSaveContext`; no build or Draft followed. The two existing public save-context callers then passed a bounded focused local check (2/2, 41.852s TAP), without changing source or weakening assertions. A single second release dispatch at the unchanged tag/source passed all gates and produced the verified Draft. The earlier timeout and its unproven cause remain recorded.
+
+Saved local evidence was reused: the old local EXE (internal 0.1.4; SHA-256 `4a999ade859efc3d830082501a87096c3a67caca00947a59481dff7a1facda9d`) and 37 bundled source files matched in a 1.422-second read-only collector before the version bump. The `Portable準備` version-alignment regression passed (1 test, 0.084s TAP). No unchanged local broad suite, local rebuild, real-book operation or cleanup was repeated. The bounded diagnostics above are not broad local reruns or substitutes for mandatory hosted gates. The hosted EXE is a new build with its own mandatory gates/hash, not a relabeled local result. Full local receipts are retained under ignored `artifacts/release-routine/v0.1.6/`.
+
 ## v0.1.5 release admission failure — 2026-10-29
 
 Exact-source CI [40841975658](https://github.com/zufall-upon/KindleToZip/actions/runs/40841975658) passed every mandatory gate at `ccdefcc050f9da19dc87c8e278e971e2cf1d50ad` (15m40s job elapsed). The annotated `v0.1.5` tag retains that source and is not moved. Tagged release [40843974854](https://github.com/zufall-upon/KindleToZip/actions/runs/40843974854) passed Rust/IPC, then reported **154 passed / 1 failed / 155 tests**, **811.461 seconds** in public source UI. Build, packaged checks and Draft creation did not run; no v0.1.5 executable was produced or published.
