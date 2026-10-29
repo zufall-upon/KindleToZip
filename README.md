@@ -8,6 +8,8 @@
 
 Capture displayed pages in the Kindle web reader on Windows, review and split your PNG screenshots, then save them as an ordered **ZIP or CBZ**.
 
+**Capture screenshots in the background. Keep working while you wait.**
+
 **Free & open source · Windows x64 · No KindleToZip account · No paid DLC**
 
 > **Windows x64 Portable v0.1.2 is available.**
@@ -21,11 +23,19 @@ Capture displayed pages in the Kindle web reader on Windows, review and split yo
 
 [![Status: released](https://img.shields.io/badge/status-released-16a34a?style=flat-square)](docs/validation.md) [![Latest main-branch source checks](https://img.shields.io/github/actions/workflow/status/zufall-upon/KindleToZip/ci.yml?branch=main&style=flat-square&label=source%20checks)](https://github.com/zufall-upon/KindleToZip/actions/workflows/ci.yml) [![GitHub stars](https://img.shields.io/github/stars/zufall-upon/KindleToZip?style=flat-square&label=stars)](https://github.com/zufall-upon/KindleToZip/stargazers) [![Last repository commit](https://img.shields.io/github/last-commit/zufall-upon/KindleToZip?style=flat-square)](https://github.com/zufall-upon/KindleToZip/commits/main/)
 
+## Why I built it
+
+My previous way of turning Kindle books into ZIP archives stopped working at some point, so I built KindleToZip. It captures the pages displayed in the Kindle web reader rather than decrypting ebook files.
+
+The aim is to make the waiting time useful: the dedicated reader window does not need to stay in the foreground during capture, so you can work in another app, then review and organize the images before saving an archive.
+
 ## From reader to archive
 
 1. **Open.** Sign in on the official Kindle page in the dedicated browser, open a book, and select its reader tab.
 2. **Capture.** Select the reading area and check the preview. Approve it, then start capture in a separate action.
 3. **Review & save.** Stop, inspect the images, adjust splits, order or crop, and export ZIP / CBZ.
+
+**Background capture:** keep the dedicated reader window open and not minimized, and the PC awake and unlocked. Background capture does not promise operation while minimized, locked, or asleep. Preview and approval before capture, and checking the captured range and page order afterward, are still required.
 
 [![Actual KindleToZip UI: preview split pages, review three reordered captures, and a verified six-image ZIP export](docs/images/kindletozip-overview.png)](docs/screenshots.md)
 

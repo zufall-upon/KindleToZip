@@ -8,6 +8,8 @@
 
 在 Windows 上截取 Kindle 网页阅读器中显示的页面，检查、拆分并整理 PNG 截图，再按顺序保存为 **ZIP / CBZ**。
 
+**在后台截取页面，等待时也能继续处理其他工作。**
+
 **完全免费、开源 · Windows x64 · 无需注册 KindleToZip 账户 · 无付费 DLC**
 
 > **Windows x64 Portable v0.1.2 现已提供。**
@@ -17,11 +19,19 @@
 
 [![发布状态：已发布](https://img.shields.io/badge/status-released-16a34a?style=flat-square)](docs/validation.md) [![main 分支最新源代码检查](https://img.shields.io/github/actions/workflow/status/zufall-upon/KindleToZip/ci.yml?branch=main&style=flat-square&label=source%20checks)](https://github.com/zufall-upon/KindleToZip/actions/workflows/ci.yml) [![GitHub 星标数](https://img.shields.io/github/stars/zufall-upon/KindleToZip?style=flat-square&label=stars)](https://github.com/zufall-upon/KindleToZip/stargazers) [![仓库最近提交](https://img.shields.io/github/last-commit/zufall-upon/KindleToZip?style=flat-square)](https://github.com/zufall-upon/KindleToZip/commits/main/)
 
+## 开发缘起
+
+以前使用的 Kindle 图书转 ZIP 方法不知何时失效了，因此我开发了 KindleToZip。它截取 Kindle 网页阅读器显示的页面，而不是解密电子书文件。
+
+获取期间无需让专用阅读窗口一直处于前台，可以在其他应用中工作。设计目标是让等待时间也能用来处理其他事情，获取后再检查、整理图像并保存为压缩包。
+
 ## 从阅读页面到压缩包
 
 1. **打开。** 在专用浏览器的 Kindle 官方页面登录，打开一本书并选择阅读标签页。
 2. **获取。** 选择区域并检查预览。确认后，通过另一次操作明确开始获取。
 3. **检查并保存。** 停止后检查图像，调整拆分、顺序或裁剪，再导出 ZIP / CBZ。
+
+**后台获取的条件：** 保持专用阅读窗口打开且不最小化，并让电脑保持唤醒、未锁屏。不保证最小化、锁屏或睡眠期间继续获取。开始前仍须预览与确认，结束后仍须检查获取范围和页面顺序。
 
 [![KindleToZip 真实界面：拆分预览、检查已重排的三张截图，以及六张图像的 ZIP 保存与回读验证成功](docs/images/kindletozip-overview.png)](docs/screenshots.md)
 

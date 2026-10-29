@@ -8,6 +8,8 @@
 
 WindowsでKindle Webの表示画面をPNG画像として取得。点検・見開き分割・並べ替えをして、順序付きの **ZIP / CBZ** に保存できます。
 
+**スクショ取得はバックグラウンドで。待ち時間も、ほかの作業に。**
+
 **完全無料・オープンソース · Windows x64 · 独自アカウント登録不要 · 有料DLCなし**
 
 > **Windows x64用Portable v0.1.2を公開しています。**
@@ -17,11 +19,19 @@ WindowsでKindle Webの表示画面をPNG画像として取得。点検・見開
 
 [![公開状況：リリース済み](https://img.shields.io/badge/status-released-16a34a?style=flat-square)](docs/validation.md) [![mainブランチの最新ソース検査](https://img.shields.io/github/actions/workflow/status/zufall-upon/KindleToZip/ci.yml?branch=main&style=flat-square&label=source%20checks)](https://github.com/zufall-upon/KindleToZip/actions/workflows/ci.yml) [![GitHubスター数](https://img.shields.io/github/stars/zufall-upon/KindleToZip?style=flat-square&label=stars)](https://github.com/zufall-upon/KindleToZip/stargazers) [![リポジトリの最終コミット](https://img.shields.io/github/last-commit/zufall-upon/KindleToZip?style=flat-square)](https://github.com/zufall-upon/KindleToZip/commits/main/)
 
+## 作ったきっかけ
+
+以前使っていた方法でKindleの本をZIP化できなくなったことが、開発のきっかけです。そこで、電子書籍ファイルを復号するのではなく、Kindle Webに表示されたページをスクリーンショットで取得するツールを作りました。
+
+取得中は専用の読書ウィンドウを前面に出し続ける必要がなく、別のアプリで作業できます。待ち時間をほかの作業に使い、取得後に画像を確認・整理してアーカイブへ保存する、という使い方を目指しています。
+
 ## 読書画面からアーカイブまで
 
 1. **開く。** 専用ブラウザのKindle公式画面でログインし、1冊を開いて読書タブを選びます。
 2. **取得する。** 領域を選んでプレビューを点検。承認した後、別の操作で取得を開始します。
 3. **点検して保存。** 停止後に画像を確認し、分割・順序・クロップを調整してZIP / CBZへ出力します。
+
+**バックグラウンド取得の条件：** 専用の読書ウィンドウは開いたまま最小化せず、PCをスリープ・画面ロックしないでください。最小化・ロック・スリープ中の継続は保証しません。取得前のプレビュー・承認と、取得後の範囲・ページ順の点検は必要です。
 
 [![KindleToZipの実画面：分割プレビュー、3枚の並べ替え後の点検、6画像のZIP保存・再読検証成功](docs/images/kindletozip-overview.png)](docs/screenshots.md)
 
