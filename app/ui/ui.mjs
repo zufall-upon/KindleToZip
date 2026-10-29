@@ -9,6 +9,16 @@ history.replaceState(null, '', '/');
 document.title = `KindleToZip — 手順ガイド [${location.port}]`;
 $('connection').textContent = `接続先：${location.origin}`;
 let state;
+let autoCropCandidate = null;
+let cropSelectionRevision = 0;
+function clearAutoCrop(message = '') {
+  autoCropCandidate = null;
+  $('autoCropFigure').hidden = true;
+  $('autoCropActions').hidden = true;
+  $('autoCropStatus').textContent = message;
+  $('autoCropBounds').textContent = '';
+  const canvas = $('autoCropPreview'); canvas.width = 1; canvas.height = 1;
+}
 let lastImages = '';
 let imageUrls = [];
 let previewPageUrls = [];
@@ -220,6 +230,7 @@ function mappingStatus() {
   const complete = fields.filter(field => $(field).value.trim());
   const selectedField = state?.pickingField ?? pickingField;
   const busy = pendingActions > 0 || state?.busy;
+  $('kindleRegion').disabled = !connected || state?.browserOpen || busy;
   $('chooseDestination').disabled = busy || !state?.job;
   updateOperationStatus();
   if (busy) $('reason').textContent = '';
@@ -505,7 +516,14 @@ function renderJobImages(s, generation) {
       label.textContent = `ID ${item.capture_id} / 元${item.image_format === 'jpeg' ? 'JPEG' : 'PNG'} ${item.width}×${item.height} px / 出力 ${outputUnit} / ${item.capture_scale}倍 / ${selected.includes(item.capture_id) ? '採用' : '除外（原本保持）'}`;
       const flag = document.createElement('p'); flag.textContent = [item.blank_candidate && '白紙候補', item.duplicate_candidate && '重複候補', item.crop && 'クロップあり'].filter(Boolean).join(' / ');
       const inspect = document.createElement('button'); inspect.textContent = '原本を点検・クロップ';
-      inspect.onclick = () => run(async () => { $('cropId').value = item.capture_id; $('cropWidth').value = item.width; $('cropHeight').value = item.height; await png(`/api/image/${item.capture_id}?original=1`, $('inspectImage')); }, false, '原本を点検表示');
+      inspect.onclick = () => run(async () => {
+        const revision = ++cropSelectionRevision; clearAutoCrop();
+        $('cropId').value = item.capture_id; $('cropX').value = 0; $('cropY').value = 0;
+        $('cropWidth').value = item.width; $('cropHeight').value = item.height;
+        await png(`/api/image/${item.capture_id}?original=1`, $('inspectImage'), interactionGeneration, undefined,
+          () => revision === cropSelectionRevision && Number($('cropId').value) === item.capture_id);
+        $('inspectCaption').textContent = '原本'; $('inspectImage').alt = '選択した原本';
+      }, false, '原本を点検表示');
       const position = selected.indexOf(item.capture_id);
       const card = document.createElement('article');
       card.dataset.split = String(Boolean(item.split)); card.dataset.captureId = item.capture_id;
@@ -549,8 +567,11 @@ function renderJobImages(s, generation) {
   }).finally(() => { if (isCurrent()) { imageLoading = false; updateOperationStatus(); } });
 }
 errors.authorization_required = '操作画面の接続キーが一致しません。Kindleの認証とは別です。アプリが新しく開いた操作画面を使ってください。';
+errors.auto_crop_stale = '画像またはクロップが変わりました。候補を再検出してください。';
 errors.select_reader_tab = '対象の専用タブを選び「このタブを対象にする」を押してから、指定をやり直してください。本棚を閉じる必要はありません。';
 errors.invalid_reader_tab = '選んだタブは閉じたか、対象のKindle画面ではなくなりました。現在の一覧から選び直してください。';
+errors.invalid_kindle_region = '一覧にあるKindle利用地域を選んでください。';
+errors.kindle_region_changed = '利用地域が変わりました。対象タブを選び、再プレビュー・承認してください。';
 errors.reader_library_selected = '対象は読書画面ではなくライブラリです。本が別の専用タブで開いている場合は、そのタブを対象にしてください。4項目の再指定は不要です。別の本への自動切替・取得は行っていません。';
 async function api(url, options = {}) {
   const generation = interactionGeneration;
@@ -581,7 +602,7 @@ function requirePreview(revision, configRevision) {
   if (!state?.previewReady || state.operationRevision !== revision
     || configRevision !== undefined && configRevision !== configurationRevision) throw superseded();
 }
-async function png(url, image, generation = interactionGeneration, previewRevision) {
+async function png(url, image, generation = interactionGeneration, previewRevision, validSelection) {
    expectedProgressKey = null;
    const preview = previewRevision !== undefined;
    const showing = detail => {
@@ -592,14 +613,14 @@ async function png(url, image, generation = interactionGeneration, previewRevisi
    };
    showing('画像の応答・復号待ち');
   const data = await (await api(url)).blob();
-  requireCurrent(generation);
+  requireCurrent(generation); if (validSelection && !validSelection()) throw superseded();
    showing('画像受信完了。画素の復号待ち');
   if (previewRevision !== undefined) requirePreview(previewRevision);
   if (image.dataset.objectUrl) URL.revokeObjectURL(image.dataset.objectUrl);
   image.dataset.objectUrl = URL.createObjectURL(data);
   image.src = image.dataset.objectUrl;
   await image.decode();
-  requireCurrent(generation);
+  requireCurrent(generation); if (validSelection && !validSelection()) { image.hidden = true; throw superseded(); }
   if (previewRevision !== undefined) requirePreview(previewRevision);
   image.hidden = false;
    showing('画素の復号完了。画面への反映待ち');
@@ -676,7 +697,7 @@ async function command(action, input = {}) {
   // A poll begun before/during this operation must not erase its new preview
   // with an older snapshot after the PNG has already been decoded.
   stateRequestGeneration += 1;
-  if (['start', 'review', 'crop', 'create', 'recover', 'closeJob', 'finishBook'].includes(action)) $('exportResult').textContent = '';
+  if (['start', 'review', 'crop', 'resetCrop', 'applyAutoCrop', 'create', 'recover', 'closeJob', 'finishBook'].includes(action)) $('exportResult').textContent = '';
   try {
       const response = await api('/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, input: { ...input, progressKey, language: currentLanguage() } }) });
       const result = await response.json();
@@ -878,6 +899,15 @@ function render(s, generation = interactionGeneration) {
 async function draw(s, generation) {
   if (s.operationRevision < (state?.operationRevision ?? -1)) throw superseded();
   state = s;
+  if (autoCropCandidate) {
+    const manifest = s.job?.manifest;
+    const item = manifest?.images.find(image => image.capture_id === autoCropCandidate.capture_id);
+    if (manifest?.job_id !== autoCropCandidate.job_id || manifest.next_render_version !== autoCropCandidate.render_version
+      || item?.sha256 !== autoCropCandidate.original_sha256 || (item?.crop?.version ?? null) !== autoCropCandidate.crop_version
+      || Number($('cropId').value) !== autoCropCandidate.capture_id) {
+      clearAutoCrop('画像またはクロップが変わりました。候補を再検出してください。');
+    }
+  }
   if (!pendingActions && s.operationProgress?.key === expectedProgressKey && s.operationProgress?.action === 'start') {
     operationProgress = s.operationProgress;
     if (!s.busy) operationOutcome = operationProgress.status;
@@ -1001,6 +1031,14 @@ async function draw(s, generation) {
   $('create').disabled = Boolean(s.job);
   $('recover').disabled = Boolean(s.job);
   $('openKindle').disabled = !s.job || s.browserOpen;
+  const regionKey = JSON.stringify(s.kindleRegions);
+  if ($('kindleRegion').dataset.key !== regionKey) {
+    $('kindleRegion').replaceChildren(...(s.kindleRegions ?? []).map(region => new Option(region.label, region.id)));
+    $('kindleRegion').dataset.key = regionKey;
+  }
+  $('kindleRegion').value = s.kindleRegion;
+  $('kindleRegion').disabled = s.browserOpen || s.busy || pendingActions > 0;
+  $('kindleStartUrl').textContent = s.kindleRegions?.find(region => region.id === s.kindleRegion)?.startUrl ?? '';
   $('openSample').disabled = !s.job || s.browserOpen;
   $('closeBrowser').disabled = !s.browserOpen;
   mappingStatus();
@@ -1060,6 +1098,16 @@ $('keep').addEventListener('change', () => {
   if (!$('keep').checked) $('session').value = '';
 });
 click('openKindle', () => command('openBrowser', { mode: 'kindle', keep: $('keep').checked, session: $('keep').checked ? $('session').value : 'new' }));
+$('kindleRegion').addEventListener('change', () => {
+  // Capture the user's choice before run() yields for paint. An in-flight
+  // polling snapshot can restore the previous DOM value during that yield.
+  const id = $('kindleRegion').value;
+  return run(async () => {
+    changedMapping();
+    await command('setKindleRegion', { id });
+    return '利用地域が変わりました。対象タブを選び、再プレビュー・承認してください。';
+  });
+});
 click('openSample', () => {
   // Developer fixtures use a temporary profile unless a specific saved/new
   // dedicated profile was deliberately chosen in the advanced session area.
@@ -1192,15 +1240,64 @@ click('stop', () => command('stop'));
 click('review', () => command('review'));
 click('saveOrder', () => command('review', { ids: ids() }));
 click('restoreOrder', () => command('review', { ids: state.job.manifest.images.map(i => i.capture_id) }));
+for (const id of ['cropId', 'cropX', 'cropY', 'cropWidth', 'cropHeight']) $(id).addEventListener('input', () => {
+  cropSelectionRevision += 1; clearAutoCrop();
+  if (id === 'cropId') $('inspectImage').hidden = true;
+});
+click('detectCrop', async () => {
+  const id = Number($('cropId').value), revision = ++cropSelectionRevision;
+  clearAutoCrop();
+  if (!state?.job?.manifest.images.some(image => image.capture_id === id)) throw new Error('画像IDを選択してください。');
+  const result = await command('detectCrop', { id });
+  if (revision !== cropSelectionRevision || Number($('cropId').value) !== id) return;
+  const candidate = result.autoCropCandidate;
+  if (!candidate) {
+    clearAutoCrop('安全な余白候補が見つかりません。手動クロップを使えます。');
+    return '安全な余白候補が見つかりません。手動クロップを使えます。';
+  }
+  await png(`/api/image/${id}?original=1`, $('inspectImage'), interactionGeneration, undefined,
+    () => revision === cropSelectionRevision && Number($('cropId').value) === id);
+  if (revision !== cropSelectionRevision || Number($('cropId').value) !== id
+    || state?.job?.manifest.job_id !== candidate.job_id || state.job.manifest.next_render_version !== candidate.render_version
+    || (state.job.manifest.images.find(image => image.capture_id === id)?.crop?.version ?? null) !== candidate.crop_version) return;
+  $('inspectCaption').textContent = '原本'; $('inspectImage').alt = '選択した原本';
+  const rect = candidate.rect, canvas = $('autoCropPreview');
+  canvas.width = rect.width; canvas.height = rect.height;
+  canvas.getContext('2d').drawImage($('inspectImage'), rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
+  autoCropCandidate = candidate;
+  $('autoCropFigure').hidden = false; $('autoCropActions').hidden = false;
+  $('autoCropStatus').textContent = '候補は未適用です。原本と比較してから適用してください。';
+  $('autoCropBounds').textContent = `x=${rect.x}, y=${rect.y}, ${rect.width}×${rect.height} px`;
+  return '候補は未適用です。原本と比較してから適用してください。';
+});
+click('cancelAutoCrop', () => { cropSelectionRevision += 1; clearAutoCrop('候補を取り消しました。保存状態は変わりません。'); });
+click('applyAutoCrop', async () => {
+  const candidate = autoCropCandidate;
+  if (!candidate || Number($('cropId').value) !== candidate.capture_id) throw new Error('画像またはクロップが変わりました。候補を再検出してください。');
+  const revision = ++cropSelectionRevision;
+  clearAutoCrop();
+  await command('applyAutoCrop', { candidate, confirmed: true });
+  await png(`/api/image/${candidate.capture_id}`, $('inspectImage'), interactionGeneration, undefined,
+    () => revision === cropSelectionRevision && Number($('cropId').value) === candidate.capture_id);
+  $('inspectCaption').textContent = '適用後のクロップ結果'; $('inspectImage').alt = '適用後のクロップ結果';
+  return '候補を適用しました。原本は保持しています。';
+});
 click('crop', async () => {
-  await command('crop', Object.fromEntries([['id', 'cropId'], ['x', 'cropX'], ['y', 'cropY'], ['width', 'cropWidth'], ['height', 'cropHeight']].map(([k, id]) => [k, Number($(id).value)])));
-  await png(`/api/image/${Number($('cropId').value)}`, $('inspectImage'));
+  const revision = ++cropSelectionRevision; clearAutoCrop();
+  const input = Object.fromEntries([['id', 'cropId'], ['x', 'cropX'], ['y', 'cropY'], ['width', 'cropWidth'], ['height', 'cropHeight']].map(([k, id]) => [k, Number($(id).value)]));
+  await command('crop', input);
+  await png(`/api/image/${input.id}`, $('inspectImage'), interactionGeneration, undefined,
+    () => revision === cropSelectionRevision && Number($('cropId').value) === input.id);
+  $('inspectCaption').textContent = '適用後のクロップ結果'; $('inspectImage').alt = '適用後のクロップ結果';
 });
 click('resetCrop', async () => {
+  const revision = ++cropSelectionRevision; clearAutoCrop();
   const item = state.job.manifest.images.find(i => i.capture_id === Number($('cropId').value));
   if (!item) throw new Error('画像IDを選択してください。');
   await command('resetCrop', { id: item.capture_id });
-  await png(`/api/image/${item.capture_id}`, $('inspectImage'));
+  await png(`/api/image/${item.capture_id}`, $('inspectImage'), interactionGeneration, undefined,
+    () => revision === cropSelectionRevision && Number($('cropId').value) === item.capture_id);
+  $('inspectCaption').textContent = '原本'; $('inspectImage').alt = '選択した原本';
 });
 click('export', saveCurrentExport);
 click('chooseDestination', async () => {

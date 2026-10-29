@@ -1,5 +1,5 @@
 use crate::archive::{ArchiveInput, ArchiveSummary};
-use crate::png_image::{crop_same_format, decode, decode_rendered, decode_stored, is_jpeg, sha256, DecodedPng, MAX_PNG_BYTES};
+use crate::png_image::{crop_same_format, decode, decode_rendered, decode_stored, is_jpeg, sha256, CropRect, DecodedPng, MAX_PNG_BYTES};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::fs::{self, File, OpenOptions};
@@ -250,6 +250,17 @@ pub struct ExportResult {
 pub struct CropResult {
     pub crop: CropRecord,
     pub cleanup_warning: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutoCropCandidate {
+    pub job_id: String,
+    pub capture_id: u64,
+    pub original_sha256: String,
+    pub render_version: u64,
+    pub crop_version: Option<u64>,
+    pub rect: CropRect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -760,6 +771,25 @@ impl Store {
             return Err(StoreError("manifest_write_failed"));
         }
         self.snapshot()
+    }
+
+    pub fn suggest_margin_crop(&self, capture_id: u64) -> Result<Option<AutoCropCandidate>, StoreError> {
+        if self.manifest.state != JobState::Review || self.pending.is_some() { return Err(StoreError("wrong_state")); }
+        let image = self.manifest.images.iter().find(|image| image.capture_id == capture_id).ok_or(StoreError("capture_not_found"))?;
+        let original = self.read_original(image)?;
+        let decoded = decode_stored(&original).map_err(StoreError)?;
+        Ok(decoded.margin_crop().map(|rect| AutoCropCandidate { job_id: self.manifest.job_id.clone(), capture_id,
+            original_sha256: image.sha256.clone(), render_version: self.manifest.next_render_version,
+            crop_version: image.crop.as_ref().map(|crop| crop.version), rect }))
+    }
+
+    pub fn apply_margin_crop(&mut self, candidate: AutoCropCandidate) -> Result<CropResult, StoreError> {
+        let current = self.suggest_margin_crop(candidate.capture_id)?;
+        if !current.as_ref().is_some_and(|current| current.job_id == candidate.job_id
+            && current.original_sha256 == candidate.original_sha256 && current.render_version == candidate.render_version
+            && current.crop_version == candidate.crop_version && current.rect == candidate.rect) { return Err(StoreError("auto_crop_stale")); }
+        let rect = candidate.rect;
+        self.crop_image(candidate.capture_id, rect.x, rect.y, rect.width, rect.height)
     }
 
     pub fn crop_image(&mut self, capture_id: u64, x: u32, y: u32, width: u32, height: u32) -> Result<CropResult, StoreError> {

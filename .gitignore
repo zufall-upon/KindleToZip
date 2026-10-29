@@ -15,6 +15,7 @@ AGENTS.md
 !/docs/readme-review.md
 !/docs/screenshots.md
 !/docs/portable.md
+!/docs/store-adapters.md
 /scripts/check-records.mjs
 
 # Dependencies, build outputs, and local test environments

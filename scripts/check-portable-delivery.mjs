@@ -35,6 +35,10 @@ for (const result of headlessOnly || repairUi ? [smoke] : [smoke, windowResult])
 }
 assert.equal(report.cleanWindowsTested, false);
 assert.equal(smoke.firstLaunch.result, 'pass');
+if (smoke.sourceMatched.includes('app/stores/kindle.mjs')) {
+  assert.deepEqual(smoke.firstLaunch.publicKindleRegions, { regions: ['jp', 'us', 'uk'], languages: ['en', 'zh-CN', 'ja'],
+    languageIndependent: true, lockedWhileOpen: true, capturedImages: 0, serviceConnected: false });
+}
 assert.equal(smoke.firstLaunch.capturedImages, 2);
 assert.deepEqual(smoke.firstLaunch.pngDimensions, [1200, 960]);
 assert.deepEqual(smoke.firstLaunch.selectedCaptureIds, [2, 1]);
@@ -90,8 +94,11 @@ if (headlessOnly) {
       const extension = item.imageFormat === 'jpeg' ? 'jpg' : 'png';
       const screenshots = [`fixture-cover-${item.imageFormat}.${extension}`, `fixture-preview-${item.imageFormat}.png`,
         `fixture-page-${item.imageFormat}.${extension}`, `fixture-review-${item.imageFormat}.png`];
+      const autoCrop = item.autoCropComparedAppliedCancelledRestored !== undefined;
+      if (autoCrop) screenshots.push(`fixture-auto-${item.imageFormat}.png`);
       assert.deepEqual(item, { imageFormat: item.imageFormat, coverSingle: true, images: 2, crop: [560, 800],
-        originalKept: true, zipAndCbzReopened: true, selection: 'public', screenshots });
+        originalKept: true, zipAndCbzReopened: true, selection: 'public',
+        ...(autoCrop ? { autoCropComparedAppliedCancelledRestored: true, splitOrderAndPixelsVerified: true } : {}), screenshots });
       for (const name of screenshots) {
         const bytes = await readFile(path.join(path.dirname(smokePath), name));
         assert.ok(bytes.length > 1000, `画面証拠: ${name}`);

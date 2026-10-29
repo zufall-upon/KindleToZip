@@ -9,6 +9,7 @@ import { sessionId, readSessionPreferences, saveSessionPreference, forgetSession
 import { initialPresets, readPresets, savePresets } from './presets.mjs';
 import { bookFilename } from './export-name.mjs';
 import { chooseSaveDestination } from './save-dialog.mjs';
+import { kindleRegion, kindleRegions } from './stores/kindle.mjs';
 
 const defaultData = process.env.KTZ_USER_DATA_DIR || fileURLToPath(new URL('../artifacts/mvp-data/', import.meta.url));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -16,6 +17,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 export class Application {
   constructor({ dataDir = defaultData, sampleHeadless = true, sampleFixture = 'reader', saveDialog = chooseSaveDestination } = {}) {
     this.saveDialog = saveDialog;
+    this.kindleRegion = 'jp';
     if (!['reader', 'image-review', 'layout', 'kindle-chrome', 'kindle-chrome-dynamic', 'kindle-chrome-hidden', 'kindle-chrome-recoverable', 'kindle-chrome-tabs', 'kindle-chrome-ambiguous'].includes(sampleFixture)) throw new AppError('invalid_sample_fixture');
     this.dataDir = path.resolve(dataDir);
     this.sampleHeadless = sampleHeadless;
@@ -72,6 +74,7 @@ export class Application {
       browserOpen: Boolean(this.reader), previewReady: Boolean(this.previewImage), previewApproved: this.previewApproved === true,
       sessions: entries.filter(e => e.isDirectory() && sessionId.test(e.name)).map(e => ({ id: e.name, saved: e.name.startsWith('saved-') || this.savedTemporarySessions.has(e.name) })),
       preferredKindleSession: this.preferredKindleSession ?? null,
+      kindleRegion: this.kindleRegion, kindleRegions,
       sample: Boolean(this.fixture), config: this.reader?.sampleUrl ? sampleConfig : null,
       pickerStage: this.reader?.pickStage ?? null,
       browserId: this.reader?.id ?? null,
@@ -136,7 +139,7 @@ export class Application {
     if (this.endingBook || this.quiescenceRequired || this.busy || this.loop || this.destinationDialog) {
       throw new AppError(this.quiescenceRequired ? 'safe_stop_incomplete' : 'operation_busy');
     }
-    if (this.readerReleasePending && !['review', 'crop', 'export', 'closeBrowser'].includes(actionName)) {
+    if (this.readerReleasePending && !['review', 'crop', 'resetCrop', 'detectCrop', 'applyAutoCrop', 'export', 'closeBrowser'].includes(actionName)) {
       throw new AppError('reader_release_incomplete');
     }
     this.busy = true;
@@ -182,6 +185,15 @@ export class Application {
     return this.exclusive(action, async progress => {
       let lastExport = null;
       switch (action) {
+        case 'setKindleRegion': {
+          const region = kindleRegion(input.id);
+          if (this.reader) throw new AppError('close_browser_first');
+          if (this.kindleRegion !== region.id) {
+            this.kindleRegion = region.id;
+            this.invalidate('kindle_region_changed');
+          }
+          break;
+        }
         case 'cancelReset': {
           if (this.resetConfirmation?.token === input.token) this.resetConfirmation = null;
           break;
@@ -311,7 +323,7 @@ export class Application {
           try {
             if (input.mode === 'sample') this.fixture = await startFixture({ fixture: sampleFixture });
             this.advanceProgress(progress, 2, '設定・試料準備完了。ブラウザの起動と画面応答待ち');
-            this.reader = await Reader.open({ profile, sampleUrl: this.fixture?.url,
+            this.reader = await Reader.open({ profile, sampleUrl: this.fixture?.url, regionId: this.kindleRegion,
               preconfiguredSample: ['reader', 'image-review'].includes(sampleFixture), headless: input.mode === 'sample' && this.sampleHeadless,
               onChange: () => this.invalidate('browser_target_changed'),
               readGuard: input.mode === 'sample' && this.sampleHeadless ? null : async () => {
@@ -513,6 +525,15 @@ export class Application {
         }
         case 'crop': {
           await this.store.call('crop_image', { capture_id: input.id, x: input.x, y: input.y, width: input.width, height: input.height });
+          break;
+        }
+        case 'detectCrop': {
+          const { candidate } = await this.store.call('suggest_margin_crop', { capture_id: input.id });
+          return { ...await this.snapshot(), autoCropCandidate: candidate };
+        }
+        case 'applyAutoCrop': {
+          if (input.confirmed !== true) throw new AppError('preview_confirmation_required');
+          await this.store.call('apply_margin_crop', { candidate: input.candidate });
           break;
         }
         case 'resetCrop': {

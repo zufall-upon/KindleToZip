@@ -273,6 +273,67 @@ test('Rust local-store IPC: split spread preserves deliberate black crops and re
   });
 });
 
+test('Rust local-store IPC: 自動余白候補は非破壊で古い候補を拒否しページ順を保持する', async t => {
+  await mkdir(root, { recursive: true });
+  const workspace = await mkdtemp(path.join(root, 'auto-margin-contract-'));
+  t.after(() => rm(workspace, { recursive: true, force: true }));
+  const client = liveClient(); let seq = 0;
+  t.after(async () => { client.child.kill(); await client.closed; });
+  const call = (kind, payload = {}) => client.call(++seq, kind, payload);
+  const created = expectOk(await call('create_job', { base_dir: workspace })).snapshot;
+  const images = [255, 0, 128].map(background => png(100, 100, (x, y) =>
+    x >= 20 && x < 80 && y >= 20 && y < 80 ? [90, 130, 170] : [background, background, background]));
+  expectOk(await call('capture_start'));
+  for (const [index, bytes] of images.entries()) {
+    expectOk(await call('capture_begin'));
+    expectOk(await call('capture_chunk', { capture_id: index + 1, data_base64: bytes.toString('base64') }));
+    expectOk(await call('capture_commit'));
+  }
+  expectOk(await call('capture_stop')); expectOk(await call('set_review_order', { capture_ids: [2, 1] }));
+  expectOk(await call('set_page_layout', { capture_id: 1, mode: 'split_spread', first_page: 'left' }));
+  const before = expectOk(await call('job_info')).snapshot.manifest;
+  const old = expectOk(await call('suggest_margin_crop', { capture_id: 1 })).candidate;
+  assert.deepEqual(old.rect, { x: 18, y: 18, width: 64, height: 64 });
+  assert.deepEqual(expectOk(await call('job_info')).snapshot.manifest, before, '候補は永続化しない');
+  assert.deepEqual(expectOk(await call('suggest_margin_crop', { capture_id: 2 })).candidate.rect, old.rect);
+  assert.equal(expectOk(await call('suggest_margin_crop', { capture_id: 3 })).candidate, null, '灰色の背景は余白として除去しない');
+  expectError(await call('suggest_margin_crop', { capture_id: 999 }), 'capture_not_found');
+  assert.deepEqual(expectOk(await call('job_info')).snapshot.manifest, before, '候補なし・失敗でも原本と保存状態を保持');
+  expectOk(await call('crop_image', { capture_id: 2, x: 5, y: 5, width: 90, height: 90 }));
+  const resetCandidate = expectOk(await call('suggest_margin_crop', { capture_id: 2 })).candidate;
+  const beforeReset = expectOk(await call('job_info')).snapshot.manifest;
+  expectOk(await call('reset_crop', { capture_id: 2 }));
+  const reset = expectOk(await call('job_info')).snapshot.manifest;
+  assert.equal(reset.next_render_version, beforeReset.next_render_version, '単ページの原寸復帰は描画版を進めない');
+  expectError(await call('apply_margin_crop', { candidate: resetCandidate }), 'auto_crop_stale');
+  assert.deepEqual(expectOk(await call('job_info')).snapshot.manifest, reset, '原寸復帰前の候補を拒否');
+  expectOk(await call('crop_image', { capture_id: 1, x: 5, y: 5, width: 90, height: 90 }));
+  const manual = expectOk(await call('job_info')).snapshot.manifest;
+  expectError(await call('apply_margin_crop', { candidate: old }), 'auto_crop_stale');
+  assert.deepEqual(expectOk(await call('job_info')).snapshot.manifest, manual, '古い候補は手動クロップを壊さない');
+  const candidate = expectOk(await call('suggest_margin_crop', { capture_id: 1 })).candidate;
+  expectError(await call('apply_margin_crop', { candidate: { ...candidate, job_id: 'other-job' } }), 'auto_crop_stale');
+  expectOk(await call('apply_margin_crop', { candidate }));
+  let saved = expectOk(await call('job_info')).snapshot;
+  assert.deepEqual(saved.manifest.selected_capture_ids, [2, 1]);
+  assert.equal(saved.manifest.images[0].split.first_page, 'left');
+  assert.deepEqual([saved.manifest.images[0].split.left.width, saved.manifest.images[0].split.right.width], [32, 32]);
+  const output = path.join(workspace, 'auto-margin.zip');
+  expectOk(await call('export', { destination: output, format: 'zip' }));
+  const pages = parseStoredZip(await readFile(output));
+  assert.deepEqual(pages.map(page => page.name), ['000001.png', '000002.png', '000003.png']);
+  assert.deepEqual(pages.map(page => { const p = PNG.sync.read(page.data); return [p.width, p.height]; }), [[100, 100], [32, 64], [32, 64]]);
+  assert.deepEqual(await readFile(path.join(created.job_path, 'originals', '000001.png')), images[0]);
+  expectOk(await call('reset_crop', { capture_id: 1 }));
+  saved = expectOk(await call('job_info')).snapshot;
+  assert.equal(saved.manifest.images[0].crop, null); assert.equal(saved.manifest.images[0].split.first_page, 'left');
+  expectOk(await call('close_job'));
+  saved = expectOk(await call('open_job', { path: created.job_path })).snapshot;
+  assert.deepEqual(saved.issues, []); assert.deepEqual(saved.manifest.selected_capture_ids, [2, 1]);
+  assert.deepEqual(await readFile(path.join(created.job_path, 'originals', '000001.png')), images[0]);
+  expectOk(await call('close'));
+});
+
 test('Rust local-store IPC: legacy committed dark originals remain resumable, editable and exportable under stricter new capture checks', async t => {
   await mkdir(root, { recursive: true });
   const workspace = await mkdtemp(path.join(root, 'legacy-dark-original-'));

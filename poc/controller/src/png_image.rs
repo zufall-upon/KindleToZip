@@ -1,4 +1,5 @@
 use png::{BitDepth, ColorType, Decoder, Encoder, Transformations};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::Cursor;
 
@@ -17,7 +18,52 @@ pub struct DecodedPng {
     pub blank_candidate: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CropRect { pub x: u32, pub y: u32, pub width: u32, pub height: u32 }
+
 impl DecodedPng {
+    // Unlike the layout heuristic, every pixel of every discarded edge line
+    // must match an opaque, nearly black or white edge. Never skip decorations.
+    // Keep a safety band around the first non-matching pixel; this is geometry,
+    // not recognition of text, frames, or page numbers.
+    pub fn margin_crop(&self) -> Option<CropRect> {
+        let channels = match self.color_type { ColorType::Grayscale => 1, ColorType::GrayscaleAlpha => 2, ColorType::Rgb => 3, ColorType::Rgba => 4, ColorType::Indexed => return None };
+        let bytes = if self.bit_depth == BitDepth::Sixteen { 2 } else { 1 };
+        let max = if bytes == 2 { 65535_u32 } else { 255 };
+        let tolerance = 8 * (max / 255);
+        let colors = if channels <= 2 { 1 } else { 3 };
+        let alpha = match self.color_type { ColorType::GrayscaleAlpha => Some(1), ColorType::Rgba => Some(3), _ => None };
+        let sample = |x: u32, y: u32, c: usize| -> u32 {
+            let index = ((y * self.width + x) as usize * channels + c) * bytes;
+            if bytes == 2 { u32::from(u16::from_be_bytes([self.pixels[index], self.pixels[index + 1]])) } else { u32::from(self.pixels[index]) }
+        };
+        let edge_run = |horizontal: bool, reverse: bool| -> u32 {
+            let length = if horizontal { self.height } else { self.width };
+            let across = if horizontal { self.width } else { self.height };
+            let point = |line: u32, along: u32| {
+                let line = if reverse { length - 1 - line } else { line };
+                if horizontal { (along, line) } else { (line, along) }
+            };
+            let (x, y) = point(0, 0);
+            let reference = sample(x, y, 0);
+            if reference > tolerance && reference < max - tolerance { return 0; }
+            let matches = |x, y| alpha.map(|c| sample(x, y, c) == max).unwrap_or(true)
+                && (0..colors).all(|c| sample(x, y, c).abs_diff(reference) <= tolerance
+                    && if reference <= tolerance { sample(x, y, c) <= tolerance } else { sample(x, y, c) >= max - tolerance });
+            (0..length).take_while(|line| (0..across).all(|along| {
+                let (x, y) = point(*line, along); matches(x, y)
+            })).count() as u32
+        };
+        let (left, right, top, bottom) = (edge_run(false, false), edge_run(false, true), edge_run(true, false), edge_run(true, true));
+        // A completely uniform image gives no evidence of content.
+        if left + right >= self.width || top + bottom >= self.height { return None; }
+        let trim = |run: u32, size: u32| if run >= (size / 50).max(3) { run.saturating_sub((size / 50).max(2)) } else { 0 };
+        let (left, right, top, bottom) = (trim(left, self.width), trim(right, self.width), trim(top, self.height), trim(bottom, self.height));
+        if left + right + top + bottom == 0 { return None; }
+        Some(CropRect { x: left, y: top, width: self.width - left - right, height: self.height - top - bottom })
+    }
+
     // Compare the active width AND height after uniform neutral display margins.
     // A smaller two-page view can have top/bottom margins even in a portrait
     // viewport. This is independent of capture number and reader position.
@@ -468,6 +514,39 @@ mod tests {
         assert_eq!((decode(&original).unwrap().width, decode(&original).unwrap().height), (3, 2));
         assert_eq!((decode(&cropped).unwrap().width, decode(&cropped).unwrap().height), (2, 2));
         assert_eq!(crop(&original, 2, 0, 2, 1).unwrap_err(), "invalid_crop");
+    }
+
+    #[test]
+    fn margin_crop_requires_complete_opaque_extreme_edges_and_keeps_isolated_content() {
+        for background in [0_u8, 255] {
+            let mut image = decode_rendered(&make_png(100, 100, [background; 3])).unwrap();
+            let paint = |image: &mut DecodedPng, x: usize, y: usize, color: [u8; 3]| {
+                let i = (y * 100 + x) * 3; image.pixels[i..i + 3].copy_from_slice(&color);
+            };
+            for y in 20..80 { for x in 20..80 { paint(&mut image, x, y, [90, 130, 170]); } }
+            assert_eq!(image.margin_crop(), Some(CropRect { x: 18, y: 18, width: 64, height: 64 }));
+            let ink = if background == 0 { [255; 3] } else { [0; 3] };
+            paint(&mut image, 3, 50, ink); // thin frame or near-edge text
+            paint(&mut image, 50, 96, ink); // isolated page number
+            let rect = image.margin_crop().unwrap();
+            assert!(rect.x <= 3 && rect.y + rect.height > 96);
+        }
+        for background in [[255, 255, 255], [0, 0, 0], [128, 128, 128], [255, 230, 220]] {
+            let image = decode_rendered(&make_png(40, 40, background)).unwrap();
+            assert_eq!(image.margin_crop(), None);
+        }
+        // Decoder pixels use big-endian 16-bit samples; an almost opaque edge
+        // is not identical to an opaque edge and must never be discarded.
+        let mut image = decode_rendered(&make_png(100, 100, [255; 3])).unwrap();
+        image.color_type = ColorType::Rgba; image.bit_depth = BitDepth::Sixteen;
+        image.pixels = vec![255; 100 * 100 * 8];
+        for y in 20..80 { for x in 20..80 {
+            let i = (y * 100 + x) * 8; image.pixels[i..i + 6].fill(80);
+        } }
+        assert_eq!(image.margin_crop().unwrap().x, 18);
+        image.pixels[6] = 255; image.pixels[7] = 254;
+        let guarded = image.margin_crop().unwrap();
+        assert_eq!((guarded.x, guarded.y), (0, 0));
     }
 
     #[test]

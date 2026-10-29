@@ -10,6 +10,8 @@ import { bookFilename } from '../app/export-name.mjs';
 import { PNG } from 'pngjs';
 import { startApplication } from '../app/server.mjs';
 import { Application } from '../app/application.mjs';
+import { Reader } from '../app/reader.mjs';
+import { createStoreAdapter } from '../app/stores/index.mjs';
 import { openControlWindow as openWindow } from '../app/control-window.mjs';
 import { withPublicDisclosures } from '../poc/browser/public-ui-controls.mjs';
 import { checkLanguageFlow } from './support/language-flow.mjs';
@@ -535,11 +537,8 @@ test('再プレビュー対象の切分け: 読書画面成功後のライブラ
   // The same library diagnosis must hold on the live route without reading
   // book labels or consulting service APIs. URL values never leave this test.
   const livePage = { url: () => 'https://read.amazon.co.jp/kindle-library' };
-  const sampleUrl = r.app.reader.sampleUrl;
-  try {
-    r.app.reader.sampleUrl = null;
-    await assert.rejects(r.app.reader.assertReaderDocument(livePage), error => error.code === 'reader_library_selected');
-  } finally { r.app.reader.sampleUrl = sampleUrl; }
+  const liveReader = { adapter: createStoreAdapter() };
+  await assert.rejects(Reader.prototype.assertReaderDocument.call(liveReader, livePage), error => error.code === 'reader_library_selected');
 });
 
 test('Kindleプリセットの可視証拠と一時非表示: 初回hidden・同一ノード・位置変更・置換を区別する', async t => {

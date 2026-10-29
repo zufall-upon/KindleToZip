@@ -2,13 +2,11 @@ import { lstat, readFile, realpath, writeFile, rename, rm } from 'node:fs/promis
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { AppError } from './store-client.mjs';
+import { kindleChromeConfig } from './stores/kindle.mjs';
 
 // Definitions contain selectors, not scripts, URLs, authentication or book data.
 export const initialPresets = () => ({ version: 1, selected: 'kindle-visible', presets: [
-  { id: 'kindle-reader-chrome', name: 'Kindle — タイトル・位置バー付き読書画面', mode: 'selectors', config: {
-    frame: '', reader: '#readerChromeTitle >> xpath=ancestor::div[5]', identity: '#readerChromeTitle',
-    position: 'input[type="range"]', next: 'button[aria-label*="次"], button[aria-label*="next" i]',
-  } },
+  { id: 'kindle-reader-chrome', name: 'Kindle — タイトル・位置バー付き読書画面', mode: 'selectors', config: { ...kindleChromeConfig } },
   { id: 'kindle-visible', name: '汎用 Kindle — 表示中の読書画面（自動検査）', mode: 'visible', config: null },
 ] });
 export function validatePresets(value) {

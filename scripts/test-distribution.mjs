@@ -192,9 +192,10 @@ try {
   const first = smokeResult(initialProcess.stdout, 'first-launch');
   assert.deepEqual(first.publicImageFlow.map(({ screenshots, ...result }) => result), ['png', 'jpeg'].map(imageFormat => ({
     imageFormat, coverSingle: true, images: 2, crop: [560, 800], originalKept: true, zipAndCbzReopened: true, selection: 'public',
+    autoCropComparedAppliedCancelledRestored: true, splitOrderAndPixelsVerified: true,
   })));
   for (const result of first.publicImageFlow) for (const screenshot of result.screenshots) {
-    assert.match(screenshot, /^fixture-(cover|preview|page|review)-(png|jpeg)\.(png|jpg)$/);
+    assert.match(screenshot, /^fixture-(cover|preview|page|review|auto)-(png|jpeg)\.(png|jpg)$/);
     assert.ok((await stat(path.join(runDirectory, screenshot))).size > 0, 'anonymous packaged screen evidence retained');
   }
   assert.equal(first.phase, 'created');

@@ -4,6 +4,9 @@ const next = document.querySelector('#next');
 const ctx = canvas.getContext('2d');
 let position = 1;
 reader.style.position = 'relative';
+// Keep the independently drawn black surround continuous through the fixture
+// reader frame; otherwise its grey CSS border is itself non-margin content.
+reader.style.borderColor = '#000';
 next.style.cssText = 'position:absolute;top:210px;width:35px;height:60px;margin:0;background:white;color:black;z-index:2';
 function draw() {
   const ratio = Math.max(1, devicePixelRatio || 1);
@@ -22,6 +25,9 @@ function draw() {
   } else {
     // A fictional page with panels; the left navigation control overlaps it.
     ctx.fillStyle = '#fff'; ctx.fillRect(120, 10, 360, 460);
+    // Fictional edge details exercise preservation, not recognition.
+    ctx.fillStyle = '#111'; ctx.fillRect(122, 60, 1, 65);
+    ctx.fillRect(294, 458, 4, 6); ctx.fillRect(302, 458, 4, 6);
     ctx.strokeStyle = '#111'; ctx.lineWidth = 3;
     for (const [x, y, w, h] of [[135, 30, 150, 165], [295, 30, 170, 165], [135, 205, 330, 115], [135, 330, 160, 120], [305, 330, 160, 120]]) {
       ctx.strokeRect(x, y, w, h);

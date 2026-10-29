@@ -50,11 +50,14 @@
     <p id="jobPath"></p><p id="issues"></p></details>
   </section>
   <section data-stage="browser"><h2>2. 専用ブラウザで本を開く</h2>
-    <p>日本向けKindleを開き、本人がログインして1冊を開きます。本棚タブは閉じなくてかまいません。</p>
+    <p>利用地域を選び、本人がログインして1冊を開きます。本棚タブは閉じなくてかまいません。</p>
+    <label>Kindle利用地域<select id="kindleRegion"></select></label>
+    <p id="kindleRegionHelp">表示言語とは別の設定です。地域を変えるには専用ブラウザを閉じ、対象タブの選択・プレビュー・承認をやり直してください。</p>
+    <p id="kindleStartUrl"></p>
     <p>ログイン状態はEXE横に保存します。同じPC・Windows利用者で再利用でき、再認証が必要な場合もあります。</p>
     <p>「決定・次へ」で専用Kindleを開きます。本を開いた後も同じボタンで対象タブの選択へ進みます。</p>
     <details><summary>専用セッション・自作試料（補助）</summary>
-    <button id="openKindle">日本向けKindle Webを開く（個別操作）</button>
+    <button id="openKindle">選択地域のKindle Webを開く（個別操作）</button>
     <label>テスト画像 <select id="sampleFixture"><option value="">標準の自作試料</option><option value="image-review">匿名図形：片側表紙とボタン重なり</option><option value="kindle-chrome-dynamic">Kindle風：位置変化・操作バーの一時非表示</option><option value="kindle-chrome-hidden">Kindle風：初回から識別・位置・操作バー非表示（自動復帰なし）</option><option value="kindle-chrome-recoverable">Kindle風：初期非表示から上端DOMイベント列で復帰</option><option value="kindle-chrome-tabs">Kindle風：読書タブとライブラリの再プレビュー切分け</option><option value="kindle-chrome-ambiguous">匿名見開き：136位置で次へ候補が増える</option></select></label>
     <button id="openSample">選択した自作試料を開く</button>
     <label><input type="checkbox" id="keep" checked> ログイン状態を次回も保存する（既定ON。OFFで新しい一時領域を使用）</label>
@@ -139,7 +142,11 @@
     <details id="orderDetails"><summary>画像番号を指定して順序・採用を変更</summary><button id="review">点検モードへ</button><label>画像番号をカンマ区切り（省いた画像は除外・原本保持）<input id="order"></label><button id="saveOrder">順序・採用を保存</button></details>
     <p id="imageLoadStatus" role="status"></p>
     <div id="images" class="images"></div>
-    <h3>選択画像の非破壊クロップ</h3><img id="inspectImage" alt="選択した原本" hidden>
+    <h3>選択画像の非破壊クロップ</h3>
+    <p>画像カードで選ぶか画像IDを入力し、白・黒の端余白の候補を検出できます。内容認識ではありません。原本と見比べ、本文・枠・ページ番号が残る場合だけ適用してください。候補だけでは保存状態は変わりません。</p>
+    <button id="detectCrop">選択画像の余白を検出</button><p id="autoCropStatus" role="status"></p><output id="autoCropBounds"></output>
+    <div class="crop-comparison"><figure><figcaption id="inspectCaption">原本</figcaption><img id="inspectImage" alt="選択した原本" hidden></figure><figure id="autoCropFigure" hidden><figcaption>余白除去の候補（未適用）</figcaption><canvas id="autoCropPreview" role="img" aria-label="余白除去候補のプレビュー"></canvas></figure></div>
+    <div id="autoCropActions" hidden><button id="applyAutoCrop">候補を適用</button><button id="cancelAutoCrop">候補を取り消す</button></div>
     <div class="grid"><label>画像ID<input type="number" id="cropId" min="1"></label><label>x<input type="number" id="cropX" value="0" min="0"></label><label>y<input type="number" id="cropY" value="0" min="0"></label><label>幅<input type="number" id="cropWidth" min="1"></label><label>高さ<input type="number" id="cropHeight" min="1"></label></div>
     <button id="crop">クロップして結果を点検（原本保持）</button><button id="resetCrop">全原寸へ戻す</button>
     <p>点検後は「決定・次へ」でZIP保存へ進みます。</p>

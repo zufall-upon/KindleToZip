@@ -51,11 +51,17 @@ The sample uses self-authored shapes and text. Its success does not prove that t
 ## Use the Kindle web reader
 
 1. Open the dedicated Kindle browser from the app. Sign in and complete any additional verification **on the official page**, then open one book and choose its starting position yourself.
-2. Return to the app and select the actual reader tab, not the library. The current entry point is the Japanese Kindle web reader. Try the matching Kindle preset; use manual area/identity/position/next-button selection if necessary.
+2. Return to the app and select the actual reader tab, not the library. Published v0.1.4 opens the Japanese Kindle web reader. Try the matching Kindle preset; use manual area/identity/position/next-button selection if necessary.
 3. Check the preview's book, area, direction, and position. Approve, then explicitly start in a separate action. Unclear targets, authentication changes, or uncertain page turns may stop capture.
 4. After stopping, inspect included/excluded images, order, crops, and optional spread splits. Committed images can be exported even after capture or preview stops. Exporting a valid archive does not establish whole-book completeness.
 
 The three main controls are **Confirm / Next**, **Cancel / Back**, and **Finish / Start over**. Follow the displayed next action; the three stages are not a promise of only three clicks. Japanese, English, and Simplified Chinese are selectable in the language menu. Current source CI passes the public language-flow regression; historical failures and packaged-test limits remain in [validation](validation.md).
+
+### Unreleased source / local candidate additions
+
+Before opening the dedicated browser, choose Japan, United States or United Kingdom in **Kindle region**. This is independent of display language and initially Japan on each app run. To change regions, stop capture and close that browser, then choose the region, reselect the tab, preview, approve and start separately. Official entrypoint identification and anonymous boundary tests do not establish actual regional book compatibility.
+
+In image review, select an image and use **Detect margins on selected image** to compare white/black edge candidates with the original. Check text, frames and page numbers before applying. Cancellation does not change saved data; manual crop and full-size restoration remain available. A candidate may not be found. JPEG application recompresses at capture quality. These additions are not in published v0.1.4. The three services in the [adapter plan](store-adapters.md) remain unsupported.
 
 ## Images, saved data, and privacy
 

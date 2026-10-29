@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { startApplication } from '../app/server.mjs';
 import { StoreClient } from '../app/store-client.mjs';
 import { Reader, sampleConfig } from '../app/reader.mjs';
+import { createStoreAdapter } from '../app/stores/index.mjs';
+import { kindleRegions } from '../app/stores/kindle.mjs';
 import { openControlWindow as openWindow } from '../app/control-window.mjs';
 import { withPublicDisclosures } from '../poc/browser/public-ui-controls.mjs';
 async function openControlWindow(...args) {
@@ -86,6 +88,132 @@ async function imagePixel(ui, bytes, x, y) {
     return [...context.getImageData(x, y, 1, 1).data].slice(0, 3);
   }, { base64: bytes.toString('base64'), x, y });
 }
+
+// All HTTPS-looking pages below are local, self-authored responses. Never fall
+// through to Amazon, authentication endpoints, CDNs or another service.
+async function routeAnonymousRegions(context) {
+  const resources = new Map(await Promise.all(['reader.html', 'reader.css', 'reader.js'].map(async name =>
+    [name, await readFile(new URL(`../poc/fixtures/${name}`, import.meta.url))])));
+  await context.route('**/*', route => {
+    const name = new URL(route.request().url()).pathname.split('/').at(-1);
+    const resource = resources.has(name) ? name : 'reader.html';
+    return route.fulfill({ status: 200, contentType: resource.endsWith('.js') ? 'text/javascript' : resource.endsWith('.css') ? 'text/css' : 'text/html', body: resources.get(resource) });
+  });
+}
+
+test('Kindle地域境界: 同じ明示リストをタブ・picker・取得前後に使い別地域と認証・別本で止まる', async t => {
+  assert.throws(() => createStoreAdapter({ regionId: 'cn' }), /invalid_kindle_region/);
+  for (const storeId of ['bookwalker', 'ebookjapan', 'cmoa']) assert.throws(() => createStoreAdapter({ storeId }), /unsupported_store/);
+  for (const region of kindleRegions) await t.test(region.id, async () => {
+    const adapter = createStoreAdapter({ regionId: region.id });
+    const origin = new URL(region.startUrl).origin;
+    assert.equal(adapter.acceptsUrl(`${origin}/?asin=fictional`), true);
+    for (const other of kindleRegions.filter(item => item.id !== region.id)) assert.equal(adapter.acceptsUrl(other.startUrl), false);
+    for (const url of [origin.replace('https:', 'http:'), `${origin}:444/`, `${origin}.evil.test/`,
+      `${origin.replace('https://', 'https://user:pass@')}/`, 'https://www.amazon.com/',
+      'https://read.amazon.com.cn/', 'https://read.amazon.com@evil.test/', 'https://read-amazon.com/',
+      'https://read.amazon.com./', 'file:///reader.html', 'not a URL']) assert.equal(adapter.acceptsUrl(url), false, url);
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: { width: 1100, height: 850 }, serviceWorkers: 'block' });
+    await routeAnonymousRegions(context);
+    const page = await context.newPage(); await page.goto(adapter.startUrl);
+    const reader = new Reader(context, page, undefined, undefined, false, adapter);
+    try {
+      assert.equal(reader.tabs().length, 1);
+      reader.selectTab(reader.tabs()[0].id);
+      const picking = reader.pick('position');
+      await page.waitForFunction(() => Boolean(window.__ktzPicker));
+      const box = await page.locator('#position').boundingBox();
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      await picking;
+      const preview = await reader.configure(sampleConfig);
+      assert.deepEqual(preview.dimensions, [600, 480]);
+      assert.equal(preview.position, '1 / 12');
+      assert.equal(preview.book.identity, createHash('sha256').update(JSON.stringify([origin, preview.book.title])).digest('hex'), 'existing identity contract is unchanged');
+      assert.deepEqual(await reader.capture(), preview.png);
+      await reader.advance(() => false);
+      assert.equal((await reader.read()).position, '2 / 12');
+      await page.evaluate(() => { const input = document.createElement('input'); input.type = 'password'; input.id = 'auth'; document.body.prepend(input); });
+      await assert.rejects(reader.capture(), /auth_or_overlay_detected/);
+      await page.locator('#auth').evaluate(node => node.remove());
+      await page.locator('h1').evaluate(node => { node.textContent = '別の自作試料'; });
+      await assert.rejects(reader.capture(), /target_changed/);
+      await reader.configure(sampleConfig);
+      // Navigation in the screenshot interval must not yield accepted bytes.
+      const screenshot = reader.screenshotWithoutSelectedNavigation.bind(reader);
+      reader.screenshotWithoutSelectedNavigation = async before => {
+        const bytes = await screenshot(before);
+        await page.goto(kindleRegions.find(item => item.id !== region.id).startUrl);
+        return bytes;
+      };
+      await assert.rejects(reader.capture(), /auth_or_target_changed|target_changed/);
+      assert.equal(reader.tabs().length, 0, 'the previously selected page is excluded after cross-region navigation');
+      await assert.rejects(reader.pick('position'), /select_reader_tab/);
+      await assert.rejects(reader.advance(() => false), /auth_or_target_changed|target_changed/);
+      await page.goto(`${origin}/kindle-library`);
+      await assert.rejects(reader.configure(sampleConfig), /reader_library_selected/);
+      await page.goto('https://www.amazon.com/ap/signin');
+      assert.equal(reader.tabs().length, 0, 'official authentication is not a reading target');
+      await assert.rejects(reader.capture(), /auth_or_target_changed|target_changed/);
+    } finally { await reader.close(); await browser.close(); }
+  });
+});
+
+test('Kindle地域公開UI: 言語と独立して選択し実際の開始URLへ渡し開いた間は変更しない', async t => {
+  const r = await setup(t);
+  const control = await openControlWindow(r.url, { headless: true }); t.after(() => control.close());
+  const ui = control.page;
+  await ui.waitForFunction(() => document.querySelector('#kindleRegion').options.length === 3);
+  assert.deepEqual(await ui.locator('#kindleRegion option').evaluateAll(options => options.map(option => option.value)), ['jp', 'us', 'uk']);
+  // A poll already in flight may finish during run()'s initial paint. The
+  // selected region belongs to the change event, not that older snapshot.
+  let holdPoll;
+  const pendingPoll = new Promise(resolve => { holdPoll = resolve; });
+  const interceptPoll = route => holdPoll(route);
+  await ui.route('**/api/state', interceptPoll);
+  const oldPoll = await pendingPoll;
+  const oldSnapshot = await r.app.snapshot();
+  await ui.evaluate(() => {
+    const select = document.querySelector('#kindleRegion');
+    select.value = 'us';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await oldPoll.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(oldSnapshot) });
+  await ui.unroute('**/api/state', interceptPoll);
+  await ui.waitForFunction(() => !document.querySelector('#kindleRegion').disabled);
+  assert.equal(r.app.kindleRegion, 'us', 'a prior polling response must not replace the user-selected region');
+  await waitFor(r.app, s => s.kindleRegion === 'us' && !s.busy);
+  for (const [language, label] of [['en', 'United States'], ['zh-CN', '美国'], ['ja', '米国']]) {
+    await ui.locator('#language').selectOption(language);
+    assert.equal(await ui.locator('#kindleRegion').inputValue(), 'us');
+    assert.equal(await ui.locator('#kindleRegion option:checked').textContent(), label);
+    assert.equal(await ui.locator('#kindleStartUrl').textContent(), 'https://read.amazon.com/');
+  }
+  await assert.rejects(r.app.command('setKindleRegion', { id: 'cn' }), /invalid_kindle_region/);
+  const launch = chromium.launchPersistentContext.bind(chromium);
+  chromium.launchPersistentContext = async (profile, options) => {
+    const context = await launch(profile, { ...options, headless: true, serviceWorkers: 'block' });
+    await routeAnonymousRegions(context);
+    return context;
+  };
+  try {
+    await ui.locator('#create').click();
+    await ui.waitForFunction(() => !document.querySelector('#openKindle').disabled);
+    await ui.locator('#openKindle').click();
+    await waitFor(r.app, s => s.browserOpen && !s.busy);
+    assert.equal(r.app.reader.page.url(), 'https://read.amazon.com/');
+    assert.equal(r.app.reader.adapter.regionId, 'us');
+    assert.equal(await ui.locator('#kindleRegion').isDisabled(), true);
+    await assert.rejects(r.app.command('setKindleRegion', { id: 'uk' }), /close_browser_first/);
+    assert.equal(r.app.reader.adapter.regionId, 'us');
+    await ui.locator('#closeBrowser').click();
+    await ui.waitForFunction(() => !document.querySelector('#kindleRegion').disabled);
+    await ui.locator('#kindleRegion').selectOption('uk');
+    await waitFor(r.app, s => s.kindleRegion === 'uk' && !s.busy);
+    assert.equal((await r.app.snapshot()).previewApproved, false);
+    assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
+  } finally { chromium.launchPersistentContext = launch; }
+});
 
 test('MVP自動判別: h1なし・数値range・大きなiframe描画面と逆向きiconでも公開UIからプレビューする', async t => {
   const r = await setup(t, { sampleFixture: 'layout' });
@@ -1729,6 +1857,108 @@ test('JPEG匿名試料: 片側表紙と次のページを実取得する', { tim
   const pageWithButton = await r.app.reader.screenshotVisibleClip((await r.app.reader.read()).clip);
   assert.ok((await imagePixel(ui, pageWithButton, 270, 450))[0] > (await imagePixel(ui, await r.app.image(2, true), 270, 450))[0] + 70);
   await ui.locator('#stop').click(); await waitFor(r.app, s => s.state === 'Review' && !s.busy);
+});
+
+test('自動余白: 公開点検で原本と比較し取消・適用・原寸復帰する', { timeout: 100_000 }, async t => {
+  for (const imageFormat of ['png', 'jpeg']) await t.test(imageFormat, async t => {
+    const r = await setup(t);
+    const control = await openControlWindow(r.url, { headless: true }); t.after(() => control.close());
+    const ui = control.page;
+    await ui.locator('#create').click(); await ui.locator('#sampleFixture').selectOption('image-review');
+    await ui.locator('#openSample').click(); await selectVisibleReaderTab(ui);
+    await ui.locator('#pageOutputMode').selectOption('split_spread');
+    await waitFor(r.app, s => s.captureSettings.page_output_mode === 'split_spread' && !s.busy);
+    if (imageFormat === 'jpeg') {
+      await ui.locator('#imageFormat').selectOption('jpeg');
+      await waitFor(r.app, s => s.captureSettings.image_format === 'jpeg' && !s.busy);
+      await ui.locator('#jpegQuality').fill('35'); await ui.locator('#jpegQuality').dispatchEvent('change');
+      await waitFor(r.app, s => s.captureSettings.jpeg_quality === 35 && !s.busy);
+    }
+    await ui.locator('#quickPreview').click(); await waitForPublicPreview(ui);
+    await ui.locator('#previewConfirmed').check(); await ui.locator('#approve').click();
+    await ui.waitForFunction(() => !document.querySelector('#start').disabled);
+    await ui.locator('#start').click(); await waitFor(r.app, s => s.job.manifest.images.length === 2 && !s.busy);
+    await ui.locator('#stop').click(); await waitFor(r.app, s => s.state === 'Review' && !s.busy);
+    const original = await r.app.image(2, true);
+    await ui.locator('#images article[data-capture-id="2"] select').selectOption('single');
+    await waitFor(r.app, s => s.job.manifest.images[1].split === null && s.job.manifest.images[1].layout_override === true && !s.busy);
+    await ui.locator('#cropId').fill('2');
+    for (const [name, value] of [['cropX', 10], ['cropY', 10], ['cropWidth', 1000], ['cropHeight', 900]]) await ui.locator(`#${name}`).fill(String(value));
+    await ui.locator('#crop').click();
+    await waitFor(r.app, s => s.job.manifest.images[1].crop?.width === 1000 && !s.busy);
+    await ui.locator('#detectCrop').click(); await ui.locator('#autoCropFigure').waitFor({ state: 'visible' });
+    const versionBeforeReset = (await r.app.snapshot()).job.manifest.next_render_version;
+    await r.request('resetCrop', { id: 2 });
+    assert.equal((await r.app.snapshot()).job.manifest.next_render_version, versionBeforeReset);
+    await ui.locator('#autoCropActions').waitFor({ state: 'hidden' });
+    await ui.locator('#images article[data-capture-id="2"] select').selectOption('left');
+    await waitFor(r.app, s => s.job.manifest.images[1].split?.first_page === 'left' && !s.busy);
+    await ui.locator('#cropId').fill('2');
+    for (const [name, value] of [['cropX', 10], ['cropY', 10], ['cropWidth', 1000], ['cropHeight', 900]]) await ui.locator(`#${name}`).fill(String(value));
+    await ui.locator('#crop').click();
+    let saved = await waitFor(r.app, s => s.job.manifest.images[1].crop?.width === 1000 && !s.busy);
+    if (imageFormat === 'jpeg') {
+      assert.equal(saved.job.manifest.images[1].jpeg_quality, 35);
+      await r.request('setCaptureSettings', { ...saved.captureSettings, image_format: 'png', jpeg_quality: 90 });
+      saved = await r.app.snapshot();
+    }
+    const manual = structuredClone(saved.job.manifest);
+    await ui.locator('#detectCrop').click();
+    await ui.waitForFunction(() => !document.querySelector('#autoCropFigure').hidden || document.querySelector('#operationStatus').dataset.status === 'failure' || document.querySelector('#autoCropStatus').textContent.includes('見つかりません'));
+    assert.equal(await ui.locator('#autoCropFigure').isVisible(), true,
+      `検出状態: ${await ui.locator('#autoCropStatus').textContent()} / ${await ui.locator('#message').textContent()}`);
+    assert.deepEqual((await r.app.snapshot()).job.manifest, manual, '候補表示だけでは手動クロップや出力順を変更しない');
+    assert.equal(await ui.locator('#autoCropPreview').evaluate(canvas => canvas.width > 0 && canvas.height > 0), true);
+    await ui.locator('#cancelAutoCrop').click(); await ui.locator('#autoCropFigure').waitFor({ state: 'hidden' });
+    assert.deepEqual((await r.app.snapshot()).job.manifest, manual);
+    await ui.locator('#detectCrop').click(); await ui.locator('#autoCropFigure').waitFor({ state: 'visible' });
+    await ui.locator('#cropId').fill('1');
+    assert.equal(await ui.locator('#autoCropActions').isHidden(), true, '画像切替で候補を破棄');
+    await ui.locator('#cropId').fill('2'); await ui.locator('#detectCrop').click();
+    await ui.locator('#autoCropFigure').waitFor({ state: 'visible' });
+    await ui.locator('#language').selectOption('en'); assert.match(await ui.locator('#applyAutoCrop').textContent(), /Apply candidate/);
+    await ui.locator('#language').selectOption('zh-CN'); assert.match(await ui.locator('#applyAutoCrop').textContent(), /应用候选/);
+    await ui.locator('#language').selectOption('ja');
+    await ui.locator('#applyAutoCrop').click();
+    saved = await waitFor(r.app, s => s.job.manifest.images[1].crop?.width !== 1000 && !s.busy);
+    const edited = saved.job.manifest.images[1];
+    assert.ok(edited.crop.x <= 244 && edited.crop.y + edited.crop.height > 928, '端近くの細い線・孤立した番号を保持');
+    assert.equal(edited.split.first_page, 'left');
+    assert.deepEqual(saved.job.manifest.selected_capture_ids, manual.selected_capture_ids);
+    assert.deepEqual(await r.app.image(2, true), original);
+    if (imageFormat === 'jpeg') {
+      const derived = await r.app.image(2);
+      await r.request('crop', { id: 2, x: edited.crop.x, y: edited.crop.y, width: edited.crop.width, height: edited.crop.height });
+      assert.deepEqual(await r.app.image(2), derived, '自動・手動の派生には現在設定ではなく取得時JPEG画質を使う');
+    }
+    const expected = [await r.app.image(1), await r.app.image(2, false, 'left'), await r.app.image(2, false, 'right')];
+    await ui.locator('#decisionButton').click(); await ui.locator('#exportOptions > summary').click();
+    for (const [index, format] of ['zip', 'cbz'].entries()) {
+      const destination = path.join(r.directory, `auto-margin.${format}`);
+      await ui.locator('#format').selectOption(format); await ui.locator('#destination').fill(destination);
+      await ui.locator('#export').click(); await waitFor(r.app, s => s.job.manifest.exports.length === index + 1 && !s.busy);
+      const archive = await readFile(destination), entries = [];
+      for (let offset = 0; archive.readUInt32LE(offset) === 0x04034b50;) {
+        const size = archive.readUInt32LE(offset + 18), n = archive.readUInt16LE(offset + 26);
+        const start = offset + 30 + n + archive.readUInt16LE(offset + 28);
+        entries.push({ name: archive.subarray(offset + 30, offset + 30 + n).toString(), bytes: archive.subarray(start, start + size) });
+        offset = start + size;
+      }
+      const extension = imageFormat === 'jpeg' ? 'jpg' : 'png';
+      assert.deepEqual(entries.map(entry => entry.name), [1, 2, 3].map(n => `${String(n).padStart(6, '0')}.${extension}`));
+      assert.deepEqual(entries.map(entry => entry.bytes), expected, '取得順・左→右順と派生画像bytes');
+      for (const [x, y] of [[244, 130], [588, 920]]) {
+        const source = await imagePixel(ui, original, x, y);
+        const output = await imagePixel(ui, entries[1].bytes, x - edited.crop.x, y - edited.crop.y);
+        assert.ok(source.every((value, channel) => Math.abs(value - output[channel]) <= (imageFormat === 'png' ? 0 : 70)), '枠・番号の画素を出力で確認');
+      }
+    }
+    await ui.locator('[data-stage-target="review"]').first().click();
+    await ui.locator('#resetCrop').click();
+    saved = await waitFor(r.app, s => s.job.manifest.images[1].crop === null && !s.busy);
+    assert.equal(saved.job.manifest.images[1].split.first_page, 'left');
+    assert.deepEqual(await r.app.image(2, true), original);
+  });
 });
 
 test('JPEG画像軽量化: 公開設定で実取得し画質・原本・クロップとZIP/CBZを再読する', { timeout: 60_000 }, async t => {

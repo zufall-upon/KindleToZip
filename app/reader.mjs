@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { AppError } from './store-client.mjs';
 import { visibleCaptureGeometry } from './visible-geometry.mjs';
 import { translateCopy } from './ui/messages.mjs';
+import { createStoreAdapter } from './stores/index.mjs';
 
 process.env.PLAYWRIGHT_BROWSERS_PATH ||= fileURLToPath(new URL('../artifacts/browsers/', import.meta.url));
 const { chromium } = await import('playwright');
@@ -190,21 +191,23 @@ export async function configureReaderNetwork(context, sampleUrl) {
 // The live adapter uses only visible official UI chosen by the user. Unknown
 // layouts are rejected, not replaced by hidden APIs or image extraction.
 export class Reader {
-  static async open({ profile, sampleUrl, preconfiguredSample = true, headless = false, onChange, readGuard }) {
+  static async open({ profile, sampleUrl, regionId = 'jp', preconfiguredSample = true, headless = false, onChange, readGuard }) {
+    const adapter = createStoreAdapter({ regionId, sampleUrl });
     const context = await chromium.launchPersistentContext(profile, readerContextOptions({ sampleUrl, headless }));
     try {
       await configureReaderNetwork(context, sampleUrl);
       const page = context.pages()[0] ?? await context.newPage();
       page.setDefaultTimeout(1800);
-      const reader = new Reader(context, page, sampleUrl, onChange, preconfiguredSample);
+      const reader = new Reader(context, page, sampleUrl, onChange, preconfiguredSample, adapter);
       reader.readGuard = readGuard;
-      await page.goto(sampleUrl ?? 'https://read.amazon.co.jp/', { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await page.goto(adapter.startUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
       return reader;
     } catch (error) { await context.close(); throw error; }
   }
 
-  constructor(context, page, sampleUrl, onChange, preconfiguredSample = true) {
+  constructor(context, page, sampleUrl, onChange, preconfiguredSample = true, adapter = createStoreAdapter({ sampleUrl })) {
     Object.assign(this, { context, page, sampleUrl, onChange });
+    Object.defineProperty(this, 'adapter', { value: adapter, enumerable: true });
     this.id = randomUUID();
     this.mappingRevision = 0;
     this.tabRevision = 0;
@@ -244,10 +247,7 @@ export class Reader {
   candidatePages() {
     return this.context.pages().filter(page => {
       if (page.isClosed()) return false;
-      try {
-        const url = new URL(page.url());
-        return this.sampleUrl ? page.url() === this.sampleUrl : url.protocol === 'https:' && url.hostname === 'read.amazon.co.jp';
-      } catch { return false; }
+      return this.adapter.acceptsUrl(page.url());
     });
   }
 
@@ -333,9 +333,8 @@ export class Reader {
     // separate tab. Never reinterpret that as missing reader CSS or silently
     // choose a different book. The sample marker represents this tab lifecycle,
     // not copied Kindle markup or a guess about its internal rendering.
-    const library = this.sampleUrl
-      ? await page.locator('[data-ktz-sample-library="true"]').count() === 1
-      : /^\/kindle-library(?:\/|$)/.test(new URL(page.url()).pathname);
+    if (!this.adapter.acceptsUrl(page.url())) throw new AppError('auth_or_target_changed');
+    const library = await this.adapter.isLibrary(page);
     if (library) {
       this.bound = null;
       const error = new AppError('reader_library_selected', { field: 'reader', cause: 'library_selected' });
@@ -456,8 +455,7 @@ export class Reader {
     await this.adoptVisibleReaderPage();
     if (cancelEpoch !== (this.pickCancelEpoch ?? 0)) throw new AppError('picker_cancelled');
     if (this.page.isClosed()) throw new AppError('target_changed');
-    const host = new URL(this.page.url());
-    if (!this.sampleUrl && (host.protocol !== 'https:' || host.hostname !== 'read.amazon.co.jp')) throw new AppError('auth_or_target_changed');
+    if (!this.adapter.acceptsUrl(this.page.url())) throw new AppError('auth_or_target_changed');
     const selectedPage = this.page;
     const selectedUrl = this.page.url();
     const labels = { reader: '読書領域', next: '次へボタン', identity: '本の識別表示', position: '位置表示' };
@@ -720,61 +718,11 @@ export class Reader {
   }
 
   isKindleChromeConfiguration() {
-    const config = this.config;
-    return Boolean(config && !config.frame && !Object.values(config.frames ?? {}).some(Boolean)
-      && config.reader === '#readerChromeTitle >> xpath=ancestor::div[5]'
-      && config.identity === '#readerChromeTitle' && config.position === 'input[type="range"]'
-      && config.next === 'button[aria-label*="次"], button[aria-label*="next" i]');
+    return this.adapter.isChromeConfiguration(this.config);
   }
 
   async revealKindleChrome(recovery) {
-    // Explicit preview only: never inherited by approval or acquisition. This
-    // attempts DOM-only pointer motion, not an OS/browser mouse input, click,
-    // visibility override, hidden-value read, or authentication operation.
-    if (this.page !== recovery.page || this.generation !== recovery.generation || this.config !== recovery.config) throw new AppError('target_changed');
-    const config = this.config;
-    if (!this.isKindleChromeConfiguration()) return 'not_preset';
-    const auth = await this.page.evaluate(authIndicators);
-    if (auth.password || auth.modal) return 'auth_visible';
-    const fields = ['reader', 'identity', 'position', 'next'];
-    const locators = fields.map(field => this.page.locator(config[field]));
-    if ((await Promise.all(locators.map(locator => locator.count()))).some(count => count !== 1)) return 'markers_not_unique';
-    const handles = await Promise.all(locators.map(locator => locator.elementHandle()));
-    try {
-      if (handles.some(handle => !handle)) return 'no_handles';
-      return await this.page.evaluate(([region, identity, position, next]) => {
-        const visible = element => {
-          const rect = element.getBoundingClientRect(), style = getComputedStyle(element);
-          return element.isConnected && rect.width >= 16 && rect.height >= 16
-            && style.display !== 'none' && style.visibility === 'visible' && Number(style.opacity) > 0;
-        };
-        if (region.tagName !== 'DIV' || !visible(region)) return 'region_hidden';
-        if (![identity, position, next].every(element => element.isConnected && region.contains(element))) return 'not_shared';
-        const label = next.getAttribute('aria-label') ?? '';
-        if (!/次|next/i.test(label) || /前|戻|previous|back/i.test(label)) return 'next_direction';
-        const surfaces = [...region.querySelectorAll('canvas, img, iframe')].filter(visible);
-        if (!surfaces.length) return 'no_surface';
-        const rect = region.getBoundingClientRect();
-        const x = Math.max(0, rect.left) + (Math.min(innerWidth, rect.right) - Math.max(0, rect.left)) / 2;
-        const y = Math.max(0, rect.top) + Math.min(8, (Math.min(innerHeight, rect.bottom) - Math.max(0, rect.top)) / 2);
-        const hit = document.elementFromPoint(x, y);
-        if (!hit || !region.contains(hit) || next.contains(hit) || position.contains(hit)
-          || hit.closest('button, input, a, [role="button"], [contenteditable="true"]')) return 'hit_blocked';
-        // Kindle may use a non-interactive DIV over the actual painting frame.
-        // The point must still lie over a rendered surface, not a toolbar,
-        // navigation control, outside overlay, or arbitrary empty layout area.
-        if (!surfaces.some(surface => {
-          const box = surface.getBoundingClientRect();
-          return x >= box.left && x < box.right && y >= box.top && y < box.bottom;
-        }) || !['DIV', 'SPAN', 'CANVAS', 'IMG', 'IFRAME'].includes(hit.tagName)) return 'hit_blocked';
-        // A single DOM-only entry/motion sequence near the top of the visible
-        // reading surface can notify official auto-hiding chrome handlers.
-        // Never set CSS, focus, a trusted-event flag, or read a hidden value.
-        for (const type of ['pointerover', 'pointermove']) hit.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, clientY: y, pointerType: 'mouse' }));
-        for (const type of ['mouseover', 'mousemove']) hit.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x, clientY: y }));
-        return 'dispatched';
-      }, handles);
-    } finally { await Promise.all(handles.map(handle => handle?.dispose().catch(() => {}))); }
+    return this.adapter.revealChrome(this, recovery, authIndicators);
   }
 
   async read(recovery = null) {
@@ -783,7 +731,7 @@ export class Reader {
     if (!this.config || this.page.isClosed() || pages.length !== this.expectedPages.size || pages.some(page => !this.expectedPages.has(page))) throw new AppError('target_changed');
     await this.assertReaderDocument(this.page);
     const url = new URL(this.page.url());
-    if (this.sampleUrl ? this.page.url() !== this.sampleUrl : url.protocol !== 'https:' || url.hostname !== 'read.amazon.co.jp') throw new AppError('auth_or_target_changed');
+    if (!this.adapter.acceptsUrl(url.href)) throw new AppError('auth_or_target_changed');
     // Only explicitly configured visible elements are read; no cookies, console,
     // network bodies, hidden service state or complete DOM is collected.
     const markerTexts = {};
@@ -873,25 +821,7 @@ export class Reader {
     const identity = await visible('identity');
     const position = await visible('position');
     const next = await visible('next');
-    // The measured Kindle selector is only meaningful when the fifth div is
-    // the shared visible reader chrome, not an unrelated outer layout shell.
-    // Recheck on every read (including acquisition), not only preset selection.
-    if (this.config.reader === '#readerChromeTitle >> xpath=ancestor::div[5]') {
-      const handles = await Promise.all([identity, position, next].map(locator => locator.elementHandle()));
-      try {
-        const shared = await region.evaluate((element, markers) =>
-          element.tagName === 'DIV' && markers.every(marker => marker && element.contains(marker))
-          && [...element.querySelectorAll('canvas, img, iframe')].some(surface => {
-            const r = surface.getBoundingClientRect(), style = getComputedStyle(surface);
-            return r.width >= 16 && r.height >= 16 && style.visibility === 'visible' && style.display !== 'none';
-          }), handles);
-        if (!shared) throw new AppError('reader_ui_unknown', { field: 'reader', cause: 'kindle_chrome_structure_changed' });
-        const direction = await next.getAttribute('aria-label');
-        if (!direction || /前|戻|previous|back/i.test(direction)) {
-          throw new AppError('reader_ui_unknown', { field: 'next', cause: 'kindle_chrome_structure_changed' });
-        }
-      } finally { await Promise.all(handles.map(handle => handle?.dispose())); }
-    }
+    await this.adapter.validateMarkers({ config: this.config, region, identity, position, next });
     const geometry = await visibleCaptureGeometry(this.page, region);
     const clip = geometry.clip;
     const identityText = markerTexts.identity ?? await identity.evaluate(markerText, { field: 'identity' });
@@ -924,12 +854,10 @@ export class Reader {
     if (readerAuth.password) rejectSurface('reader_password');
     if (readerAuth.modal) rejectSurface('reader_modal');
     if (!geometry.unobscured) rejectSurface('blocked_hit');
-    if (this.sampleUrl) {
-      const safe = await this.page.locator('#reader').evaluate(el => el.dataset.book === 'sample-a' && el.dataset.session === 'active' && el.dataset.overlay === 'false');
-      if (!safe) throw new AppError('auth_or_target_changed');
-    }
+    await this.adapter.assertState(this.page);
+    const identified = this.adapter.identify(url, identityText, positionText);
     const target = digest(JSON.stringify([url.href, this.config, identityText, clip, display, geometry.viewports, this.captureScale, this.generation]));
-    return { target, book: { title: identityText, identity: digest(JSON.stringify([url.origin, identityText])) }, position: positionText, clip, deviceScaleFactor: this.captureScale,
+    return { target, ...identified, clip, deviceScaleFactor: this.captureScale,
       nextDisabled: !await next.isEnabled() || await next.getAttribute('aria-disabled') === 'true', next };
   }
 
@@ -1022,9 +950,11 @@ export class Reader {
 
   async capture() {
     const before = await this.requireBound();
+    const bound = this.bound;
     const png = await this.screenshotWithoutSelectedNavigation(before);
+    if (this.bound !== bound) throw new AppError('target_changed');
     const dimensions = pngDimensions(png);
-    if (dimensions[0] !== this.bound.dimensions[0] || dimensions[1] !== this.bound.dimensions[1]) throw new AppError('capture_dimensions_mismatch');
+    if (dimensions[0] !== bound.dimensions[0] || dimensions[1] !== bound.dimensions[1]) throw new AppError('capture_dimensions_mismatch');
     if (!this.same(before, await this.read())) throw new AppError('target_changed');
     return png;
   }
@@ -1089,7 +1019,7 @@ export class Reader {
         // Page-scoped trusted input, dispatched once without locator auto-wait
         // or retries. Finish an already dispatched down/up pair before
         // acknowledging cancellation, without another reading action.
-        await this.page.mouse.click(point.x, point.y);
+        await this.adapter.turnPage(this.page, point);
         await onDispatchState({ stage: 'advance_confirmation', status: 'sent' });
       } finally { if (topElement !== button) await topElement.dispose(); }
     } finally { await button.dispose(); }

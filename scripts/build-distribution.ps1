@@ -202,12 +202,16 @@ try {
         $reportStream = [System.IO.FileStream]::new($reportPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
         try { $reportStream.Write($reportBytes, 0, $reportBytes.Length); $reportStream.Flush($true) }
         finally { $reportStream.Dispose() }
-        # A fresh checkout has no ignored local test destination. Prepare only
-        # this fixed workspace folder; the deploy helper still validates it and
-        # refuses reparse points, locked files, and any existing-data damage.
-        $testDestination = Join-Path $root '_testenv'
-        [IO.Directory]::CreateDirectory($testDestination) | Out-Null
-        $deployment = & (Join-Path $PSScriptRoot 'deploy-portable.ps1') -Source $destination -DestinationDirectory $testDestination -ExpectedSha256 $exeHash
+        # Keep an existing local test EXE untouched. A new build is already
+        # available in its unique release directory; replacing a test EXE is a
+        # separate explicit deployment operation.
+        if (Test-Path -LiteralPath (Join-Path $root '_testenv/KindleToZip-Portable.exe')) {
+            $deployment = [pscustomobject]@{ skipped = $true; reason = 'existing_test_executable_preserved'; executablePath = $null; executableSha256 = $null }
+        } else {
+            $testDestination = Join-Path $root '_testenv'
+            [IO.Directory]::CreateDirectory($testDestination) | Out-Null
+            $deployment = & (Join-Path $PSScriptRoot 'deploy-portable.ps1') -Source $destination -DestinationDirectory $testDestination -ExpectedSha256 $exeHash
+        }
         $deployment | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $buildDirectory 'deployment.json') -Encoding utf8
         $stopwatch.Stop()
         Write-Output "Portable single-file Windows package created without replacing an existing release."
@@ -218,8 +222,11 @@ try {
         Write-Output "Payload SHA-256: $payloadHash"
         Write-Output "Build elapsed: $([math]::Round($stopwatch.Elapsed.TotalSeconds, 2)) seconds"
         Write-Output "Build report: $([IO.Path]::GetRelativePath($root, $reportPath).Replace('\', '/'))"
-        Write-Output "Deployed: $($deployment.executablePath)"
-        Write-Output "Deployed SHA-256: $($deployment.executableSha256)"
+        if ($deployment.skipped) { Write-Output 'Deployment skipped: existing _testenv executable preserved.' }
+        else {
+            Write-Output "Deployed: $($deployment.executablePath)"
+            Write-Output "Deployed SHA-256: $($deployment.executableSha256)"
+        }
     } finally {
         Remove-Item Env:\KTZ_EMBEDDED_PAYLOAD -ErrorAction SilentlyContinue
         if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }

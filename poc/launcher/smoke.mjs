@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { lstat, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { startApplication } from '../../app/server.mjs';
 import { openControlWindow as openWindow } from '../../app/control-window.mjs';
 import { withPublicDisclosures } from '../browser/public-ui-controls.mjs';
@@ -12,7 +13,7 @@ async function openControlWindow(...args) {
 }
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const bundle = JSON.parse(await readFile(new URL('../../bundle-info.json', import.meta.url), 'utf8'));
+let bundle;
 const require = (condition, message) => { if (!condition) throw new Error(message); };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const dimensions = bytes => {
@@ -44,6 +45,7 @@ function readStoredPngEntries(archive) {
 }
 
 function portablePaths() {
+  bundle = JSON.parse(readFileSync(new URL('../../bundle-info.json', import.meta.url), 'utf8'));
   assert.equal(process.versions.node, bundle.nodeVersion, 'bundled_node_version');
   assert.equal(bundle.playwrightVersion, '1.64.1', 'bundled_playwright_version');
   assert.equal(bundle.chromiumRevision, '1248', 'bundled_chromium_revision');
@@ -101,6 +103,51 @@ async function openFixture(app, options = {}) {
   return opened;
 }
 
+async function publicKindleRegionSelection() {
+  const running = await startApplication({ sampleHeadless: true });
+  let control;
+  try {
+    control = await openControlWindow(running.url, { headless: true });
+    const ui = control.page;
+    await ui.waitForFunction(() => document.querySelector('#kindleRegion').options.length === 3);
+    assert.deepEqual(await ui.locator('#kindleRegion option').evaluateAll(options => options.map(option => option.value)), ['jp', 'us', 'uk']);
+    let holdPoll;
+    const pendingPoll = new Promise(resolve => { holdPoll = resolve; });
+    const interceptPoll = route => holdPoll(route);
+    await ui.route('**/api/state', interceptPoll);
+    const oldPoll = await pendingPoll;
+    const oldSnapshot = await running.app.snapshot();
+    await ui.evaluate(() => {
+      const select = document.querySelector('#kindleRegion');
+      select.value = 'us';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await oldPoll.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(oldSnapshot) });
+    await ui.unroute('**/api/state', interceptPoll);
+    await ui.waitForFunction(() => !document.querySelector('#kindleRegion').disabled);
+    assert.equal(running.app.kindleRegion, 'us', 'a prior poll must not replace the selected region');
+    await ui.waitForFunction(() => document.querySelector('#kindleStartUrl').textContent === 'https://read.amazon.com/' && !document.querySelector('#kindleRegion').disabled);
+    for (const [language, label] of [['en', 'United States'], ['zh-CN', '美国'], ['ja', '米国']]) {
+      await ui.locator('#language').selectOption(language);
+      assert.equal(await ui.locator('#kindleRegion').inputValue(), 'us');
+      assert.equal(await ui.locator('#kindleRegion option:checked').textContent(), label);
+    }
+    await ui.locator('#create').click();
+    await ui.locator('#openSample').click();
+    await ui.waitForFunction(() => document.querySelector('#kindleRegion').disabled && !document.querySelector('#readerTab').disabled);
+    await assert.rejects(running.app.command('setKindleRegion', { id: 'uk' }), /close_browser_first/);
+    await ui.locator('#closeBrowser').click();
+    await ui.waitForFunction(() => !document.querySelector('#kindleRegion').disabled);
+    await ui.locator('#kindleRegion').selectOption('uk');
+    await ui.waitForFunction(() => document.querySelector('#kindleStartUrl').textContent === 'https://read.amazon.co.uk/');
+    const snapshot = await running.app.snapshot();
+    assert.equal(snapshot.previewApproved, false);
+    assert.equal(snapshot.job.manifest.images.length, 0);
+    return { regions: ['jp', 'us', 'uk'], languages: ['en', 'zh-CN', 'ja'], languageIndependent: true,
+      lockedWhileOpen: true, capturedImages: 0, serviceConnected: false };
+  } finally { await control?.close(); await running.close(); }
+}
+
 // Exercise the bundled public UI, not a preconfigured sample or injected CSS.
 // Both browsers are headless and all reader content is self-authored loopback.
 async function publicRepeatTargetPreview() {
@@ -147,10 +194,10 @@ async function publicRepeatTargetPreview() {
 
 // A separate fictional fixture reproduces the visible geometry of the reported
 // cases, without copying book pixels. Exercise the bundled public controls.
-async function publicImageImprovements(paths) {
+export async function publicImageImprovements(paths) {
   const results = [];
   for (const imageFormat of ['png', 'jpeg']) {
-    const running = await startApplication({ sampleHeadless: true });
+    const running = await startApplication({ sampleHeadless: true, dataDir: paths.data });
     let control;
     const wait = async predicate => {
       const deadline = Date.now() + 30_000; let state;
@@ -227,6 +274,38 @@ async function publicImageImprovements(paths) {
       assert.deepEqual(await running.app.image(first.capture_id, true), original);
       await ui.locator('#images').scrollIntoViewIfNeeded();
       await ui.screenshot({ path: path.join(path.dirname(paths.root), `fixture-review-${imageFormat}.png`) });
+      // Keep the previous manual-cover crop check and exercise automatic
+      // comparison on the independently drawn page, including a thin edge and
+      // isolated marks. A candidate is never a saved crop.
+      await ui.locator('#images article[data-capture-id="2"] select').selectOption('left');
+      await wait(s => s.job.manifest.images[1].split?.first_page === 'left' && !s.busy);
+      await ui.locator('#cropId').fill('2');
+      for (const [id, value] of [['cropX', 10], ['cropY', 10], ['cropWidth', 1000], ['cropHeight', 900]]) await ui.locator(`#${id}`).fill(String(value));
+      await ui.locator('#crop').click();
+      snapshot = await wait(s => s.job.manifest.images[1].crop?.width === 1000 && !s.busy);
+      const manual = structuredClone(snapshot.job.manifest);
+      await ui.locator('#detectCrop').click(); await ui.locator('#autoCropFigure').waitFor({ state: 'visible' });
+      assert.deepEqual((await running.app.snapshot()).job.manifest, manual, 'preview is not a saved edit');
+      await ui.locator('.crop-comparison').screenshot({ path: path.join(path.dirname(paths.root), `fixture-auto-${imageFormat}.png`) });
+      await ui.locator('#cancelAutoCrop').click(); await ui.locator('#autoCropFigure').waitFor({ state: 'hidden' });
+      assert.deepEqual((await running.app.snapshot()).job.manifest, manual, 'cancel retains the manual crop');
+      await ui.locator('#detectCrop').click(); await ui.locator('#autoCropFigure').waitFor({ state: 'visible' });
+      await ui.locator('#applyAutoCrop').click();
+      snapshot = await wait(s => s.job.manifest.images[1].crop?.width !== 1000 && !s.busy);
+      const auto = snapshot.job.manifest.images[1];
+      assert.ok(auto.crop.x <= 244 && auto.crop.y + auto.crop.height > 928, 'fictional edge line and page marks remain inside crop');
+      assert.equal(auto.split.first_page, 'left');
+      assert.deepEqual(await running.app.image(2, true), pageOriginal);
+      await ui.locator('#resetCrop').click();
+      await wait(s => s.job.manifest.images[1].crop === null && !s.busy);
+      assert.deepEqual(await running.app.image(2, true), pageOriginal);
+      await ui.locator('#detectCrop').click(); await ui.locator('#autoCropFigure').waitFor({ state: 'visible' });
+      await ui.locator('#applyAutoCrop').click();
+      snapshot = await wait(s => Boolean(s.job.manifest.images[1].crop) && !s.busy);
+      const finalPage = snapshot.job.manifest.images[1];
+      assert.equal(finalPage.split.first_page, 'left');
+      assert.deepEqual(snapshot.job.manifest.selected_capture_ids, [1, 2]);
+      const expectedEntries = [await running.app.image(1), await running.app.image(2, false, 'left'), await running.app.image(2, false, 'right')];
       await ui.locator('#decisionButton').click(); await ui.locator('#exportOptions > summary').click();
       for (const [index, format] of ['zip', 'cbz'].entries()) {
         const destination = path.join(snapshot.job.job_path, `image-${imageFormat}.${format}`);
@@ -234,19 +313,25 @@ async function publicImageImprovements(paths) {
         await ui.locator('#export').click();
         await wait(s => s.job.manifest.exports.length === index + 1 && !s.busy);
         const entries = readStoredPngEntries(await readFile(destination));
-        assert.equal(entries.length, 2);
-        for (const entry of entries) {
+        assert.deepEqual(entries.map(entry => entry.name), [1, 2, 3].map(n => `${String(n).padStart(6, '0')}.${extension}`));
+        for (const [entryIndex, entry] of entries.entries()) {
           assert.match(entry.name, imageFormat === 'jpeg' ? /\.jpg$/ : /\.png$/);
+          assert.deepEqual(entry.bytes, expectedEntries[entryIndex], 'archive preserves capture and left/right order');
           const actual = await ui.evaluate(async base64 => {
             const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
             const bitmap = await createImageBitmap(new Blob([bytes]));
             const size = [bitmap.width, bitmap.height]; bitmap.close(); return size;
           }, entry.bytes.toString('base64'));
-          assert.ok(actual[0] > 0 && actual[1] > 0);
+          assert.deepEqual(actual, entryIndex === 0 ? [560, 800] : entryIndex === 1
+            ? [finalPage.split.left.width, finalPage.split.left.height] : [finalPage.split.right.width, finalPage.split.right.height]);
         }
+        const beforeInk = await pixel(pageOriginal, 244, 130);
+        const afterInk = await pixel(entries[1].bytes, 244 - finalPage.crop.x, 130 - finalPage.crop.y);
+        assert.ok(beforeInk.every((value, index) => Math.abs(value - afterInk[index]) <= (imageFormat === 'png' ? 0 : 60)), 'edge frame pixels survive the exported crop');
       }
       results.push({ imageFormat, coverSingle: true, images: 2, crop: [560, 800], originalKept: true,
-        zipAndCbzReopened: true, selection: 'public', screenshots: [`fixture-cover-${imageFormat}.${extension}`, `fixture-preview-${imageFormat}.png`, `fixture-page-${imageFormat}.${extension}`, `fixture-review-${imageFormat}.png`] });
+        zipAndCbzReopened: true, selection: 'public', autoCropComparedAppliedCancelledRestored: true, splitOrderAndPixelsVerified: true,
+        screenshots: [`fixture-cover-${imageFormat}.${extension}`, `fixture-preview-${imageFormat}.png`, `fixture-page-${imageFormat}.${extension}`, `fixture-review-${imageFormat}.png`, `fixture-auto-${imageFormat}.png`] });
     } finally { await control?.close(); await running.close(); }
   }
   return results;
@@ -833,13 +918,14 @@ if (process.argv[2] === '--distribution-lock-hold') {
   console.log(`KTZ_SMOKE_RESULT:${JSON.stringify({ ...result, developerPathToolsAvailable: false })}`);
 } else if (process.argv[2] === '--distribution-smoke') {
   const paths = portablePaths();
+  const publicKindleRegions = await publicKindleRegionSelection();
   const result = await createAndCapture(paths);
   const publicPreviews = await publicLayoutPreview();
   const publicTwoBookFlowResult = await publicTwoBookFlow();
   const publicRepeatTarget = await publicRepeatTargetPreview();
   const publicImageFlow = await publicImageImprovements(paths);
   console.log(`KTZ_SMOKE_RESULT:${JSON.stringify({ ...result, publicPreviews, publicTwoBookFlow: publicTwoBookFlowResult, publicRepeatTarget,
-    publicImageFlow, headlessOnly: true, portableDirectories: ['runtime', 'data', 'temp'], developerPathToolsAvailable: false })}`);
-} else {
+    publicImageFlow, publicKindleRegions, headlessOnly: true, portableDirectories: ['runtime', 'data', 'temp'], developerPathToolsAvailable: false })}`);
+} else if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   throw new Error('distribution_smoke_mode_required');
 }
