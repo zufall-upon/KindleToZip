@@ -6,16 +6,16 @@
 
 **Capture. Review. Archive.**
 
-Capture displayed pages in the Kindle web reader on Windows, review and split your PNG screenshots, then save them as an ordered **ZIP or CBZ**.
+Capture displayed pages in the Kindle web reader on Windows, review and split your PNG or JPEG screenshots, then save them as an ordered **ZIP or CBZ**.
 
 **Capture screenshots in the background. Keep working while you wait.**
 
 **Free & open source · Windows x64 · No KindleToZip account · No paid DLC**
 
-> **Windows x64 Portable v0.1.2 is available.**
-> Mandatory source and packaged-fixture checks passed. The user also confirmed clean-Windows operation and complete real-book capture.
+> **Windows x64 Portable v0.1.4 is available.**
+> Mandatory source and packaged-fixture checks passed. The user confirmed the local image improvements; the earlier clean-Windows/whole-book report concerns v0.1.2, not this hosted EXE.
 
-**[Download Portable ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.2/KindleToZip-Portable-v0.1.2-win-x64.zip)** · [Portable quick start](docs/portable.md) · [Run from source](docs/getting-started.md)
+**[Download Portable ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.4/KindleToZip-Portable-v0.1.4-win-x64.zip)** · [Portable quick start](docs/portable.md) · [Run from source](docs/getting-started.md)
 
 <a href="docs/screenshots.md#animation"><img src="docs/images/kindletozip-demo.gif" alt="Author-recorded sample: image review and ZIP saving in the Japanese UI" width="340"></a>
 
@@ -50,20 +50,20 @@ Included in the Portable build and source, with the limits below:
 - **Check before capturing.** Dedicated browser profile, reading-area selection, preview, and explicit approval before a separate start action.
 - **Split and organize.** Optional left/right spread splitting, reading direction, and image reordering.
 - **Keep the originals.** Include or exclude images and apply non-destructive crops; review committed images after stopping without recapturing them.
-- **Save an ordered archive.** Export included PNGs to ZIP / CBZ without overwriting an existing file.
+- **Save an ordered archive.** Export included PNG/JPEG images to ZIP / CBZ without overwriting an existing file.
 - **Choose your language.** Japanese, English, and Simplified Chinese UI.
 
-**Added in current source (not in the published v0.1.2 package):** choose PNG or JPEG capture and JPEG quality from 1–100. JPEG is lossy at capture and is recompressed when cropped or split. In review, correct each image to one or two pages and choose their order. Crop margins manually and restore the original. Layout detection can be wrong, so check it visually. A small selected next button overlapping the capture area is hidden only during capture when safe; not all overlays can be removed.
+**Added in v0.1.4:** choose PNG or JPEG capture and JPEG quality from 1–100. JPEG is lossy at capture and is recompressed when cropped or split. In review, correct each image to one or two pages and choose their order. Crop margins manually and restore the original. Layout detection can be wrong, so check it visually. A small selected next button overlapping the capture area is hidden only during capture when safe; not all overlays can be removed.
 
 ## Get started
 
-**Portable:** download the [v0.1.2 release ZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2), verify `SHA256SUMS.txt`, extract the entire ZIP into a writable folder, and run `KindleToZip-Portable.exe`. Node.js and the dedicated browser are bundled; no development setup is needed. See the [trilingual Portable guide](docs/portable.md).
+**Portable:** download the [v0.1.4 release ZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.4), verify `SHA256SUMS.txt`, extract the entire ZIP into a writable folder, and run `KindleToZip-Portable.exe`. Node.js and the dedicated browser are bundled; no development setup is needed. See the [trilingual Portable guide](docs/portable.md).
 
 **From source:** you need **Windows x64, Git, Node.js 22+, and PowerShell 7**. The [setup guide](docs/getting-started.md) installs an isolated Rust toolchain and browser, then launches the app with `npm start`. Start with the self-authored sample, without an Amazon login or a real book.
 
 ## Before you use it
 
-- **Quality:** v0.1.2 passed **142/142 public source UI tests**, mandatory deployment checks, and packaged public selection/export regressions. The initial **125-pass / 12-fail** run remains historical, not the current result. Clean-Windows operation and complete real-book capture were separately confirmed by the user; see [validation history and release evidence](docs/validation.md).
+- **Quality:** v0.1.4 passed **147/147 public source UI tests**, **4/4 deployment checks**, and packaged public selection/export regressions. Earlier failed runs remain historical. The user's local-improvement confirmation and earlier v0.1.2 clean-Windows/whole-book report are separate from this hosted EXE's fixture checks; see [validation history and release evidence](docs/validation.md).
 - **Login & local data:** sign in only on the official page. **Login state is saved by default.** Turn retention off for a separate temporary profile; normal shutdown removes temporary data, but crashes may leave files. Never share profiles, cookies, book data, or captured pages. See [privacy and storage details](docs/security-and-trust.md).
 - **Network & trust:** no app-operated login server, application telemetry, or automatic update checks. Reader, authentication, browser, and setup traffic still occurs. Open source is **not a security guarantee**; see [network destinations and trust boundaries](docs/security-and-trust.md).
 - **Compatibility:** the current entry point targets Japan's Kindle web reader. Other regions, every layout, ZIP64, and every CBZ viewer are unverified. User-confirmed clean-Windows and real-book operation does not guarantee all environments or books. Standard / 2× rendering has a **16-megapixel / 32 MiB limit per PNG**; it cannot restore missing source detail.

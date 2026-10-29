@@ -1,5 +1,27 @@
 # Initial source validation
 
+## v0.1.4 public release — 2026-10-29
+
+**Published:** [v0.1.4 — Windows x64 Portable](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.4), **2026-10-29 05:08:42 UTC**, as a normal Release + **Latest**, titled **v0.1.4**. The actual desktop TOP-right Releases component showed the complete `v0.1.4` title and Latest badge, without an experimental label. The annotated tag, package/launcher version and workflow source agree at **`b9cd7164813a6850c7bcf7671673aa8bea46d5c2`**. Earlier tags are unchanged, including failed packaging tag `v0.1.3`; v0.1.2's public assets remain unchanged.
+
+| Gate | Actual result |
+| --- | --- |
+| [Tag-free package preflight 40817995533](https://github.com/zufall-upon/KindleToZip/actions/runs/40817995533) | Fresh build/deployment, packaged public selection/export, notices and transferred hashes passed; packaging job 3m10s, Linux verification 31s |
+| [Exact-source CI 40818426954](https://github.com/zufall-upon/KindleToZip/actions/runs/40818426954) | Explicitly dispatched on the unchanged preflight commit; all mandatory gates passed, 14m5s job elapsed; controller 23, launcher 3, IPC/store 24, source UI 147/147, deployment 4/4 |
+| [Tagged release 40819770601](https://github.com/zufall-upon/KindleToZip/actions/runs/40819770601) | Every existing source/build/packaged/transferred-hash/attestation/Draft gate passed; build job 16m35s, draft job 48s |
+| Actual release EXE | Packaged public selection, approval/start, PNG/JPEG image handling, crop/order/split and reopened ZIP/CBZ, whole-folder reuse, locking, private paths and write-denial checks passed; 90.29 seconds internal smoke elapsed |
+| Downloaded Draft | ZIP/EXE hashes, sizes, source/tag/run metadata, 21 allowlisted entries, trilingual guide and JPEG crate licenses/IJG notice matched; ZIP and EXE provenance verified the exact source, release workflow and GitHub-hosted runner |
+| Published assets and screen | Anonymous HTTP 200 downloads of all three assets matched the verified Draft; public API returned normal Release + Latest; rendered trilingual notes and the actual right-side Releases component verified |
+
+| Public file | Bytes | SHA-256 |
+| --- | ---: | --- |
+| [`KindleToZip-Portable-v0.1.4-win-x64.zip`](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.4/KindleToZip-Portable-v0.1.4-win-x64.zip) | 380,974,486 | `523e525a957b52ef8a042ae56bfc88c47ce9459afa7a2afb9bb9151bb1ac3fbf` |
+| `KindleToZip-Portable.exe` inside ZIP | 859,950,108 | `f45638610edf56a554d52e80d5a0ca2590342273b9a506bcce94e507b4c0427e` |
+
+Companion assets: [`SHA256SUMS.txt`](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.4/SHA256SUMS.txt) and [`KindleToZip-build.sigstore.json`](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.4/KindleToZip-build.sigstore.json). The archive contains only the executable, project license, frozen Portable guide, metadata and component notices. It contains no used runtime/data/temp, login profiles, book images or private evidence. JPEG license collection is not a full independent redistribution/legal review.
+
+The user confirmed the local improvements without detailing the scope. The earlier clean-Windows/whole-real-book report concerns v0.1.2, not byte-specific acceptance of this new hosted EXE. Hosted tests used self-authored fixtures. Current Kindle layouts/regions, all books, independent legal/security audit and complete redistribution obligations remain unverified. The original local EXE and saved evidence were reused without local rebuild, broad retest, cleanup or real-book operation. The two corrected admission groups and CRLF packaging regression above are targeted checks, not a repeated local suite. The `[skip ci]` push was not accepted as CI; the same commit's mandatory CI was explicitly dispatched before tagging.
+
 ## v0.1.3 release admission — 2026-10-29
 
 The corrected exact-source CI [40814810009](https://github.com/zufall-upon/KindleToZip/actions/runs/40814810009) passed all mandatory gates at `a14bc750db9e365991ce5cb6cb0e962afd56cf1a` (14 minutes 16 seconds job elapsed); the annotated `v0.1.3` tag retains that source. Release run [40816212315](https://github.com/zufall-upon/KindleToZip/actions/runs/40816212315) passed Rust/IPC, public UI, deployment, build, and packaged public selection/export, then failed JPEG notice collection: its PowerShell lockfile regex did not accept CRLF after the version line. No draft or public assets resulted. The tag is not moved. The next candidate is **v0.1.4**, with a minimal CRLF-compatible regex and an LF/CRLF/wrong-version regression. Application code and the accepted local EXE remain unchanged; tag-free package preflight must pass before another tag is created, followed by mandatory exact-source CI and all tagged release gates.

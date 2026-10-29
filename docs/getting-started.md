@@ -6,7 +6,7 @@
 
 ## What is available now?
 
-[Windows x64 Portable v0.1.2](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2) has been public since **2026-10-28** and is listed as Latest. Mandatory source and packaged-fixture checks passed. On **2026-10-29**, the user also confirmed clean-Windows operation and complete real-book capture and requested removal of the experimental label. [Validation history](validation.md) distinguishes that user report from automated checks and retains earlier failures separately.
+[Windows x64 Portable v0.1.4](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.4) is publicly available as a normal Release + Latest from **2026-10-29**. Mandatory source and packaged-fixture checks passed. The user confirmed the local image improvements; their earlier clean-Windows/whole-book report concerns v0.1.2, not this hosted EXE. [Validation history](validation.md) distinguishes these reports from automated checks and retains earlier failures.
 
 For use without a development setup, follow the [Portable guide](portable.md): download the release ZIP, verify its checksum, extract it completely, and run `KindleToZip-Portable.exe`. The instructions below are for **source execution only**. No Amazon credentials are needed to install the source or use the self-authored sample.
 
@@ -59,7 +59,7 @@ The three main controls are **Confirm / Next**, **Cancel / Back**, and **Finish 
 
 ## Images, saved data, and privacy
 
-In current source, select the capture image format and JPEG quality (1–100) before previewing. JPEG is compressed at capture and recompressed on crop or split; inspect the quality and size. The captured original bytes are retained. In review, correct each image to one or two pages and choose their order, crop margins manually, or restore the original with Restore original size. There is no automatic margin crop. Check layout and overlays yourself; detection and suppression are not complete. These additions are not included in the published v0.1.2 package.
+In v0.1.4, select the capture image format and JPEG quality (1–100) before previewing. JPEG is compressed at capture and recompressed on crop or split; inspect the quality and size. The captured original bytes are retained. In review, correct each image to one or two pages and choose their order, crop margins manually, or restore the original with Restore original size. There is no automatic margin crop. Check layout and overlays yourself; detection and suppression are not complete.
 
 - Standard or 2× rendering density changes how the page is rendered, not the amount of detail available from the source. Each image is limited to **16 megapixels / 32 MiB** for safety, not as a paid quota.
 - Spread splitting is optional. Choose right-to-left or left-to-right reading order and check the result yourself; it is not semantic page recognition. Exclusion and cropping retain originals. Existing output files are not overwritten.

@@ -12,6 +12,10 @@ There is no claim of bit-for-bit reproducible builds, independent security revie
 
 ## Current public release
 
+[v0.1.4 for Windows x64](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.4) was published on **2026-10-29** from `b9cd7164813a6850c7bcf7671673aa8bea46d5c2`, after Draft verification, exact-source CI **40818426954** and tagged release **40819770601**. It is a normal Release + **Latest**, titled **v0.1.4**, verified in the actual TOP-right Releases pane. Public anonymous downloads matched the Draft hashes; ZIP/EXE provenance and notices were checked. See [the v0.1.4 record](validation.md#v014-public-release--2026-10-29). The v0.1.3 tag remains after its notice-collection failure and is not moved; no executable release was created for it. The local user-confirmed candidate and the hosted EXE are different builds. The user's earlier clean-Windows/whole-book report applies to v0.1.2, not this new hosted EXE.
+
+### Previous public release (preserved)
+
 [v0.1.2 for Windows x64](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2) was published on **2026-10-28** from `e3e3977588d75fffb72dae9f402288ca69f8bfe0`. Its exact source CI, tagged package gates, checksums, and GitHub build provenance passed. The public ZIP was downloaded without authentication and matched the verified draft. At the user's explicit request, it is a normal GitHub Release marked **Latest** in the TOP-right **Releases** pane, titled **v0.1.2**. On **2026-10-29**, the user confirmed clean-Windows operation and complete real-book capture and requested removal of the experimental label. This metadata/documentation change does not replace the tag or assets. See [the final public validation record](validation.md#v012-public-release--2026-10-28) and the [Portable quick start](portable.md). The earlier `v0.1.0` / `v0.1.1` tags have no executable release assets and are not replaced.
 
 ## Maintainer routine: freeze, draft, verify, publish
@@ -36,11 +40,11 @@ Those paths describe this local historical evidence, not files a fresh clone sho
 ### 2. Commit the release source and version tag
 
 - Preserve author and committer `zufall-upon`. Commit the reviewed final source, required tests/helpers, and release documentation; keep unrelated local work out of staging.
-- The tag must match `package.json` (`v0.1.2` for `0.1.2`). Record the complete source commit. An existing tag or release is not overwritten or deleted to make a retry work. Earlier `v0.1.0` and `v0.1.1` tags are retained after failed draft preparation; neither has a published executable.
+- The tag must match `package.json` (`v0.1.4` for `0.1.4`). Record the complete source commit. An existing tag or release is not overwritten or deleted to make a retry work. Earlier `v0.1.0`, `v0.1.1` and `v0.1.3` tags are retained after failed preparation; none has a published executable.
 - Push the source first and require successful source CI for that exact commit before creating its annotated tag. Never call a failing or unrelated run green.
 
 ```powershell
-$tag = 'v0.1.2'
+$tag = 'v0.1.4'
 $source = (git rev-parse HEAD).Trim()
 git push origin HEAD:main
 gh run list --workflow ci.yml --commit $source --limit 1
@@ -80,6 +84,8 @@ If a hosted failure is isolated to native save-dialog automation, use the manual
 
 The workflow creates a **draft**, never a public release automatically. Publish only when the user explicitly requests general availability. GitHub cannot mark prereleases as Latest. For `v0.1.2`, the user explicitly chose a normal Release + Latest for the actual repository Releases sidebar, then requested removal of the experimental label after reporting successful clean-Windows and complete real-book checks. Keep the title **v0.1.2**, the normal Release + Latest classification, and the remaining compatibility/privacy/legal notices; do not silently restore the old label or substitute a README/About link for the requested widget.
 
+The subsequent standard-routine request carries that normal Release + Latest policy forward to **v0.1.4**, titled **v0.1.4**. Keep v0.1.2's historical assets/metadata unchanged and record the distinct scope of the new local confirmation rather than attributing the old manual checks to the new EXE.
+
 ```powershell
 gh release edit $tag --draft=false --prerelease=false --latest=true --title "$tag" --notes-file <reviewed-release-notes.md>
 ```
@@ -99,8 +105,8 @@ GitHub Actions artifacts are uploaded to GitHub and are not private storage, eve
 Only use release assets from [zufall-upon/KindleToZip](https://github.com/zufall-upon/KindleToZip/releases). Download the ZIP and `SHA256SUMS.txt` from the same release.
 
 ```powershell
-Get-FileHash .\KindleToZip-Portable-v0.1.2-win-x64.zip -Algorithm SHA256
-gh attestation verify .\KindleToZip-Portable-v0.1.2-win-x64.zip --repo zufall-upon/KindleToZip --signer-workflow zufall-upon/KindleToZip/.github/workflows/release.yml
+Get-FileHash .\KindleToZip-Portable-v0.1.4-win-x64.zip -Algorithm SHA256
+gh attestation verify .\KindleToZip-Portable-v0.1.4-win-x64.zip --repo zufall-upon/KindleToZip --signer-workflow zufall-upon/KindleToZip/.github/workflows/release.yml
 ```
 
 Compare the hash with the matching line in `SHA256SUMS.txt`. The attestation verification must succeed, and its source commit, repository, and workflow must match the release you intend to use. The detached `.sigstore.json` bundle is also attached for inspection and offline-verification workflows; consult the current GitHub CLI documentation before relying on offline verification.

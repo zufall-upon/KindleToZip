@@ -7,7 +7,7 @@
 - [Portable quick start / Portable版の使い方 / Portable 使用指南](portable.md) — current instructions; the release ZIP retains the guide frozen at its source tag
 - [Actual app screenshots / 実画面 / 实际界面](screenshots.md) — preview, image review, ZIP export, and the original Japanese UI
 
-[Windows x64 Portable v0.1.2](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2) is publicly available and listed as Latest in the repository's Releases sidebar. Mandatory fixture checks passed; the user separately confirmed clean-Windows operation and complete real-book capture on **2026-10-29**, then requested removal of the experimental label. The [Portable guide](portable.md) needs no development setup; the three source guides remain for development/source execution. User-reported checks are distinguished from automated evidence in the [validation record](validation.md).
+[Windows x64 Portable v0.1.4](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.4) is publicly available as a normal Release + Latest in the repository's Releases sidebar. Mandatory source and packaged-fixture checks passed; the user separately confirmed the local image improvements. Their earlier clean-Windows/whole-book report concerns v0.1.2, not this hosted EXE. The [Portable guide](portable.md) needs no development setup; source guides remain for development. User reports and automated evidence are distinguished in the [validation record](validation.md).
 
 ## Details and implementation records
 

@@ -6,16 +6,16 @@
 
 **取得して、整えて、アーカイブ。**
 
-WindowsでKindle Webの表示画面をPNG画像として取得。点検・見開き分割・並べ替えをして、順序付きの **ZIP / CBZ** に保存できます。
+WindowsでKindle Webの表示画面をPNG／JPEG画像として取得。点検・見開き分割・並べ替えをして、順序付きの **ZIP / CBZ** に保存できます。
 
 **スクショ取得はバックグラウンドで。待ち時間も、ほかの作業に。**
 
 **完全無料・オープンソース · Windows x64 · 独自アカウント登録不要 · 有料DLCなし**
 
-> **Windows x64用Portable v0.1.2を公開しています。**
-> 必須のソース検査・配布版の自作試料検査は成功済みです。クリーンなWindowsでの動作と実書籍全冊の取得も、利用者側で確認済みです。
+> **Windows x64用Portable v0.1.4を公開しています。**
+> 必須のソース検査・配布版の自作試料検査は成功済みです。利用者はローカルの画像改善を確認済みです。従来のクリーンWindows・全冊取得報告はv0.1.2に対するもので、このホスト版EXEの結果ではありません。
 
-**[Portable ZIPをダウンロード](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.2/KindleToZip-Portable-v0.1.2-win-x64.zip)** · [Portable版の使い方](docs/portable.md) · [ソースから試す](docs/getting-started.ja.md)
+**[Portable ZIPをダウンロード](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.4/KindleToZip-Portable-v0.1.4-win-x64.zip)** · [Portable版の使い方](docs/portable.md) · [ソースから試す](docs/getting-started.ja.md)
 
 [![公開状況：リリース済み](https://img.shields.io/badge/status-released-16a34a?style=flat-square)](docs/validation.md) [![mainブランチの最新ソース検査](https://img.shields.io/github/actions/workflow/status/zufall-upon/KindleToZip/ci.yml?branch=main&style=flat-square&label=source%20checks)](https://github.com/zufall-upon/KindleToZip/actions/workflows/ci.yml) [![GitHubスター数](https://img.shields.io/github/stars/zufall-upon/KindleToZip?style=flat-square&label=stars)](https://github.com/zufall-upon/KindleToZip/stargazers) [![リポジトリの最終コミット](https://img.shields.io/github/last-commit/zufall-upon/KindleToZip?style=flat-square)](https://github.com/zufall-upon/KindleToZip/commits/main/)
 
@@ -58,17 +58,17 @@ WindowsでKindle Webの表示画面をPNG画像として取得。点検・見開
 - **順序付きのアーカイブ。** 採用したPNGをZIP / CBZへ保存。既存ファイルは上書きしません。
 - **3言語から選択。** 日本語・英語・簡体字中国語のUI。
 
-**最新ソースの追加機能（公開済みv0.1.2には未収録）：** 取得形式にPNGまたはJPEGを選び、JPEG画質を1〜100で指定できます。JPEGは取得時に非可逆圧縮され、クロップ・分割でも再圧縮されます。画像点検では各画像を1枚／左右2枚に修正し、読み順も選べます。余白は手動クロップし、原本へ戻せます。自動判定は誤ることがあり、必ず目視で確認してください。選択済みの小さな次へボタンが領域に重なる場合、撮影中だけ非表示にする対策はありますが、すべての写り込みを取り除ける保証はありません。
+**v0.1.4の追加機能：** 取得形式にPNGまたはJPEGを選び、JPEG画質を1〜100で指定できます。JPEGは取得時に非可逆圧縮され、クロップ・分割でも再圧縮されます。画像点検では各画像を1枚／左右2枚に修正し、読み順も選べます。余白は手動クロップし、原本へ戻せます。自動判定は誤ることがあり、必ず目視で確認してください。選択済みの小さな次へボタンが領域に重なる場合、撮影中だけ非表示にする対策はありますが、すべての写り込みを取り除ける保証はありません。
 
 ## 使い始める
 
-**Portable版：** [v0.1.2のリリースZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2)を取得し、`SHA256SUMS.txt` と照合してZIP全体を書き込み可能なフォルダへ展開し、`KindleToZip-Portable.exe` を起動します。Node.js・専用ブラウザは同梱済みで、開発環境は不要です。[3言語のPortableガイド](docs/portable.md)を参照してください。
+**Portable版：** [v0.1.4のリリースZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.4)を取得し、`SHA256SUMS.txt` と照合してZIP全体を書き込み可能なフォルダへ展開し、`KindleToZip-Portable.exe` を起動します。Node.js・専用ブラウザは同梱済みで、開発環境は不要です。[3言語のPortableガイド](docs/portable.md)を参照してください。
 
 **ソースから：** **Windows x64・Git・Node.js 22以降・PowerShell 7** が必要です。[入門ガイド](docs/getting-started.ja.md)で専用のRust環境とブラウザを導入し、`npm start` で起動します。まずはAmazonへのログインも実書籍も不要な自作サンプルから試せます。
 
 ## 利用前に知っておきたいこと
 
-- **品質：** v0.1.2は**公開ソースUI検査142/142成功**、必須配備検査、配布版の公開選択・出力回帰検査を通過しています。初回の**125成功・12失敗**は履歴として残し、現在の結果とは区別しています。クリーンWindowsでの動作と実書籍全冊の取得は、別途利用者側で確認済みです。[検証履歴とリリース記録](docs/validation.md)（英語）を参照してください。
+- **品質：** v0.1.4は**公開ソースUI検査147/147成功**、**配備検査4/4成功**、配布版の公開選択・出力回帰検査を通過しています。過去の失敗は履歴として残しています。利用者のローカル改善確認と、従来のv0.1.2のクリーンWindows・実書籍全冊報告は、このホスト版EXEの自動試料検査とは別です。[検証履歴とリリース記録](docs/validation.md)（英語）を参照してください。
 - **ログインと保存データ：** ログインは公式画面だけで行います。**ログイン状態は既定で保存します。** 保存をOFFにすると別の一時プロファイルを使い、通常終了で削除しますが、異常終了では残る場合があります。プロファイル・Cookie・書籍情報・取得画像は共有しないでください。[プライバシーと保存先](docs/security-and-trust.md)（英語）に詳細があります。
 - **通信と信頼：** アプリ独自の認証サーバー・テレメトリ・自動更新確認はありません。公式読書・認証サービス、ブラウザ、導入時の通信は発生します。ソース公開は**安全性の保証ではありません**。[通信先と信頼境界](docs/security-and-trust.md)（英語）を参照してください。
 - **動作範囲：** 現在の入口は日本向けKindle Webです。他地域、全レイアウト、ZIP64、すべてのCBZビューアは未検証です。利用者側で確認したクリーンWindows・実書籍の動作は、全環境・全書籍を保証するものではありません。標準・2倍の描画密度には **PNGごとに16メガピクセル・32 MiB** の上限があり、元の表示にない細部は復元できません。
