@@ -16,7 +16,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 export class Application {
   constructor({ dataDir = defaultData, sampleHeadless = true, sampleFixture = 'reader', saveDialog = chooseSaveDestination } = {}) {
     this.saveDialog = saveDialog;
-    if (!['reader', 'layout', 'kindle-chrome', 'kindle-chrome-dynamic', 'kindle-chrome-hidden', 'kindle-chrome-recoverable', 'kindle-chrome-tabs', 'kindle-chrome-ambiguous'].includes(sampleFixture)) throw new AppError('invalid_sample_fixture');
+    if (!['reader', 'image-review', 'layout', 'kindle-chrome', 'kindle-chrome-dynamic', 'kindle-chrome-hidden', 'kindle-chrome-recoverable', 'kindle-chrome-tabs', 'kindle-chrome-ambiguous'].includes(sampleFixture)) throw new AppError('invalid_sample_fixture');
     this.dataDir = path.resolve(dataDir);
     this.sampleHeadless = sampleHeadless;
     this.sampleFixture = sampleFixture;
@@ -85,7 +85,7 @@ export class Application {
       readerCandidateAvailable: Boolean(this.reader?.readerCandidate),
       pickingField: this.reader?.pickField ?? null,
       readerTabConfirmed: Boolean(this.reader?.explicitPage && this.reader.selectedTabId() === this.reader.pageLabels.get(this.reader.explicitPage)?.id),
-      captureSettings: job?.manifest.capture_settings ?? { capture_scale: 1, page_output_mode: 'single_image', reading_direction: 'right_to_left' },
+      captureSettings: job?.manifest.capture_settings ?? { capture_scale: 1, page_output_mode: 'single_image', reading_direction: 'right_to_left', image_format: 'png', jpeg_quality: 85 },
       previewInfo: this.previewInfo ?? null,
       resumePlan: this.resumePlan ?? null,
       busy: Boolean(this.busy || this.loop || this.endingBook || this.destinationDialog),
@@ -278,7 +278,7 @@ export class Application {
           if (this.reader || !this.job) throw new AppError('browser_or_job_state');
           if (input.mode !== 'sample' && input.mode !== 'kindle') throw new AppError('invalid_browser_mode');
           const sampleFixture = input.sampleFixture ?? this.sampleFixture;
-          if (input.mode === 'sample' && !['reader', 'layout', 'kindle-chrome', 'kindle-chrome-dynamic', 'kindle-chrome-hidden', 'kindle-chrome-recoverable', 'kindle-chrome-tabs', 'kindle-chrome-ambiguous'].includes(sampleFixture)) throw new AppError('invalid_sample_fixture');
+          if (input.mode === 'sample' && !['reader', 'image-review', 'layout', 'kindle-chrome', 'kindle-chrome-dynamic', 'kindle-chrome-hidden', 'kindle-chrome-recoverable', 'kindle-chrome-tabs', 'kindle-chrome-ambiguous'].includes(sampleFixture)) throw new AppError('invalid_sample_fixture');
           const keep = input.keep === true || input.mode === 'kindle' && input.keep !== false;
           let selected = input.session;
           if (!selected && input.mode === 'kindle' && keep) {
@@ -312,7 +312,7 @@ export class Application {
             if (input.mode === 'sample') this.fixture = await startFixture({ fixture: sampleFixture });
             this.advanceProgress(progress, 2, '設定・試料準備完了。ブラウザの起動と画面応答待ち');
             this.reader = await Reader.open({ profile, sampleUrl: this.fixture?.url,
-              preconfiguredSample: sampleFixture === 'reader', headless: input.mode === 'sample' && this.sampleHeadless,
+              preconfiguredSample: ['reader', 'image-review'].includes(sampleFixture), headless: input.mode === 'sample' && this.sampleHeadless,
               onChange: () => this.invalidate('browser_target_changed'),
               readGuard: input.mode === 'sample' && this.sampleHeadless ? null : async () => {
                 const { snapshot } = await this.store.call('snapshot');
@@ -320,6 +320,8 @@ export class Application {
               } });
             this.advanceProgress(progress, 3, 'ブラウザ応答を確認。画面密度の適用待ち');
             await this.reader.setCaptureScale(this.job.manifest.capture_settings.capture_scale);
+            this.reader.imageFormat = this.job.manifest.capture_settings.image_format;
+            this.reader.jpegQuality = this.job.manifest.capture_settings.jpeg_quality;
             this.state = this.job.manifest.images.length ? 'ResumeCheck' : 'AuthPending';
             this.reason = null;
           } catch { throw new AppError('browser_open_failed'); }
@@ -340,10 +342,14 @@ export class Application {
             capture_scale: input.capture_scale,
             page_output_mode: input.page_output_mode,
             reading_direction: input.reading_direction,
+            image_format: input.image_format ?? this.job.manifest.capture_settings.image_format ?? 'png',
+            jpeg_quality: input.jpeg_quality ?? this.job.manifest.capture_settings.jpeg_quality ?? 85,
           };
           if (!Number.isInteger(settings.capture_scale) || ![1, 2].includes(settings.capture_scale)
             || !['single_image', 'split_spread'].includes(settings.page_output_mode)
-            || !['right_to_left', 'left_to_right'].includes(settings.reading_direction)) throw new AppError('invalid_capture_settings');
+            || !['right_to_left', 'left_to_right'].includes(settings.reading_direction)
+            || !['png', 'jpeg'].includes(settings.image_format) || !Number.isInteger(settings.jpeg_quality)
+            || settings.jpeg_quality < 1 || settings.jpeg_quality > 100) throw new AppError('invalid_capture_settings');
           if (this.reader && !this.reader.explicitPage) throw new AppError('select_reader_tab');
           const previous = this.job.manifest.capture_settings;
           this.invalidate('capture_settings_changed');
@@ -352,6 +358,7 @@ export class Application {
             if (this.reader && previous.capture_scale !== settings.capture_scale) await this.reader.setCaptureScale(settings.capture_scale);
             const updated = await this.store.call('set_capture_settings', { capture_settings: settings });
             this.job = updated.snapshot;
+            if (this.reader) { this.reader.imageFormat = settings.image_format; this.reader.jpegQuality = settings.jpeg_quality; }
           } catch (error) {
             if (this.reader && previous.capture_scale !== settings.capture_scale) await this.reader.setCaptureScale(previous.capture_scale).catch(() => {});
             throw error;
@@ -392,6 +399,7 @@ export class Application {
             recovery: preview.recovery,
             pageOutputMode: this.job.manifest.capture_settings.page_output_mode,
             readingDirection: this.job.manifest.capture_settings.reading_direction,
+            imageFormat: this.job.manifest.capture_settings.image_format,
             layout,
           };
           this.state = 'Preview';
@@ -423,6 +431,7 @@ export class Application {
             recovery: preview.recovery,
             pageOutputMode: this.job.manifest.capture_settings.page_output_mode,
             readingDirection: this.job.manifest.capture_settings.reading_direction,
+            imageFormat: this.job.manifest.capture_settings.image_format,
             layout,
           };
           this.state = 'Preview';
@@ -504,6 +513,15 @@ export class Application {
         }
         case 'crop': {
           await this.store.call('crop_image', { capture_id: input.id, x: input.x, y: input.y, width: input.width, height: input.height });
+          break;
+        }
+        case 'resetCrop': {
+          await this.store.call('reset_crop', { capture_id: input.id });
+          break;
+        }
+        case 'setPageLayout': {
+          if (!['single_image', 'split_spread'].includes(input.mode) || !['left', 'right'].includes(input.firstPage)) throw new AppError('invalid_capture_settings');
+          await this.store.call('set_page_layout', { capture_id: input.id, mode: input.mode, first_page: input.firstPage });
           break;
         }
         case 'export': {
@@ -779,7 +797,8 @@ export class Application {
     if (side !== null) {
       if (!['left', 'right'].includes(side) || !image.split) throw new AppError('split_not_available');
       item = image.split[side];
-      if (item.path !== `rendered/${String(id).padStart(6, '0')}-v${image.split.version}-${side}.png`) throw new AppError('unsafe_image');
+      const ext = image.image_format === 'jpeg' ? 'jpg' : 'png';
+      if (item.path !== `rendered/${String(id).padStart(6, '0')}-v${image.split.version}-${side}.${ext}`) throw new AppError('unsafe_image');
     } else item = original || !image.crop ? image : image.crop;
     const filename = path.join(this.job.job_path, item.path);
     const info = await lstat(filename);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { lstat, readFile, readdir, stat } from 'node:fs/promises';
+import { lstat, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { startApplication } from '../../app/server.mjs';
 import { openControlWindow as openWindow } from '../../app/control-window.mjs';
@@ -143,6 +143,113 @@ async function publicRepeatTargetPreview() {
     assert.equal(await reading.locator('#position').inputValue(), '7');
     return { result: 'pass', diagnosis: 'reader_library_selected', previews, images: 0, approval: false };
   } finally { await control?.close(); await running.close(); }
+}
+
+// A separate fictional fixture reproduces the visible geometry of the reported
+// cases, without copying book pixels. Exercise the bundled public controls.
+async function publicImageImprovements(paths) {
+  const results = [];
+  for (const imageFormat of ['png', 'jpeg']) {
+    const running = await startApplication({ sampleHeadless: true });
+    let control;
+    const wait = async predicate => {
+      const deadline = Date.now() + 30_000; let state;
+      while (Date.now() < deadline) {
+        state = await running.app.snapshot();
+        if (predicate(state)) return state;
+        await sleep(40);
+      }
+      throw new Error(`image_fixture_timeout:${state?.state}:${state?.reason}`);
+    };
+    try {
+      control = await openControlWindow(running.url, { headless: true });
+      const ui = control.page;
+      await ui.locator('#create').click();
+      await ui.locator('#sampleFixture').selectOption('image-review');
+      await ui.locator('#openSample').click();
+      await ui.waitForFunction(() => document.querySelector('#readerTab').options.length > 1);
+      await ui.locator('#readerTab').selectOption({ index: 1 }); await ui.locator('#selectReaderTab').click();
+      await ui.waitForFunction(() => !document.querySelector('#quickPreview').disabled);
+      // Earlier packaged checks deliberately persist a different preset in the
+      // same private test profile. Select the fixture's public preset anew.
+      await ui.locator('#preset').selectOption('kindle-visible');
+      await ui.waitForFunction(() => document.querySelector('#presetMode').value === 'visible');
+      await ui.locator('#pageOutputMode').selectOption('split_spread');
+      await wait(s => s.captureSettings.page_output_mode === 'split_spread' && !s.busy);
+      if (imageFormat === 'jpeg') {
+        await ui.locator('#imageFormat').selectOption('jpeg');
+        await wait(s => s.captureSettings.image_format === 'jpeg' && !s.busy);
+      }
+      const extension = imageFormat === 'jpeg' ? 'jpg' : 'png';
+      const fixtureBox = await running.app.reader.page.locator('#sheet').boundingBox();
+      await writeFile(path.join(path.dirname(paths.root), `fixture-cover-${imageFormat}.${extension}`), await running.app.reader.screenshotVisibleClip(fixtureBox));
+      const style = await running.app.reader.page.locator('#next').getAttribute('style');
+      await ui.locator('#quickPreview').click(); await ui.locator('#previewImage').waitFor({ state: 'visible' });
+      const preview = await running.app.snapshot();
+      assert.equal(preview.previewInfo.layout, 'single_page');
+      assert.equal(await running.app.reader.page.locator('#next').getAttribute('style'), style);
+      assert.equal(running.app.previewImage.subarray(0, 2).toString('hex'), imageFormat === 'jpeg' ? 'ffd8' : '8950');
+      const pixel = async (bytes, x, y) => ui.evaluate(async ({ base64, x, y }) => {
+        const data = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+        const bitmap = await createImageBitmap(new Blob([data]));
+        const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height;
+        const context = canvas.getContext('2d'); context.drawImage(bitmap, 0, 0); bitmap.close();
+        return [...context.getImageData(x, y, 1, 1).data].slice(0, 3);
+      }, { base64: bytes.toString('base64'), x, y });
+      const before = await running.app.reader.requireBound();
+      const rawCover = await running.app.reader.screenshotVisibleClip(before.clip);
+      const visibleButton = await pixel(rawCover, 1150, 440), hiddenButton = await pixel(running.app.previewImage, 1150, 440);
+      assert.ok(visibleButton[0] > 180 && hiddenButton[0] < 60, 'selected control is absent only from the captured cover');
+      await ui.locator('#previewImage').scrollIntoViewIfNeeded();
+      await ui.screenshot({ path: path.join(path.dirname(paths.root), `fixture-preview-${imageFormat}.png`) });
+      await ui.locator('#previewConfirmed').check(); await ui.locator('#approve').click();
+      await ui.waitForFunction(() => !document.querySelector('#start').disabled);
+      await ui.locator('#start').click();
+      await wait(s => s.job.manifest.images.length === 2 && !s.busy);
+      await writeFile(path.join(path.dirname(paths.root), `fixture-page-${imageFormat}.${extension}`),
+        await running.app.reader.screenshotVisibleClip((await running.app.reader.read()).clip));
+      await ui.locator('#stop').click();
+      let snapshot = await wait(s => s.state === 'Review' && !s.busy);
+      const first = snapshot.job.manifest.images[0];
+      assert.equal(first.split, null);
+      assert.equal(first.image_format, imageFormat);
+      const original = await running.app.image(first.capture_id, true);
+      assert.equal(digest(original), first.sha256);
+      const rawPage = await running.app.reader.screenshotVisibleClip((await running.app.reader.read()).clip);
+      const pageOriginal = await running.app.image(snapshot.job.manifest.images[1].capture_id, true);
+      const pageButton = await pixel(rawPage, 270, 450), pageLine = await pixel(pageOriginal, 270, 450);
+      assert.ok(pageButton[0] > pageLine[0] + 70, 'underlying fictional panel line is preserved without the selected button');
+      await ui.locator('#cropId').fill(String(first.capture_id));
+      await ui.locator('#cropX').fill('0'); await ui.locator('#cropY').fill('100');
+      await ui.locator('#cropWidth').fill('560'); await ui.locator('#cropHeight').fill('800');
+      await ui.locator('#crop').click();
+      snapshot = await wait(s => s.job.manifest.images[0].crop?.width === 560 && !s.busy);
+      assert.deepEqual(await running.app.image(first.capture_id, true), original);
+      await ui.locator('#images').scrollIntoViewIfNeeded();
+      await ui.screenshot({ path: path.join(path.dirname(paths.root), `fixture-review-${imageFormat}.png`) });
+      await ui.locator('#decisionButton').click(); await ui.locator('#exportOptions > summary').click();
+      for (const [index, format] of ['zip', 'cbz'].entries()) {
+        const destination = path.join(snapshot.job.job_path, `image-${imageFormat}.${format}`);
+        await ui.locator('#format').selectOption(format); await ui.locator('#destination').fill(destination);
+        await ui.locator('#export').click();
+        await wait(s => s.job.manifest.exports.length === index + 1 && !s.busy);
+        const entries = readStoredPngEntries(await readFile(destination));
+        assert.equal(entries.length, 2);
+        for (const entry of entries) {
+          assert.match(entry.name, imageFormat === 'jpeg' ? /\.jpg$/ : /\.png$/);
+          const actual = await ui.evaluate(async base64 => {
+            const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+            const bitmap = await createImageBitmap(new Blob([bytes]));
+            const size = [bitmap.width, bitmap.height]; bitmap.close(); return size;
+          }, entry.bytes.toString('base64'));
+          assert.ok(actual[0] > 0 && actual[1] > 0);
+        }
+      }
+      results.push({ imageFormat, coverSingle: true, images: 2, crop: [560, 800], originalKept: true,
+        zipAndCbzReopened: true, selection: 'public', screenshots: [`fixture-cover-${imageFormat}.${extension}`, `fixture-preview-${imageFormat}.png`, `fixture-page-${imageFormat}.${extension}`, `fixture-review-${imageFormat}.png`] });
+    } finally { await control?.close(); await running.close(); }
+  }
+  return results;
 }
 
 async function publicLayoutPreview() {
@@ -730,8 +837,9 @@ if (process.argv[2] === '--distribution-lock-hold') {
   const publicPreviews = await publicLayoutPreview();
   const publicTwoBookFlowResult = await publicTwoBookFlow();
   const publicRepeatTarget = await publicRepeatTargetPreview();
+  const publicImageFlow = await publicImageImprovements(paths);
   console.log(`KTZ_SMOKE_RESULT:${JSON.stringify({ ...result, publicPreviews, publicTwoBookFlow: publicTwoBookFlowResult, publicRepeatTarget,
-    headlessOnly: true, portableDirectories: ['runtime', 'data', 'temp'], developerPathToolsAvailable: false })}`);
+    publicImageFlow, headlessOnly: true, portableDirectories: ['runtime', 'data', 'temp'], developerPathToolsAvailable: false })}`);
 } else {
   throw new Error('distribution_smoke_mode_required');
 }

@@ -1,5 +1,5 @@
 use crate::archive::{ArchiveInput, ArchiveSummary};
-use crate::png_image::{crop as crop_png, crop_rendered, decode, decode_rendered, decode_stored, sha256, DecodedPng, MAX_PNG_BYTES};
+use crate::png_image::{crop_same_format, decode, decode_rendered, decode_stored, is_jpeg, sha256, DecodedPng, MAX_PNG_BYTES};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::fs::{self, File, OpenOptions};
@@ -60,6 +60,12 @@ impl Default for ReadingDirection {
     fn default() -> Self { Self::RightToLeft }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageFormat { #[default] Png, Jpeg }
+impl ImageFormat { fn extension(self) -> &'static str { match self { Self::Png => "png", Self::Jpeg => "jpg" } } }
+fn default_jpeg_quality() -> u8 { 85 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CaptureSettings {
@@ -69,11 +75,15 @@ pub struct CaptureSettings {
     pub page_output_mode: PageOutputMode,
     #[serde(default)]
     pub reading_direction: ReadingDirection,
+    #[serde(default)]
+    pub image_format: ImageFormat,
+    #[serde(default = "default_jpeg_quality")]
+    pub jpeg_quality: u8,
 }
 
 impl Default for CaptureSettings {
     fn default() -> Self {
-        Self { capture_scale: legacy_capture_scale(), page_output_mode: PageOutputMode::SingleImage, reading_direction: ReadingDirection::RightToLeft }
+        Self { capture_scale: legacy_capture_scale(), page_output_mode: PageOutputMode::SingleImage, reading_direction: ReadingDirection::RightToLeft, image_format: ImageFormat::Png, jpeg_quality: default_jpeg_quality() }
     }
 }
 
@@ -133,12 +143,19 @@ pub struct ImageRecord {
     pub duplicate_candidate: bool,
     #[serde(default = "legacy_capture_scale")]
     pub capture_scale: u8,
+    #[serde(default)]
+    pub image_format: ImageFormat,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jpeg_quality: Option<u8>,
     pub crop: Option<CropRecord>,
     #[serde(default)]
     pub split: Option<SpreadSplitRecord>,
     // Missing on legacy jobs. Existing split records remain authoritative.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_layout: Option<PageOutputMode>,
+    // Explicit review decisions must not be reclassified when reopening.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub layout_override: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -328,7 +345,7 @@ impl Store {
                         checkpoint: None,
                         range_confirmed: false,
                         range_confirmed_at_ms: None,
-                        capture_settings: CaptureSettings { capture_scale: 2, page_output_mode: PageOutputMode::SingleImage, reading_direction: ReadingDirection::RightToLeft },
+                        capture_settings: CaptureSettings { capture_scale: 2, page_output_mode: PageOutputMode::SingleImage, reading_direction: ReadingDirection::RightToLeft, ..CaptureSettings::default() },
                         images: Vec::new(),
                         selected_capture_ids: Vec::new(),
                         excluded_capture_ids: Vec::new(),
@@ -455,9 +472,9 @@ impl Store {
         let previous = self.manifest.clone();
         for index in 0..self.manifest.images.len() {
             let image = &self.manifest.images[index];
-            if image.split.is_none() { continue; }
+            if image.split.is_none() || image.layout_override { continue; }
             let original = self.read_original(image)?;
-            if decode_stored(&original).map_err(StoreError)?.single_page() {
+            if decode_stored(&original).map_err(StoreError)?.legacy_single_page() {
                 self.manifest.images[index].split = None;
                 self.manifest.images[index].page_layout = Some(PageOutputMode::SingleImage);
             }
@@ -472,7 +489,7 @@ impl Store {
         if self.pending.is_some() || self.manifest.state == JobState::Capturing {
             return Err(StoreError("wrong_state"));
         }
-        if !matches!(settings.capture_scale, 1 | 2) {
+        if !matches!(settings.capture_scale, 1 | 2) || !(1..=100).contains(&settings.jpeg_quality) {
             return Err(StoreError("invalid_capture_scale"));
         }
         let previous = self.manifest.clone();
@@ -616,6 +633,7 @@ impl Store {
         let pending_path = pending.path.clone();
         ensure_regular_file(&pending_path)?;
         let bytes = read_bounded(&pending_path, MAX_PNG_BYTES as u64).map_err(|error| StoreError(error))?;
+        if is_jpeg(&bytes) != (self.manifest.capture_settings.image_format == ImageFormat::Jpeg) { return Err(StoreError("capture_format_mismatch")); }
         let decoded = match decode(&bytes) {
             Ok(decoded) => decoded,
             Err(code) => {
@@ -632,7 +650,9 @@ impl Store {
             Some(version)
         } else { None };
         let duplicate_candidate = self.manifest.images.iter().any(|image| image.sha256 == decoded.sha256);
-        let relative = format!("originals/{pending_id:06}.png");
+        let format = self.manifest.capture_settings.image_format;
+        let quality = self.manifest.capture_settings.jpeg_quality;
+        let relative = format!("originals/{pending_id:06}.{}", format.extension());
         ensure_real_directory(&self.path.join("originals"))?;
         let destination = self.path.join(&relative);
         if fs::symlink_metadata(&destination).is_ok() {
@@ -650,7 +670,7 @@ impl Store {
             return Err(StoreError("capture_commit_failed"));
         }
         let split = if let Some(version) = split_version {
-            Some(self.persist_split(pending_id, &bytes, &decoded, version, first_page_for_direction(self.manifest.capture_settings.reading_direction))?)
+            Some(self.persist_split(pending_id, &bytes, &decoded, version, first_page_for_direction(self.manifest.capture_settings.reading_direction), quality)?)
         } else { None };
         let record = ImageRecord {
             book,
@@ -664,9 +684,12 @@ impl Store {
             blank_candidate: decoded.blank_candidate,
             duplicate_candidate,
             capture_scale: self.manifest.capture_settings.capture_scale,
+            image_format: format,
+            jpeg_quality: (format == ImageFormat::Jpeg).then_some(quality),
             crop: None,
             split,
             page_layout: Some(if split_version.is_some() { PageOutputMode::SplitSpread } else { PageOutputMode::SingleImage }),
+            layout_override: false,
         };
         let previous = self.manifest.clone();
         if split_version.is_some() { self.manifest.next_render_version += 1; }
@@ -745,7 +768,7 @@ impl Store {
         }
         let source = self.manifest.images.iter().find(|image| image.capture_id == capture_id).ok_or(StoreError("capture_not_found"))?.clone();
         let bytes = self.read_original(&source)?;
-        let rendered = crop_png(&bytes, x, y, width, height).map_err(StoreError)?;
+        let rendered = crop_same_format(&bytes, x, y, width, height, source.jpeg_quality.unwrap_or(default_jpeg_quality())).map_err(StoreError)?;
         let decoded = decode_rendered(&rendered).map_err(StoreError)?;
         // Reject an impossible split before creating any versioned files so a
         // later valid crop/reset can still use the unchanged render version.
@@ -755,7 +778,7 @@ impl Store {
         if version == 0 || version == u64::MAX || split_version == Some(u64::MAX) {
             return Err(StoreError("render_version_exhausted"));
         }
-        let relative = format!("rendered/{capture_id:06}-v{version}.png");
+        let relative = format!("rendered/{capture_id:06}-v{version}.{}", source.image_format.extension());
         self.write_rendered(&relative, &rendered, &decoded, "crop_write_failed", "crop_verify_failed")?;
         let crop = CropRecord {
             x, y, width: decoded.width, height: decoded.height, version, path: relative,
@@ -763,7 +786,7 @@ impl Store {
         };
         let split = if let Some(split_version) = split_version {
             Some(self.persist_split(capture_id, &rendered, &decoded, split_version,
-                source.split.as_ref().expect("split version came from a split image").first_page)?)
+                source.split.as_ref().expect("split version came from a split image").first_page, source.jpeg_quality.unwrap_or(default_jpeg_quality()))?)
         } else { None };
         let previous = self.manifest.clone();
         let image = self.manifest.images.iter_mut().find(|image| image.capture_id == capture_id).ok_or(StoreError("capture_not_found"))?;
@@ -775,6 +798,46 @@ impl Store {
             return Err(StoreError("manifest_write_failed"));
         }
         Ok(CropResult { crop, cleanup_warning: false })
+    }
+
+    // Review changes only the derived output. Never overwrite originals or
+    // prior exports; require an explicit order for each requested split.
+    pub fn set_page_layout(&mut self, capture_id: u64, mode: PageOutputMode, first_page: PageSide) -> Result<JobSnapshot, StoreError> {
+        if self.manifest.state != JobState::Review || self.pending.is_some() { return Err(StoreError("wrong_state")); }
+        let source = self.manifest.images.iter().find(|image| image.capture_id == capture_id).ok_or(StoreError("capture_not_found"))?.clone();
+        let (bytes, _, _, _) = self.read_selected(&source)?;
+        let split = if mode == PageOutputMode::SplitSpread {
+            let decoded = decode_rendered(&bytes).map_err(StoreError)?;
+            let version = self.manifest.next_render_version;
+            if version == 0 || version == u64::MAX { return Err(StoreError("render_version_exhausted")); }
+            Some(self.persist_split(capture_id, &bytes, &decoded, version, first_page, source.jpeg_quality.unwrap_or(default_jpeg_quality()))?)
+        } else { None };
+        let previous = self.manifest.clone();
+        let image = self.manifest.images.iter_mut().find(|image| image.capture_id == capture_id).ok_or(StoreError("capture_not_found"))?;
+        image.split = split;
+        image.page_layout = Some(mode);
+        image.layout_override = true;
+        if mode == PageOutputMode::SplitSpread { self.manifest.next_render_version += 1; }
+        if self.persist().is_err() { self.manifest = previous; return Err(StoreError("manifest_write_failed")); }
+        self.snapshot()
+    }
+
+    pub fn reset_crop(&mut self, capture_id: u64) -> Result<JobSnapshot, StoreError> {
+        if self.manifest.state != JobState::Review || self.pending.is_some() { return Err(StoreError("wrong_state")); }
+        let source = self.manifest.images.iter().find(|image| image.capture_id == capture_id).ok_or(StoreError("capture_not_found"))?.clone();
+        let bytes = self.read_original(&source)?;
+        let split = if let Some(current) = source.split.as_ref() {
+            let version = self.manifest.next_render_version;
+            if version == 0 || version == u64::MAX { return Err(StoreError("render_version_exhausted")); }
+            let decoded = decode_stored(&bytes).map_err(StoreError)?;
+            Some(self.persist_split(capture_id, &bytes, &decoded, version, current.first_page, source.jpeg_quality.unwrap_or(default_jpeg_quality()))?)
+        } else { None };
+        let previous = self.manifest.clone();
+        let image = self.manifest.images.iter_mut().find(|image| image.capture_id == capture_id).ok_or(StoreError("capture_not_found"))?;
+        image.crop = None; image.split = split;
+        if source.split.is_some() { self.manifest.next_render_version += 1; }
+        if self.persist().is_err() { self.manifest = previous; return Err(StoreError("manifest_write_failed")); }
+        self.snapshot()
     }
 
     pub fn export(&mut self, destination: &Path, format: ArchiveFormat) -> Result<ExportResult, StoreError> {
@@ -802,7 +865,7 @@ impl Store {
         }
         if sources.is_empty() || sources.len() >= u16::MAX as usize { return Err(StoreError("archive_entry_count_unsupported")); }
         let inputs: Vec<_> = sources.iter().enumerate().map(|(index, (path, width, height, bytes, digest, allow_black))| ArchiveInput {
-            name: format!("{:06}.png", index + 1), path, bytes: *bytes, sha256: digest, width: *width, height: *height, allow_black: *allow_black,
+            name: format!("{:06}.{}", index + 1, path.extension().and_then(|ext| ext.to_str()).unwrap_or("png")), path, bytes: *bytes, sha256: digest, width: *width, height: *height, allow_black: *allow_black,
         }).collect();
         let parent = destination.parent().ok_or(StoreError("invalid_output_path"))?;
         let temp_path = (0..16).find_map(|_| {
@@ -875,13 +938,13 @@ impl Store {
     }
 
     fn read_original(&self, image: &ImageRecord) -> Result<Vec<u8>, StoreError> {
-        let expected = format!("originals/{:06}.png", image.capture_id);
+        let expected = format!("originals/{:06}.{}", image.capture_id, image.image_format.extension());
         if image.path != expected { return Err(StoreError("manifest_path_invalid")); }
         let path = self.path.join(expected);
         ensure_regular_file(&path)?;
         let bytes = read_bounded(&path, MAX_PNG_BYTES as u64).map_err(StoreError)?;
         let decoded = decode_stored(&bytes).map_err(StoreError)?;
-        if bytes.len() as u64 != image.bytes || decoded.width != image.width || decoded.height != image.height || decoded.sha256 != image.sha256 {
+        if is_jpeg(&bytes) != (image.image_format == ImageFormat::Jpeg) || bytes.len() as u64 != image.bytes || decoded.width != image.width || decoded.height != image.height || decoded.sha256 != image.sha256 {
             return Err(StoreError("image_integrity_failed"));
         }
         Ok(bytes)
@@ -889,13 +952,13 @@ impl Store {
 
     fn read_selected(&self, image: &ImageRecord) -> Result<(Vec<u8>, u32, u32, String), StoreError> {
         if let Some(crop) = &image.crop {
-            let expected = format!("rendered/{:06}-v{}.png", image.capture_id, crop.version);
+            let expected = format!("rendered/{:06}-v{}.{}", image.capture_id, crop.version, image.image_format.extension());
             if crop.path != expected { return Err(StoreError("manifest_path_invalid")); }
             let path = self.path.join(expected);
             ensure_regular_file(&path)?;
             let bytes = read_bounded(&path, MAX_PNG_BYTES as u64).map_err(StoreError)?;
             let decoded = decode_rendered(&bytes).map_err(StoreError)?;
-            if bytes.len() as u64 != crop.bytes || decoded.width != crop.width || decoded.height != crop.height || decoded.sha256 != crop.sha256 {
+            if is_jpeg(&bytes) != (image.image_format == ImageFormat::Jpeg) || bytes.len() as u64 != crop.bytes || decoded.width != crop.width || decoded.height != crop.height || decoded.sha256 != crop.sha256 {
                 return Err(StoreError("image_integrity_failed"));
             }
             Ok((bytes, crop.width, crop.height, crop.sha256.clone()))
@@ -920,16 +983,17 @@ impl Store {
         Ok(())
     }
 
-    fn persist_split(&self, capture_id: u64, source_bytes: &[u8], source: &DecodedPng, version: u64, first_page: PageSide) -> Result<SpreadSplitRecord, StoreError> {
+    fn persist_split(&self, capture_id: u64, source_bytes: &[u8], source: &DecodedPng, version: u64, first_page: PageSide, quality: u8) -> Result<SpreadSplitRecord, StoreError> {
         if source.width < 2 { return Err(StoreError("spread_width_too_small")); }
         let boundary_x = source.width / 2;
-        let left_bytes = crop_rendered(source_bytes, 0, 0, boundary_x, source.height).map_err(StoreError)?;
+        let left_bytes = crop_same_format(source_bytes, 0, 0, boundary_x, source.height, quality).map_err(StoreError)?;
         let right_width = source.width - boundary_x;
-        let right_bytes = crop_rendered(source_bytes, boundary_x, 0, right_width, source.height).map_err(StoreError)?;
+        let right_bytes = crop_same_format(source_bytes, boundary_x, 0, right_width, source.height, quality).map_err(StoreError)?;
         let left_decoded = decode_rendered(&left_bytes).map_err(StoreError)?;
         let right_decoded = decode_rendered(&right_bytes).map_err(StoreError)?;
-        let left_path = format!("rendered/{capture_id:06}-v{version}-left.png");
-        let right_path = format!("rendered/{capture_id:06}-v{version}-right.png");
+        let extension = if is_jpeg(source_bytes) { "jpg" } else { "png" };
+        let left_path = format!("rendered/{capture_id:06}-v{version}-left.{extension}");
+        let right_path = format!("rendered/{capture_id:06}-v{version}-right.{extension}");
         self.write_rendered(&left_path, &left_bytes, &left_decoded, "split_write_failed", "split_verify_failed")?;
         self.write_rendered(&right_path, &right_bytes, &right_decoded, "split_write_failed", "split_verify_failed")?;
         Ok(SpreadSplitRecord {
@@ -942,13 +1006,13 @@ impl Store {
     fn read_split_page(&self, image: &ImageRecord, split: &SpreadSplitRecord, side: PageSide) -> Result<(PathBuf, u32, u32, u64, String), StoreError> {
         let page = if side == PageSide::Left { &split.left } else { &split.right };
         let label = if side == PageSide::Left { "left" } else { "right" };
-        let expected = format!("rendered/{:06}-v{}-{label}.png", image.capture_id, split.version);
+        let expected = format!("rendered/{:06}-v{}-{label}.{}", image.capture_id, split.version, image.image_format.extension());
         if page.path != expected { return Err(StoreError("manifest_path_invalid")); }
         let path = self.path.join(&expected);
         ensure_regular_file(&path)?;
         let bytes = read_bounded(&path, MAX_PNG_BYTES as u64).map_err(StoreError)?;
         let decoded = decode_rendered(&bytes).map_err(StoreError)?;
-        if bytes.len() as u64 != page.bytes || decoded.width != page.width || decoded.height != page.height || decoded.sha256 != page.sha256 {
+        if is_jpeg(&bytes) != (image.image_format == ImageFormat::Jpeg) || bytes.len() as u64 != page.bytes || decoded.width != page.width || decoded.height != page.height || decoded.sha256 != page.sha256 {
             return Err(StoreError("image_integrity_failed"));
         }
         Ok((path, page.width, page.height, page.bytes, page.sha256.clone()))
@@ -969,13 +1033,13 @@ impl Store {
 
     fn selected_source(&self, image: &ImageRecord) -> Result<(PathBuf, u32, u32, u64, String, bool), StoreError> {
         if let Some(crop) = &image.crop {
-            let expected = format!("rendered/{:06}-v{}.png", image.capture_id, crop.version);
+            let expected = format!("rendered/{:06}-v{}.{}", image.capture_id, crop.version, image.image_format.extension());
             if crop.path != expected { return Err(StoreError("manifest_path_invalid")); }
             let path = self.path.join(expected);
             ensure_regular_file(&path)?;
             Ok((path, crop.width, crop.height, crop.bytes, crop.sha256.clone(), true))
         } else {
-            let expected = format!("originals/{:06}.png", image.capture_id);
+            let expected = format!("originals/{:06}.{}", image.capture_id, image.image_format.extension());
             if image.path != expected { return Err(StoreError("manifest_path_invalid")); }
             let path = self.path.join(expected);
             ensure_regular_file(&path)?;
@@ -990,7 +1054,7 @@ impl Store {
         let mut latest = 0_u64;
         for image in &self.manifest.images {
             latest = latest.max(image.capture_id);
-            let expected = format!("originals/{:06}.png", image.capture_id);
+            let expected = format!("originals/{:06}.{}", image.capture_id, image.image_format.extension());
             if image.path != expected {
                 return Err(StoreError("manifest_path_invalid"));
             }
@@ -1000,7 +1064,7 @@ impl Store {
                 Err(error) => issues.push(format!("image_{}:{}", image.capture_id, error.code())),
             }
             if let Some(crop) = &image.crop {
-                let expected = format!("rendered/{:06}-v{}.png", image.capture_id, crop.version);
+                let expected = format!("rendered/{:06}-v{}.{}", image.capture_id, crop.version, image.image_format.extension());
                 if crop.path != expected { return Err(StoreError("manifest_path_invalid")); }
                 referenced.insert(expected.clone());
                 match self.read_selected(image) {
@@ -1009,8 +1073,8 @@ impl Store {
                 }
             }
             if let Some(split) = &image.split {
-                let left = format!("rendered/{:06}-v{}-left.png", image.capture_id, split.version);
-                let right = format!("rendered/{:06}-v{}-right.png", image.capture_id, split.version);
+                let left = format!("rendered/{:06}-v{}-left.{}", image.capture_id, split.version, image.image_format.extension());
+                let right = format!("rendered/{:06}-v{}-right.{}", image.capture_id, split.version, image.image_format.extension());
                 if split.left.path != left || split.right.path != right { return Err(StoreError("manifest_path_invalid")); }
                 referenced.insert(left);
                 referenced.insert(right);
@@ -1079,15 +1143,16 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), StoreError> {
     if manifest.job_id.is_empty() || manifest.job_id.len() > 80 || !manifest.job_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
         return Err(StoreError("manifest_invalid"));
     }
-    if !matches!(manifest.capture_settings.capture_scale, 1 | 2) { return Err(StoreError("manifest_invalid")); }
+    if !matches!(manifest.capture_settings.capture_scale, 1 | 2) || !(1..=100).contains(&manifest.capture_settings.jpeg_quality) { return Err(StoreError("manifest_invalid")); }
     let mut ids = HashSet::new();
     for image in &manifest.images {
         if image.capture_id == 0 || !ids.insert(image.capture_id) { return Err(StoreError("manifest_invalid")); }
         if !matches!(image.capture_scale, 1 | 2) { return Err(StoreError("manifest_invalid")); }
-        let path = format!("originals/{:06}.png", image.capture_id);
+        if (image.image_format == ImageFormat::Jpeg) != image.jpeg_quality.is_some() || image.jpeg_quality.is_some_and(|q| !(1..=100).contains(&q)) { return Err(StoreError("manifest_invalid")); }
+        let path = format!("originals/{:06}.{}", image.capture_id, image.image_format.extension());
         if image.path != path { return Err(StoreError("manifest_path_invalid")); }
         if let Some(crop) = &image.crop {
-            if crop.version == 0 || crop.path != format!("rendered/{:06}-v{}.png", image.capture_id, crop.version) {
+            if crop.version == 0 || crop.path != format!("rendered/{:06}-v{}.{}", image.capture_id, crop.version, image.image_format.extension()) {
                 return Err(StoreError("manifest_path_invalid"));
             }
         }
@@ -1097,8 +1162,8 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), StoreError> {
             if split.version == 0 || split.version >= manifest.next_render_version
                 || split.source_width != source_width || split.source_height != source_height || split.source_sha256 != source_sha256
                 || split.source_width < 2 || split.boundary_x != split.source_width / 2
-                || split.left.path != format!("rendered/{:06}-v{}-left.png", image.capture_id, split.version)
-                || split.right.path != format!("rendered/{:06}-v{}-right.png", image.capture_id, split.version)
+                || split.left.path != format!("rendered/{:06}-v{}-left.{}", image.capture_id, split.version, image.image_format.extension())
+                || split.right.path != format!("rendered/{:06}-v{}-right.{}", image.capture_id, split.version, image.image_format.extension())
                 || split.left.width != split.boundary_x || split.right.width != split.source_width - split.boundary_x
                 || split.left.height != split.source_height || split.right.height != split.source_height
             {
@@ -1135,9 +1200,9 @@ fn reset_owned_path(value: &str) -> bool {
     let Some((dir, name)) = value.split_once('/') else { return false; };
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     match dir {
-        "originals" => name.strip_suffix(".png").is_some_and(digits),
+        "originals" => name.strip_suffix(".png").or_else(|| name.strip_suffix(".jpg")).is_some_and(digits),
         "pending" => name.strip_suffix(".upload").is_some_and(digits),
-        "rendered" => name.strip_suffix(".png").and_then(|s| s.split_once("-v")).is_some_and(|(id, rest)| {
+        "rendered" => name.strip_suffix(".png").or_else(|| name.strip_suffix(".jpg")).and_then(|s| s.split_once("-v")).is_some_and(|(id, rest)| {
             digits(id) && digits(rest.strip_suffix("-left").or_else(|| rest.strip_suffix("-right")).unwrap_or(rest))
         }),
         _ => false,
@@ -1643,6 +1708,7 @@ mod tests {
             capture_scale: 2,
             page_output_mode: PageOutputMode::SplitSpread,
             reading_direction: ReadingDirection::RightToLeft,
+            ..CaptureSettings::default()
         }).unwrap();
         store.start_capture().unwrap();
         let id = capture(&mut store, &original);

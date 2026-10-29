@@ -77,6 +77,16 @@ async function waitForPublicPreview(ui) {
   assert.equal(await ui.locator('#previewImage').isVisible(), true, `public preview failed: ${await ui.locator('#message').textContent()}`);
 }
 
+async function imagePixel(ui, bytes, x, y) {
+  return ui.evaluate(async ({ base64, x, y }) => {
+    const data = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    const bitmap = await createImageBitmap(new Blob([data]));
+    const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height;
+    const context = canvas.getContext('2d'); context.drawImage(bitmap, 0, 0); bitmap.close();
+    return [...context.getImageData(x, y, 1, 1).data].slice(0, 3);
+  }, { base64: bytes.toString('base64'), x, y });
+}
+
 test('MVP自動判別: h1なし・数値range・大きなiframe描画面と逆向きiconでも公開UIからプレビューする', async t => {
   const r = await setup(t, { sampleFixture: 'layout' });
   const control = await openControlWindow(r.url, { headless: true }); t.after(() => control.close());
@@ -1653,6 +1663,247 @@ test('MVP高解像度: スクロール後も選択した可視範囲の画素を
     await r.request('pause');
     assertVisiblePixels(await r.app.image(captured.job.manifest.images[0].capture_id, true));
   });
+});
+
+test('MVP画像軽量化: 匿名の片側表紙とボタン重なりを公開選択して取得する', { timeout: 40_000 }, async t => {
+  const r = await setup(t);
+  const control = await openControlWindow(r.url, { headless: true }); t.after(() => control.close());
+  const ui = control.page;
+  await ui.locator('#create').click();
+  await ui.locator('#sampleFixture').selectOption('image-review');
+  await ui.locator('#openSample').click(); await selectVisibleReaderTab(ui);
+  await ui.locator('#pageOutputMode').selectOption('split_spread');
+  await waitFor(r.app, s => s.captureSettings.page_output_mode === 'split_spread' && !s.busy);
+  const evidenceDir = fileURLToPath(new URL('../artifacts/image-review-evidence/', import.meta.url));
+  await mkdir(evidenceDir, { recursive: true });
+  await writeFile(path.join(evidenceDir, 'cover.png'), await r.app.reader.screenshotVisibleClip(await r.app.reader.page.locator('#sheet').boundingBox()));
+  await ui.locator('#quickPreview').click(); await waitForPublicPreview(ui);
+  assert.equal((await r.app.snapshot()).previewInfo.layout, 'single_page');
+  const coverWithButton = await r.app.reader.screenshotVisibleClip((await r.app.reader.requireBound()).clip);
+  assert.ok((await imagePixel(ui, coverWithButton, 1150, 440))[0] > 180);
+  assert.ok((await imagePixel(ui, r.app.previewImage, 1150, 440))[0] < 60);
+  await ui.locator('#previewConfirmed').check(); await ui.locator('#approve').click();
+  await ui.waitForFunction(() => !document.querySelector('#start').disabled);
+  await ui.locator('#start').click();
+  await waitFor(r.app, s => s.job.manifest.images.length === 2 && !s.busy);
+  await writeFile(path.join(evidenceDir, 'page.png'), await r.app.reader.screenshotVisibleClip((await r.app.reader.read()).clip));
+  const pageWithButton = await r.app.reader.screenshotVisibleClip((await r.app.reader.read()).clip);
+  assert.ok((await imagePixel(ui, pageWithButton, 270, 450))[0] > (await imagePixel(ui, await r.app.image(2, true), 270, 450))[0] + 70);
+  assert.equal((await r.app.reader.page.locator('#reader').getAttribute('data-position')), '2');
+  assert.equal((await r.app.snapshot()).job.manifest.images[0].split, null);
+  await ui.locator('#stop').click(); await waitFor(r.app, s => s.state === 'Review' && !s.busy);
+});
+
+test('JPEG匿名試料: 片側表紙と次のページを実取得する', { timeout: 40_000 }, async t => {
+  const r = await setup(t);
+  const control = await openControlWindow(r.url, { headless: true }); t.after(() => control.close());
+  const ui = control.page;
+  await ui.locator('#create').click(); await ui.locator('#sampleFixture').selectOption('image-review');
+  await ui.locator('#openSample').click(); await selectVisibleReaderTab(ui);
+  await ui.locator('#pageOutputMode').selectOption('split_spread');
+  await waitFor(r.app, s => s.captureSettings.page_output_mode === 'split_spread' && !s.busy);
+  await ui.locator('#imageFormat').selectOption('jpeg');
+  await waitFor(r.app, s => s.captureSettings.image_format === 'jpeg' && !s.busy);
+  await ui.locator('#quickPreview').click(); await waitForPublicPreview(ui);
+  assert.equal((await r.app.snapshot()).previewInfo.layout, 'single_page');
+  const coverWithButton = await r.app.reader.screenshotVisibleClip((await r.app.reader.requireBound()).clip);
+  assert.ok((await imagePixel(ui, coverWithButton, 1150, 440))[0] > 180);
+  assert.ok((await imagePixel(ui, r.app.previewImage, 1150, 440))[0] < 60);
+  await ui.locator('#previewConfirmed').check(); await ui.locator('#approve').click();
+  await ui.waitForFunction(() => !document.querySelector('#start').disabled);
+  await ui.locator('#start').click();
+  const captured = await waitFor(r.app, s => s.job.manifest.images.length === 2 && !s.busy);
+  assert.deepEqual(captured.job.manifest.images.map(image => image.image_format), ['jpeg', 'jpeg']);
+  assert.equal(captured.job.manifest.images[0].split, null);
+  assert.equal((await r.app.image(1, true)).subarray(0, 2).toString('hex'), 'ffd8');
+  const pageWithButton = await r.app.reader.screenshotVisibleClip((await r.app.reader.read()).clip);
+  assert.ok((await imagePixel(ui, pageWithButton, 270, 450))[0] > (await imagePixel(ui, await r.app.image(2, true), 270, 450))[0] + 70);
+  await ui.locator('#stop').click(); await waitFor(r.app, s => s.state === 'Review' && !s.busy);
+});
+
+test('JPEG画像軽量化: 公開設定で実取得し画質・原本・クロップとZIP/CBZを再読する', { timeout: 60_000 }, async t => {
+  const r = await setup(t);
+  const control = await openControlWindow(r.url, { headless: true }); t.after(() => control.close());
+  const ui = control.page;
+  await openSampleThroughPublicUi(ui);
+  await ui.locator('#pageOutputMode').selectOption('split_spread');
+  await waitFor(r.app, s => s.job.manifest.capture_settings.page_output_mode === 'split_spread' && !s.busy);
+  await ui.locator('#imageFormat').selectOption('jpeg');
+  await waitFor(r.app, s => s.job.manifest.capture_settings.image_format === 'jpeg' && !s.busy);
+  await r.app.reader.page.locator('#stall').click();
+  await r.app.reader.page.locator('#sheet').evaluate(canvas => {
+    const ctx = canvas.getContext('2d'), pixels = ctx.createImageData(canvas.width, canvas.height);
+    let seed = 12345;
+    for (let i = 0; i < pixels.data.length; i += 4) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      pixels.data[i] = seed >>> 24; pixels.data[i + 1] = seed >>> 16 & 255;
+      pixels.data[i + 2] = seed >>> 8 & 255; pixels.data[i + 3] = 255;
+    }
+    ctx.putImageData(pixels, 0, 0);
+  });
+  await ui.locator('#jpegQuality').fill('35'); await ui.locator('#jpegQuality').dispatchEvent('change');
+  await waitFor(r.app, s => s.job.manifest.capture_settings.jpeg_quality === 35 && !s.busy);
+  await ui.locator('#quickPreview').click(); await waitForPublicPreview(ui);
+  const small = Buffer.from(r.app.previewImage);
+  assert.equal(small.subarray(0, 2).toString('hex'), 'ffd8', 'CDP取得そのものがJPEG');
+  await ui.locator('#jpegQuality').fill('90'); await ui.locator('#jpegQuality').dispatchEvent('change');
+  await waitFor(r.app, s => s.job.manifest.capture_settings.jpeg_quality === 90 && !s.busy);
+  await ui.locator('#quickPreview').click(); await waitForPublicPreview(ui);
+  assert.ok(r.app.previewImage.length > small.length, '同じ試料で品質90は35より大きい');
+  await ui.locator('#jpegQuality').fill('35'); await ui.locator('#jpegQuality').dispatchEvent('change');
+  await waitFor(r.app, s => s.job.manifest.capture_settings.jpeg_quality === 35 && !s.busy);
+  await ui.locator('#quickPreview').click(); await waitForPublicPreview(ui);
+  const response = await fetch(`${r.origin}/api/preview`, { headers: { Authorization: `Bearer ${r.token}` } });
+  assert.equal(response.headers.get('content-type'), 'image/jpeg');
+  await ui.locator('#previewConfirmed').check(); await ui.locator('#approve').click();
+  await ui.waitForFunction(() => !document.querySelector('#start').disabled);
+  await ui.locator('#start').click(); await waitFor(r.app, s => s.job.manifest.images.length === 1);
+  await ui.locator('#stop').click();
+  let snapshot = await waitFor(r.app, s => s.state === 'Review' && !s.busy);
+  const item = snapshot.job.manifest.images[0], original = await r.app.image(item.capture_id, true);
+  assert.equal(item.image_format, 'jpeg'); assert.equal(item.jpeg_quality, 35);
+  assert.match(item.path, /\.jpg$/); assert.equal(original.subarray(0, 2).toString('hex'), 'ffd8');
+  assert.equal(createHash('sha256').update(original).digest('hex'), item.sha256);
+  assert.equal(item.split.first_page, 'right');
+  const originalRight = await r.app.image(item.capture_id, false, 'right');
+  const settings = snapshot.job.manifest.capture_settings;
+  await r.request('crop', { id: item.capture_id, x: 10, y: 10, width: 1001, height: 800 });
+  const firstCrop = await r.app.image(item.capture_id);
+  await r.request('setCaptureSettings', { ...settings, image_format: 'png', jpeg_quality: 90 });
+  await r.request('crop', { id: item.capture_id, x: 10, y: 10, width: 1001, height: 800 });
+  assert.deepEqual(await r.app.image(item.capture_id), firstCrop, '現在の設定変更は取得済みJPEGの派生結果を変えない');
+  snapshot = await r.app.snapshot();
+  const cropped = snapshot.job.manifest.images[0];
+  assert.equal(cropped.jpeg_quality, 35, '派生画像に使用する画質は取得時の値');
+  assert.deepEqual([cropped.crop.width, cropped.crop.height, cropped.split.left.width, cropped.split.right.width], [1001, 800, 500, 501]);
+  assert.match(cropped.crop.path, /\.jpg$/); assert.match(cropped.split.right.path, /\.jpg$/);
+  assert.deepEqual(await r.app.image(item.capture_id, true), original);
+  await ui.locator('#decisionButton').click(); await ui.locator('#exportOptions > summary').click();
+  for (const [index, format] of ['zip', 'cbz'].entries()) {
+    const destination = path.join(r.directory, `jpeg-test.${format}`);
+    await ui.locator('#format').selectOption(format); await ui.locator('#destination').fill(destination);
+    await ui.locator('#export').click(); await waitFor(r.app, s => s.job.manifest.exports.length === index + 1 && !s.busy);
+    const archive = await readFile(destination), entries = [];
+    for (let offset = 0; archive.readUInt32LE(offset) === 0x04034b50;) {
+      const size = archive.readUInt32LE(offset + 18), n = archive.readUInt16LE(offset + 26);
+      const start = offset + 30 + n + archive.readUInt16LE(offset + 28);
+      entries.push({ name: archive.subarray(offset + 30, offset + 30 + n).toString(), bytes: archive.subarray(start, start + size) });
+      offset = start + size;
+    }
+    assert.deepEqual(entries.map(entry => entry.name), ['000001.jpg', '000002.jpg']);
+    for (const [i, entry] of entries.entries()) {
+      assert.equal(entry.bytes.subarray(0, 2).toString('hex'), 'ffd8');
+      const dimensions = await ui.evaluate(async base64 => {
+        const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+        const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }));
+        const size = [bitmap.width, bitmap.height]; bitmap.close(); return size;
+      }, entry.bytes.toString('base64'));
+      assert.deepEqual(dimensions, [i === 0 ? 501 : 500, 800]);
+    }
+  }
+  await r.request('resetCrop', { id: item.capture_id });
+  assert.equal((await r.app.snapshot()).job.manifest.images[0].crop, null);
+  assert.deepEqual(await r.app.image(item.capture_id, true), original);
+  assert.deepEqual(await r.app.image(item.capture_id, false, 'right'), originalRight, '復元・再分割は取得時の画質を使う');
+  await ui.locator('#language').selectOption('en');
+  assert.match(await ui.locator('#imageFormat').locator('..').textContent(), /Capture image format/);
+  await ui.locator('#language').selectOption('zh-CN');
+  assert.match(await ui.locator('#imageFormat').locator('..').textContent(), /获取图像格式/);
+  assert.equal((await r.app.snapshot()).job.manifest.images[0].jpeg_quality, 35);
+  await ui.locator('#language').selectOption('ja');
+  const jobPath = (await r.app.snapshot()).job.job_path;
+  await ui.locator('[data-stage-target="browser"]').first().click();
+  await ui.locator('[data-stage="browser"] details > summary').click();
+  await ui.locator('#closeBrowser').click(); await waitFor(r.app, s => !s.browserOpen && !s.busy);
+  await ui.locator('[data-stage-target="setup"]').first().click();
+  await ui.locator('[data-stage="setup"] details > summary').click();
+  await ui.locator('#closeJob').click(); await waitFor(r.app, s => !s.job && !s.busy);
+  await ui.locator('#recoverPath').fill(jobPath); await ui.locator('#recover').click();
+  const reopened = await waitFor(r.app, s => s.job?.job_path === jobPath && !s.busy);
+  assert.equal(reopened.job.manifest.capture_settings.image_format, 'png');
+  assert.equal(reopened.job.manifest.capture_settings.jpeg_quality, 90);
+  assert.equal(reopened.job.manifest.images[0].image_format, 'jpeg');
+  assert.equal(reopened.job.manifest.images[0].jpeg_quality, 35);
+  assert.deepEqual(reopened.job.issues, []);
+  assert.deepEqual(await r.app.image(item.capture_id, true), original);
+  assert.deepEqual(await r.app.image(item.capture_id, false, 'right'), originalRight);
+});
+
+test('MVP単ページ: 片側表紙を保持し点検で左右順を明示修正して復帰する', { timeout: 40_000 }, async t => {
+  const r = await setup(t);
+  const control = await openControlWindow(r.url, { headless: true }); t.after(() => control.close());
+  const ui = control.page;
+  await openSampleThroughPublicUi(ui);
+  await ui.locator('#pageOutputMode').selectOption('split_spread');
+  await waitFor(r.app, s => s.job.manifest.capture_settings.page_output_mode === 'split_spread' && !s.busy);
+  await r.app.reader.page.locator('#stall').click();
+  await r.app.reader.page.locator('#sheet').evaluate(canvas => {
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 600, 480);
+    ctx.fillStyle = '#c75b38'; ctx.fillRect(0, 48, 280, 402);
+    ctx.fillStyle = '#f5f5f5'; ctx.fillRect(0, 0, 600, 48); ctx.fillRect(0, 450, 600, 30);
+    ctx.fillRect(570, 210, 30, 60);
+  });
+  await ui.locator('#quickPreview').click(); await waitForPublicPreview(ui);
+  assert.equal((await r.app.snapshot()).previewInfo.layout, 'single_page');
+  await ui.locator('#previewConfirmed').check(); await ui.locator('#approve').click();
+  await ui.waitForFunction(() => !document.querySelector('#start').disabled);
+  await ui.locator('#start').click(); await waitFor(r.app, s => s.job.manifest.images.length === 1);
+  await ui.locator('#stop').click();
+  let saved = await waitFor(r.app, s => s.state === 'Review' && !s.busy);
+  const jobPath = saved.job.job_path, original = await r.app.image(1, true);
+  assert.equal(saved.job.manifest.images[0].split, null);
+  const layout = ui.locator('#images article[data-capture-id="1"] select');
+  await layout.selectOption('left');
+  saved = await waitFor(r.app, s => s.job.manifest.images[0].split?.first_page === 'left' && !s.busy);
+  assert.equal(saved.job.manifest.images[0].layout_override, true);
+  assert.deepEqual(await r.app.image(1, true), original);
+  await ui.locator('[data-stage-target="browser"]').first().click();
+  await ui.locator('[data-stage="browser"] details > summary').click();
+  await ui.locator('#closeBrowser').click();
+  await waitFor(r.app, s => !s.browserOpen && !s.busy);
+  await ui.locator('[data-stage-target="setup"]').first().click();
+  await ui.locator('[data-stage="setup"] details > summary').click();
+  await ui.locator('#closeJob').click(); await waitFor(r.app, s => !s.job && !s.busy);
+  await ui.locator('#recoverPath').fill(jobPath); await ui.locator('#recover').click();
+  await waitFor(r.app, s => s.job?.job_path === jobPath && !s.busy);
+  saved = await r.app.snapshot();
+  assert.equal(saved.job.manifest.images[0].split.first_page, 'left', '本人の指定は復帰時に自動判定で消さない');
+  assert.deepEqual(await r.app.image(1, true), original);
+  await r.request('review');
+  await r.request('setPageLayout', { id: 1, mode: 'single_image', firstPage: 'right' });
+  assert.equal((await r.app.snapshot()).job.manifest.images[0].split, null);
+  assert.deepEqual(await r.app.image(1, true), original);
+});
+
+test('MVP写り込み: 選択済み次へだけ撮影中に隠し失敗後も戻して送る', { timeout: 40_000 }, async t => {
+  const r = await setup(t);
+  await r.request('create'); await r.request('openBrowser', { mode: 'sample' });
+  const page = r.app.reader.page;
+  await page.locator('#next').evaluate(button => {
+    const reader = document.querySelector('#reader');
+    reader.style.position = 'relative'; reader.append(button);
+    button.style.cssText = 'position:absolute;left:0;top:205px;width:45px;height:60px;background:white;visibility:visible!important;z-index:2';
+  });
+  const before = await page.locator('#next').getAttribute('style');
+  await r.request('preview', { config: sampleConfig });
+  const preview = PNG.sync.read(r.app.previewImage);
+  const clip = r.app.reader.bound.dimensions;
+  assert.deepEqual([preview.width, preview.height], clip);
+  const raw = PNG.sync.read(await r.app.reader.screenshotVisibleClip((await r.app.reader.requireBound()).clip));
+  const x = 20 * r.app.reader.captureScale, y = 230 * r.app.reader.captureScale;
+  const pixel = image => [...image.data.subarray((y * image.width + x) * 4, (y * image.width + x) * 4 + 3)];
+  assert.notDeepEqual(pixel(preview), pixel(raw), '撮影中だけ選択ボタン下の試料画素が見える');
+  assert.equal(await page.locator('#next').getAttribute('style'), before);
+  const screenshot = r.app.reader.screenshotVisibleClip;
+  r.app.reader.screenshotVisibleClip = async () => { throw new Error('injected screenshot failure'); };
+  await assert.rejects(r.app.reader.capture());
+  r.app.reader.screenshotVisibleClip = screenshot;
+  assert.equal(await page.locator('#next').getAttribute('style'), before, '例外でも元のpriorityを復元');
+  await r.request('approve', { confirmed: true }); await r.request('start', { confirmed: true });
+  await waitFor(r.app, s => s.job.manifest.images.length >= 2);
+  await r.request('pause');
+  assert.ok(Number(await page.locator('#reader').getAttribute('data-position')) >= 2, '復元後は通常のページ送りができる');
 });
 
 test('MVP単ページ判定境界: 灰色余白の表紙と上下余白付き2ページを公開UIから保存・クロップ・出力する', async t => {

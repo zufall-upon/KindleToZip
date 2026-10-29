@@ -12,6 +12,7 @@ const assets = new Map([
   ['/style.css', ['style.css', 'text/css; charset=utf-8']],
 ]);
 const equal = (a, b) => typeof a === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const imageType = bytes => bytes[0] === 0xff && bytes[1] === 0xd8 ? 'image/jpeg' : 'image/png';
 
 export async function startApplication(options = {}) {
   const app = new Application(options);
@@ -38,10 +39,13 @@ export async function startApplication(options = {}) {
       if (req.method === 'GET' && req.url === '/api/state') return json(200, await app.snapshot());
       if (req.method === 'GET' && req.url === '/api/preview') {
         if (!app.previewImage) throw new AppError('preview_required');
-        return res.writeHead(200, { 'Content-Type': 'image/png' }).end(app.previewImage);
+        return res.writeHead(200, { 'Content-Type': imageType(app.previewImage) }).end(app.previewImage);
       }
       const image = /^\/api\/image\/(\d+)(?:\?(original=1|page=(left|right)))?$/.exec(req.url);
-      if (req.method === 'GET' && image) return res.writeHead(200, { 'Content-Type': 'image/png' }).end(await app.image(Number(image[1]), image[2] === 'original=1', image[3] ?? null));
+      if (req.method === 'GET' && image) {
+        const bytes = await app.image(Number(image[1]), image[2] === 'original=1', image[3] ?? null);
+        return res.writeHead(200, { 'Content-Type': imageType(bytes) }).end(bytes);
+      }
       if (req.method === 'POST' && req.url === '/api/command') {
         if (req.headers['content-type'] !== 'application/json') return json(415, { code: 'json_required' });
         let body = '';

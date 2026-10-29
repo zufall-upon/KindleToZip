@@ -12,6 +12,24 @@ const MAX_CAPTURE_PIXELS = 16_000_000;
 const MAX_CAPTURE_BYTES = 32 * 1024 * 1024;
 
 function pngDimensions(bytes) {
+  if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes.at(-2) === 0xff && bytes.at(-1) === 0xd9) {
+    let offset = 2;
+    while (offset + 4 <= bytes.length) {
+      if (bytes[offset++] !== 0xff) break;
+      while (bytes[offset] === 0xff) offset++;
+      const marker = bytes[offset++];
+      if (marker === 0xda || marker === 0xd9) break;
+      const length = bytes.readUInt16BE(offset);
+      if (length < 2 || offset + length > bytes.length) break;
+      if ([0xc0, 0xc1, 0xc2].includes(marker) && length >= 7) {
+        const height = bytes.readUInt16BE(offset + 3), width = bytes.readUInt16BE(offset + 5);
+        if (!width || !height || width * height > MAX_CAPTURE_PIXELS || bytes.length > MAX_CAPTURE_BYTES) throw new AppError('capture_resolution_exceeds_limit');
+        return [width, height];
+      }
+      offset += length;
+    }
+    throw new AppError('capture_jpeg_invalid');
+  }
   if (bytes.length < 24 || bytes.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a' || bytes.subarray(12, 16).toString('ascii') !== 'IHDR') {
     throw new AppError('capture_png_invalid');
   }
@@ -194,6 +212,8 @@ export class Reader {
       ? Object.fromEntries(['reader', 'identity', 'position', 'next'].map(field => [field, { field, selector: sampleConfig[field], frame: '' }])) : {};
     this.generation = 0;
     this.captureScale = 1;
+    this.imageFormat = 'png';
+    this.jpegQuality = 85;
     this.scaleSession = null;
     this.scalePage = null;
     this.watchedPages = new WeakSet();
@@ -932,7 +952,8 @@ export class Reader {
       const offset = await this.page.evaluate(() => ({ x: scrollX, y: scrollY }));
       const result = await Promise.race([
         this.scaleSession.send('Page.captureScreenshot', {
-          format: 'png',
+          format: this.imageFormat,
+          ...(this.imageFormat === 'jpeg' ? { quality: this.jpegQuality } : {}),
           clip: { x: clip.x + offset.x, y: clip.y + offset.y, width: clip.width, height: clip.height, scale: 1 },
           captureBeyondViewport: false,
         }),
@@ -948,9 +969,42 @@ export class Reader {
     }
   }
 
+  async screenshotWithoutSelectedNavigation(before) {
+    const handle = await before.next.elementHandle();
+    if (!handle) throw new AppError('target_changed');
+    let original = null;
+    try {
+      const box = await handle.boundingBox();
+      const clip = before.clip;
+      const overlaps = box && box.x < clip.x + clip.width && box.x + box.width > clip.x
+        && box.y < clip.y + clip.height && box.y + box.height > clip.y;
+      if (overlaps && box.width <= clip.width / 4 && box.height <= clip.height / 4) {
+        original = await handle.evaluate(element => {
+          // Only the uniquely selected, small interactive control is eligible.
+          // Never hide a wrapper containing page surfaces or arbitrary markup.
+          const interactive = element.tagName === 'BUTTON' || element.getAttribute('role') === 'button'
+            || element.tagName === 'INPUT' && ['button', 'submit'].includes(element.type);
+          if (!interactive || element.querySelector('canvas,img,picture,video,iframe,object,embed,svg image')) return null;
+          return { value: element.style.getPropertyValue('visibility'), priority: element.style.getPropertyPriority('visibility'), hadStyle: element.hasAttribute('style') };
+        });
+        if (original) await handle.evaluate(element => element.style.setProperty('visibility', 'hidden', 'important'));
+      }
+      return await this.screenshotVisibleClip(clip);
+    } finally {
+      try {
+        if (original) await handle.evaluate((element, previous) => {
+          if (previous.value) element.style.setProperty('visibility', previous.value, previous.priority);
+          else element.style.removeProperty('visibility');
+          if (!previous.hadStyle && !element.getAttribute('style')) element.removeAttribute('style');
+        }, original);
+      } catch { throw new AppError('capture_failed'); }
+      finally { await handle.dispose().catch(() => {}); }
+    }
+  }
+
   async preview(recovery = null) {
     const before = await this.stable(recovery);
-    const png = await this.screenshotVisibleClip(before.clip);
+    const png = await this.screenshotWithoutSelectedNavigation(before);
     const dimensions = pngDimensions(png);
     const expectedWidth = before.clip.width * before.deviceScaleFactor, expectedHeight = before.clip.height * before.deviceScaleFactor;
     if (Math.abs(dimensions[0] - expectedWidth) > 1.1 || Math.abs(dimensions[1] - expectedHeight) > 1.1) throw new AppError('capture_dimensions_mismatch');
@@ -968,7 +1022,7 @@ export class Reader {
 
   async capture() {
     const before = await this.requireBound();
-    const png = await this.screenshotVisibleClip(before.clip);
+    const png = await this.screenshotWithoutSelectedNavigation(before);
     const dimensions = pngDimensions(png);
     if (dimensions[0] !== this.bound.dimensions[0] || dimensions[1] !== this.bound.dimensions[1]) throw new AppError('capture_dimensions_mismatch');
     if (!this.same(before, await this.read())) throw new AppError('target_changed');

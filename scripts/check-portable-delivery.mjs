@@ -48,9 +48,11 @@ assert.equal(resumed.jobId, smoke.firstLaunch.jobId);
 assert.equal(resumed.savedProfileId, smoke.firstLaunch.savedProfileId);
 assert.equal(resumed.capturedImagesReused, 2);
 assert.deepEqual(resumed.persistedOrder, [2, 1]);
-assert.deepEqual(resumed.settingsReused, {
-  capture_scale: 2, page_output_mode: 'split_spread', reading_direction: 'right_to_left',
-});
+const expectedSettings = { capture_scale: 2, page_output_mode: 'split_spread', reading_direction: 'right_to_left' };
+if ('image_format' in resumed.settingsReused || 'jpeg_quality' in resumed.settingsReused) {
+  Object.assign(expectedSettings, { image_format: 'png', jpeg_quality: 85 });
+}
+assert.deepEqual(resumed.settingsReused, expectedSettings);
 assert.equal(resumed.savedProfileCookieReused, true);
 assert.equal(resumed.relativeManifestPaths, true);
 assert.equal(resumed.automaticResumeOrCapture, false);
@@ -66,11 +68,38 @@ assert.deepEqual(smoke.intermediateRuntimeJunctionsRejected, ['node', 'app', 'no
 assert.equal(smoke.redirectPathsUnused, true);
 if (headlessOnly) {
   assert.equal(smoke.firstLaunch.headlessOnly, true, '通常画面試験への読み替えをしない');
-  assert.deepEqual(smoke.firstLaunch.publicPreviews.map(({ publicFlow, ...preview }) => preview), ['kindle-preset', 'automatic', 'picker'].map(mode => ({
+  const previews = [...smoke.firstLaunch.publicPreviews];
+  if (previews[0]?.mode === 'kindle-initial-hidden') {
+    const hidden = previews.shift();
+    const { elapsedMs, ...observation } = hidden;
+    assert.ok(Number.isFinite(elapsedMs) && elapsedMs >= 0);
+    assert.deepEqual(observation, { mode: 'kindle-initial-hidden', field: 'identity', cause: 'hidden',
+      stage: 'preview_visibility_wait', approved: false, capturedImages: 0, png: false,
+      configuredFields: 4, tabs: 2, recovery: 'explicit-fixture-only-same-nodes' });
+  }
+  assert.deepEqual(previews.map(({ publicFlow, ...preview }) => preview), ['kindle-preset', 'automatic', 'picker'].map(mode => ({
     mode, dimensions: [1120, 720], approved: false, capturedImages: 0,
   })), '実EXE公開UIの自動判別と通常pickerの両方で承認前プレビューを確認する');
-  assert.deepEqual(smoke.firstLaunch.publicPreviews[0].publicFlow, { presetSelected: true, approved: true, explicitlyStarted: true,
+  assert.deepEqual(previews[0].publicFlow, { presetSelected: true, approved: true, explicitlyStarted: true,
     safetyStopped: true, zipReopened: true, entryDimensions: [1120, 720] }, '公開プリセットから本人承認相当・明示開始・安全停止・ZIP保存までの同梱実測');
+  if (smoke.sourceMatched.includes('poc/fixtures/reader-image-review.html')) {
+    const imageFlow = smoke.firstLaunch.publicImageFlow;
+    assert.ok(Array.isArray(imageFlow));
+    assert.deepEqual(imageFlow.map(item => item.imageFormat), ['png', 'jpeg']);
+    for (const item of imageFlow) {
+      const extension = item.imageFormat === 'jpeg' ? 'jpg' : 'png';
+      const screenshots = [`fixture-cover-${item.imageFormat}.${extension}`, `fixture-preview-${item.imageFormat}.png`,
+        `fixture-page-${item.imageFormat}.${extension}`, `fixture-review-${item.imageFormat}.png`];
+      assert.deepEqual(item, { imageFormat: item.imageFormat, coverSingle: true, images: 2, crop: [560, 800],
+        originalKept: true, zipAndCbzReopened: true, selection: 'public', screenshots });
+      for (const name of screenshots) {
+        const bytes = await readFile(path.join(path.dirname(smokePath), name));
+        assert.ok(bytes.length > 1000, `画面証拠: ${name}`);
+        assert.equal(bytes.subarray(0, name.endsWith('.jpg') ? 2 : 8).toString('hex'),
+          name.endsWith('.jpg') ? 'ffd8' : '89504e470d0a1a0a', `画面形式: ${name}`);
+      }
+    }
+  }
 } else if (repairUi) {
   assert.equal(windowResult.executable, `_testenv/${report.executable}`);
   assert.equal(windowResult.executableSha256, report.executableSha256);

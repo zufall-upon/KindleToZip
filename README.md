@@ -53,6 +53,8 @@ Included in the Portable build and source, with the limits below:
 - **Save an ordered archive.** Export included PNGs to ZIP / CBZ without overwriting an existing file.
 - **Choose your language.** Japanese, English, and Simplified Chinese UI.
 
+**Added in current source (not in the published v0.1.2 package):** choose PNG or JPEG capture and JPEG quality from 1–100. JPEG is lossy at capture and is recompressed when cropped or split. In review, correct each image to one or two pages and choose their order. Crop margins manually and restore the original. Layout detection can be wrong, so check it visually. A small selected next button overlapping the capture area is hidden only during capture when safe; not all overlays can be removed.
+
 ## Get started
 
 **Portable:** download the [v0.1.2 release ZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2), verify `SHA256SUMS.txt`, extract the entire ZIP into a writable folder, and run `KindleToZip-Portable.exe`. Node.js and the dedicated browser are bundled; no development setup is needed. See the [trilingual Portable guide](docs/portable.md).

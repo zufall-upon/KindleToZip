@@ -1,6 +1,6 @@
 mod windows_observer;
 
-use ktz_g02_controller::store::{create_private_session_directory, lock_data_directory, ArchiveFormat, BookIdentity, CaptureSettings, Store};
+use ktz_g02_controller::store::{create_private_session_directory, lock_data_directory, ArchiveFormat, BookIdentity, CaptureSettings, PageOutputMode, PageSide, Store};
 use ktz_g02_controller::{transition, Event, State};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -28,6 +28,8 @@ enum Command {
     LayoutBegin {}, LayoutChunk { data_base64: String }, LayoutResult {},
     SetReviewOrder { capture_ids: Vec<u64> }, ConfirmRange { confirmed: bool },
     CropImage { capture_id: u64, x: u32, y: u32, width: u32, height: u32 },
+    ResetCrop { capture_id: u64 },
+    SetPageLayout { capture_id: u64, mode: PageOutputMode, first_page: PageSide },
     Export { destination: String, format: String, #[serde(default)] progress: bool }, CreateSessionDirectory { path: String }, LockDataDirectory { path: String },
 }
 
@@ -182,6 +184,14 @@ fn main() -> io::Result<()> {
                 Some(active) => active.crop_image(capture_id, x, y, width, height)
                     .map(|result| json!({"crop":result.crop,"cleanup_warning":result.cleanup_warning}))
                     .map_err(|error| error.code()),
+                None => Err("job_not_open"),
+            },
+            Command::SetPageLayout { capture_id, mode, first_page } => match store.as_mut() {
+                Some(active) => active.set_page_layout(capture_id, mode, first_page).map(|snapshot| json!({"snapshot":snapshot})).map_err(|error| error.code()),
+                None => Err("job_not_open"),
+            },
+            Command::ResetCrop { capture_id } => match store.as_mut() {
+                Some(active) => active.reset_crop(capture_id).map(|snapshot| json!({"snapshot":snapshot})).map_err(|error| error.code()),
                 None => Err("job_not_open"),
             },
             Command::Export { destination, format, progress } => match (store.as_mut(), ArchiveFormat::parse(&format)) {

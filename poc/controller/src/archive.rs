@@ -1,4 +1,4 @@
-use crate::png_image::{crc32, decode_rendered, decode_stored, sha256};
+use crate::png_image::{crc32, decode_rendered, decode_stored, is_jpeg, sha256};
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -171,7 +171,7 @@ fn verify_archive(
         }
         let mut data = vec![0; entry.size as usize];
         file.read_exact(&mut data).map_err(|_| "archive_verify_failed")?;
-        if crc32(&data) != entry.crc || sha256(&data) != input.sha256 {
+        if crc32(&data) != entry.crc || sha256(&data) != input.sha256 || is_jpeg(&data) != input.name.ends_with(".jpg") {
             return Err("archive_verify_failed");
         }
         let image = if input.allow_black { decode_rendered(&data) } else { decode_stored(&data) }
@@ -228,7 +228,7 @@ fn read_source(input: &ArchiveInput<'_>) -> Result<Vec<u8>, &'static str> {
     }
     let image = if input.allow_black { decode_rendered(&bytes) } else { decode_stored(&bytes) }
         .map_err(|_| "archive_source_invalid")?;
-    if image.sha256 != input.sha256 || image.width != input.width || image.height != input.height {
+    if is_jpeg(&bytes) != input.name.ends_with(".jpg") || image.sha256 != input.sha256 || image.width != input.width || image.height != input.height {
         return Err("archive_source_invalid");
     }
     Ok(bytes)

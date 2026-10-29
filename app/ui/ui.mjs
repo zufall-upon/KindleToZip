@@ -229,6 +229,8 @@ function mappingStatus() {
   $('readerTab').disabled = !canChooseTab;
   $('selectReaderTab').disabled = !canChooseTab || !$('readerTab').value;
   $('captureScale').disabled = !canPick || busy;
+  $('imageFormat').disabled = !canPick || busy;
+  $('jpegQuality').disabled = !canPick || busy || $('imageFormat').value !== 'jpeg';
   $('pageOutputMode').disabled = !canPick || busy;
   $('readingDirection').disabled = !canPick || busy || $('pageOutputMode').value !== 'split_spread';
   $('quickPreview').disabled = !canPick || busy;
@@ -406,7 +408,7 @@ Object.assign(errors, {
   capture_scale_unavailable: '画面密度をブラウザへ適用できませんでした。対象タブを選び直し、標準（1倍）でプレビューしてください。',
   capture_failed: '表示領域を画像にできませんでした。画面を表示したまま、もう一度プレビューしてください。',
   black_image: '読書領域の画像がほぼ黒いため、安全のため停止しました。この黒い画像は保存していません。次に、専用ブラウザでページ画像が実際に見えているか確認してください。表示が黒いままなら取得せず停止してください。',
-  capture_resolution_exceeds_limit: 'PNGが16メガピクセルまたは32MiBの上限を超えます。画面密度を1倍にするか、表示範囲を狭めてください。',
+  capture_resolution_exceeds_limit: '画像が16メガピクセルまたは32MiBの上限を超えます。画面密度を1倍にするか、表示範囲を狭めてください。',
   capture_dimensions_mismatch: 'プレビューと取得の画素寸法が一致しません。取得を停止しました。もう一度プレビューしてください。',
   spread_width_too_small: '左右分割には幅2px以上が必要です。クロップ幅を2px以上にしてやり直すか、「全原寸へ戻す」を押してください。',
   invalid_capture_settings: '取り込み設定を確認してください。',
@@ -452,7 +454,7 @@ function failureSummary(failure) {
 function renderJobImages(s, generation) {
   if (s.state === 'Capturing') return;
   const manifest = s.job?.manifest;
-  const key = JSON.stringify([s.job?.job_path, manifest?.images, manifest?.selected_capture_ids]);
+  const key = JSON.stringify([s.job?.job_path, manifest?.state, manifest?.images, manifest?.selected_capture_ids]);
   if (key === lastImages) return;
   lastImages = key;
   const revision = ++imageRenderRevision;
@@ -500,7 +502,7 @@ function renderJobImages(s, generation) {
       const label = document.createElement('p');
       const outputSize = item.crop ? `${item.crop.width}×${item.crop.height}` : `${item.width}×${item.height}`;
       const outputUnit = item.split ? `右左順 ${item.split.first_page === 'right' ? '右→左' : '左→右'}・${item.split.left.width}×${item.split.left.height} + ${item.split.right.width}×${item.split.right.height}` : '1枚';
-      label.textContent = `ID ${item.capture_id} / 元PNG ${item.width}×${item.height} px / 出力 ${outputUnit} / ${item.capture_scale}倍 / ${selected.includes(item.capture_id) ? '採用' : '除外（原本保持）'}`;
+      label.textContent = `ID ${item.capture_id} / 元${item.image_format === 'jpeg' ? 'JPEG' : 'PNG'} ${item.width}×${item.height} px / 出力 ${outputUnit} / ${item.capture_scale}倍 / ${selected.includes(item.capture_id) ? '採用' : '除外（原本保持）'}`;
       const flag = document.createElement('p'); flag.textContent = [item.blank_candidate && '白紙候補', item.duplicate_candidate && '重複候補', item.crop && 'クロップあり'].filter(Boolean).join(' / ');
       const inspect = document.createElement('button'); inspect.textContent = '原本を点検・クロップ';
       inspect.onclick = () => run(async () => { $('cropId').value = item.capture_id; $('cropWidth').value = item.width; $('cropHeight').value = item.height; await png(`/api/image/${item.capture_id}?original=1`, $('inspectImage')); }, false, '原本を点検表示');
@@ -508,6 +510,21 @@ function renderJobImages(s, generation) {
       const card = document.createElement('article');
       card.dataset.split = String(Boolean(item.split)); card.dataset.captureId = item.capture_id;
       card.append(thumbnail, label, flag, inspect);
+      const layout = document.createElement('select');
+      layout.setAttribute('aria-label', 'この画像の保存単位');
+      for (const [value, text] of [['single', '1枚のまま'], ['right', '2枚：右→左'], ['left', '2枚：左→右']]) layout.add(new Option(text, value));
+      layout.value = item.split ? item.split.first_page : 'single';
+      layout.disabled = manifest.state !== 'review';
+      layout.addEventListener('change', async () => {
+        const choice = layout.value;
+        layout.disabled = true;
+        await run(() => command('setPageLayout', { id: item.capture_id,
+          mode: choice === 'single' ? 'single_image' : 'split_spread', firstPage: choice === 'single' ? 'right' : choice }));
+        const latest = state?.job?.manifest.images.find(image => image.capture_id === item.capture_id);
+        layout.value = latest?.split ? latest.split.first_page : 'single';
+        layout.disabled = state?.job?.manifest.state !== 'review';
+      });
+      card.append(layout);
       for (const [text, delta] of [['前へ', -1], ['後へ', 1]]) {
         const move = document.createElement('button'); move.textContent = text;
         move.disabled = position < 0 || position + delta < 0 || position + delta >= selected.length;
@@ -609,7 +626,7 @@ async function renderPreviewOutput(configRevision) {
   const css = info?.cssDimensions ?? [0, 0];
   const singlePage = info?.layout === 'single_page';
   const split = info?.pageOutputMode === 'split_spread' && !singlePage;
-  $('previewInfo').textContent = `表示範囲 ${Math.round(css[0])}×${Math.round(css[1])} CSS px → 元PNG ${width}×${height} px（画面密度 ${info?.deviceScaleFactor ?? 1}倍）${split ? `。分割境界 x=${Math.floor(width / 2)} px、出力は ${info?.readingDirection === 'left_to_right' ? '左→右' : '右→左'}。` : '。出力は表示範囲の1枚です。'}`;
+  $('previewInfo').textContent = `表示範囲 ${Math.round(css[0])}×${Math.round(css[1])} CSS px → 元${info?.imageFormat === 'jpeg' ? 'JPEG' : 'PNG'} ${width}×${height} px（画面密度 ${info?.deviceScaleFactor ?? 1}倍）${split ? `。分割境界 x=${Math.floor(width / 2)} px、出力は ${info?.readingDirection === 'left_to_right' ? '左→右' : '右→左'}。` : '。出力は表示範囲の1枚です。'}`;
   // Decode and inspect only in this local tab; never serialize pixels or labels.
   const probe = document.createElement('canvas'); probe.width = 32; probe.height = 32;
   const probeContext = probe.getContext('2d');
@@ -647,7 +664,7 @@ async function renderPreviewOutput(configRevision) {
     figure.append(image, caption); container.append(figure);
   }
   const odd = width % 2 === 1;
-  if (odd) $('previewInfo').textContent = canonicalText($('previewInfo')) + ` 元PNGは奇数幅のため、中央の境界は x=${boundary} px（右側を1 px広く）です。`;
+  if (odd) $('previewInfo').textContent = canonicalText($('previewInfo')) + ` 元画像は奇数幅のため、中央の境界は x=${boundary} px（右側を1 px広く）です。`;
 }
 async function command(action, input = {}) {
    const progressKey = crypto.randomUUID();
@@ -948,10 +965,13 @@ async function draw(s, generation) {
       $('captureScale').value = String(s.captureSettings.capture_scale);
       $('pageOutputMode').value = s.captureSettings.page_output_mode;
       $('readingDirection').value = s.captureSettings.reading_direction;
+      $('imageFormat').value = s.captureSettings.image_format ?? 'png';
+      $('jpegQuality').value = String(s.captureSettings.jpeg_quality ?? 85);
       lastSettingsKey = settingsKey;
     }
   } else if (!s.job) {
     $('captureScale').value = '2'; $('pageOutputMode').value = 'single_image'; $('readingDirection').value = 'right_to_left';
+    $('imageFormat').value = 'png'; $('jpegQuality').value = '85';
     lastSettingsKey = undefined;
   }
   if (!s.previewReady) clearPreview();
@@ -1053,6 +1073,8 @@ function applyCaptureSettings(settings) {
   $('captureScale').value = String(settings.capture_scale);
   $('pageOutputMode').value = settings.page_output_mode;
   $('readingDirection').value = settings.reading_direction;
+  $('imageFormat').value = settings.image_format ?? 'png';
+  $('jpegQuality').value = String(settings.jpeg_quality ?? 85);
   lastSettingsKey = JSON.stringify(settings);
   mappingStatus();
 }
@@ -1061,6 +1083,8 @@ async function persistCaptureSettings() {
     capture_scale: Number($('captureScale').value),
     page_output_mode: $('pageOutputMode').value,
     reading_direction: $('readingDirection').value,
+    image_format: $('imageFormat').value,
+    jpeg_quality: Number($('jpegQuality').value),
   };
   if (JSON.stringify(settings) === lastSettingsKey) return;
   const generation = interactionGeneration;
@@ -1078,7 +1102,7 @@ async function persistCaptureSettings() {
     }
   }
 }
-for (const id of ['captureScale', 'pageOutputMode', 'readingDirection']) $(id).addEventListener('change', persistCaptureSettings);
+for (const id of ['captureScale', 'pageOutputMode', 'readingDirection', 'imageFormat', 'jpegQuality']) $(id).addEventListener('change', persistCaptureSettings);
 click('selectReaderTab', async () => {
   changedMapping();
   await command('selectReaderTab', { id: $('readerTab').value });
@@ -1175,7 +1199,7 @@ click('crop', async () => {
 click('resetCrop', async () => {
   const item = state.job.manifest.images.find(i => i.capture_id === Number($('cropId').value));
   if (!item) throw new Error('画像IDを選択してください。');
-  await command('crop', { id: item.capture_id, x: 0, y: 0, width: item.width, height: item.height });
+  await command('resetCrop', { id: item.capture_id });
   await png(`/api/image/${item.capture_id}`, $('inspectImage'));
 });
 click('export', saveCurrentExport);

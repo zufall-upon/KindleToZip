@@ -55,7 +55,7 @@
     <p>「決定・次へ」で専用Kindleを開きます。本を開いた後も同じボタンで対象タブの選択へ進みます。</p>
     <details><summary>専用セッション・自作試料（補助）</summary>
     <button id="openKindle">日本向けKindle Webを開く（個別操作）</button>
-    <label>テスト画像 <select id="sampleFixture"><option value="">標準の自作試料</option><option value="kindle-chrome-dynamic">Kindle風：位置変化・操作バーの一時非表示</option><option value="kindle-chrome-hidden">Kindle風：初回から識別・位置・操作バー非表示（自動復帰なし）</option><option value="kindle-chrome-recoverable">Kindle風：初期非表示から上端DOMイベント列で復帰</option><option value="kindle-chrome-tabs">Kindle風：読書タブとライブラリの再プレビュー切分け</option><option value="kindle-chrome-ambiguous">匿名見開き：136位置で次へ候補が増える</option></select></label>
+    <label>テスト画像 <select id="sampleFixture"><option value="">標準の自作試料</option><option value="image-review">匿名図形：片側表紙とボタン重なり</option><option value="kindle-chrome-dynamic">Kindle風：位置変化・操作バーの一時非表示</option><option value="kindle-chrome-hidden">Kindle風：初回から識別・位置・操作バー非表示（自動復帰なし）</option><option value="kindle-chrome-recoverable">Kindle風：初期非表示から上端DOMイベント列で復帰</option><option value="kindle-chrome-tabs">Kindle風：読書タブとライブラリの再プレビュー切分け</option><option value="kindle-chrome-ambiguous">匿名見開き：136位置で次へ候補が増える</option></select></label>
     <button id="openSample">選択した自作試料を開く</button>
     <label><input type="checkbox" id="keep" checked> ログイン状態を次回も保存する（既定ON。OFFで新しい一時領域を使用）</label>
     <label>既存の専用セッション<select id="session"><option value="">前回の専用領域を再利用（なければ新規）</option><option value="new">新しい専用領域</option></select></label>
@@ -79,7 +79,10 @@
     <div class="capture-settings">
       <h3>取り込みと保存のおすすめ設定</h3>
       <label>画面の描画密度<select id="captureScale"><option value="2">高解像度（2倍・おすすめ）</option><option value="1">標準（1倍）</option></select></label>
-      <p>2倍は高密度PNGで保存します。上限は16メガピクセルです。</p>
+      <p>2倍は高密度で保存します。上限は16メガピクセルです。</p>
+      <label>取得画像の形式<select id="imageFormat"><option value="png">PNG（可逆）</option><option value="jpeg">JPEG（非可逆・軽量）</option></select></label>
+      <label>JPEG画質（1〜100）<input type="number" id="jpegQuality" min="1" max="100" value="85"></label>
+      <p>JPEGは取得時に圧縮します。画質を下げると容量は減る傾向がありますが細部は失われます。クロップ・分割時も再圧縮します。原本は保持します。</p>
       <label>1回の表示を何枚として保存<select id="pageOutputMode"><option value="single_image">表示範囲を1枚のまま保存</option><option value="split_spread">見開きを左右2ページに分けて保存</option></select></label>
       <label>左右の読み順<select id="readingDirection"><option value="right_to_left">右ページから（右→左・おすすめ）</option><option value="left_to_right">左ページから（左→右）</option></select></label>
       <p id="settingsNote">設定はジョブに保存されます。変更後はプレビューと承認をやり直します。分割設定はこれから取得する画像に適用し、すでに取得した画像は変えません。</p>
@@ -112,7 +115,7 @@
         <div class="grid"><label>共通iframe（通常は変更不要）<input id="frame"></label><label>読書領域のCSS<input id="reader"></label><label>本の識別表示のCSS<input id="identity"></label><label>位置表示のCSS<input id="position"></label><label>次へボタンのCSS<input id="next"></label></div>
       </details>
     </details>
-    <p id="previewPlaceholder">プレビューはまだありません。表示範囲のPNG画素寸法と保存単位を確認できます。</p>
+    <p id="previewPlaceholder">プレビューはまだありません。表示範囲の画素寸法と保存単位を確認できます。</p>
     <p id="previewInfo"></p>
     <aside id="resumeComparison" hidden>
       <h3>最後の確定画像と再開位置</h3>
@@ -131,7 +134,7 @@
   <section data-stage="review"><h2>4. 画像を点検・並べ替え・クロップ</h2>
     <button id="resumeCapture">画像を残して途中から再開</button>
     <p id="counts"></p>
-    <p>画像カードの「前へ」「後へ」で出力順を変更できます。「除外」しても原本は消えません。</p>
+    <p>画像カードの「前へ」「後へ」で出力順を変更できます。「除外」しても原本は消えません。画像ごとに1枚または左右2枚と読み順を修正できます。判定は目視で確かめてください。</p>
     <button id="restoreOrder">全画像を取得順で採用</button>
     <details id="orderDetails"><summary>画像番号を指定して順序・採用を変更</summary><button id="review">点検モードへ</button><label>画像番号をカンマ区切り（省いた画像は除外・原本保持）<input id="order"></label><button id="saveOrder">順序・採用を保存</button></details>
     <p id="imageLoadStatus" role="status"></p>

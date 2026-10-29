@@ -1,6 +1,6 @@
 # Development and testing
 
-Looking for the current way to try the app? Use the source setup guide: [English](getting-started.md) · [日本語](getting-started.ja.md) · [简体中文](getting-started.zh-CN.md). There is no public Portable executable yet.
+Looking for the current way to try the app? The [official Releases page](https://github.com/zufall-upon/KindleToZip/releases) offers the public Portable ZIP. For source execution, use the setup guide: [English](getting-started.md) · [日本語](getting-started.ja.md) · [简体中文](getting-started.zh-CN.md).
 
 ## Requirements
 
@@ -13,9 +13,9 @@ Run the setup commands in the [source setup guide](getting-started.md) before te
 
 ## Architecture and implementation limits
 
-The backend controller is Rust; the local web UI and browser adapter use Node.js and Playwright. This is not a Tauri app or a purely Rust-only runtime. Source execution needs the development tools above. The portable build embeds its runtime rather than requiring the end user to install Node.js, Rust, npm, or Chromium separately, but no tested public executable is currently offered.
+The backend controller is Rust; the local web UI and browser adapter use Node.js and Playwright. This is not a Tauri app or a purely Rust-only runtime. Source execution needs the development tools above. The portable build embeds its runtime rather than requiring the end user to install Node.js, Rust, npm, or Chromium separately. The public v0.1.2 build and later local source/candidate have separate validation records.
 
-PNG storage, recovery, ordering, non-destructive crops, and archive verification belong to the Rust controller. Standard or 2× browser rendering does not reconstruct absent source detail. The safety limit is 16 megapixels / 32 MiB per PNG, not a paid feature limit. Optional spread splitting must be reviewed by the user; it is not semantic page classification. ZIP64 and compatibility with all CBZ viewers remain unverified.
+PNG/JPEG storage, recovery, ordering, non-destructive crops, and archive verification belong to the Rust controller. JPEG capture and cropped/split output are lossy. Standard or 2× browser rendering does not reconstruct absent source detail. The image safety limit is 16 megapixels / 32 MiB per image, not a paid feature limit. Optional spread splitting must be reviewed by the user; it is not semantic page classification. ZIP64 and compatibility with all CBZ viewers remain unverified.
 
 The [initial validation report](validation.md) records 125 passes and 12 failures for `npm test`, including parent/subtest failures. These documentation changes do not fix, waive, or replace those results. Keep real Kindle acceptance, source-fixture tests, packaged-fixture tests, and clean-Windows checks separate.
 

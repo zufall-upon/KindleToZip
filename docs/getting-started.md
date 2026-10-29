@@ -59,7 +59,9 @@ The three main controls are **Confirm / Next**, **Cancel / Back**, and **Finish 
 
 ## Images, saved data, and privacy
 
-- Standard or 2× rendering density changes how the page is rendered, not the amount of detail available from the source. Each PNG is limited to **16 megapixels / 32 MiB** for safety, not as a paid quota.
+In current source, select the capture image format and JPEG quality (1–100) before previewing. JPEG is compressed at capture and recompressed on crop or split; inspect the quality and size. The captured original bytes are retained. In review, correct each image to one or two pages and choose their order, crop margins manually, or restore the original with Restore original size. There is no automatic margin crop. Check layout and overlays yourself; detection and suppression are not complete. These additions are not included in the published v0.1.2 package.
+
+- Standard or 2× rendering density changes how the page is rendered, not the amount of detail available from the source. Each image is limited to **16 megapixels / 32 MiB** for safety, not as a paid quota.
 - Spread splitting is optional. Choose right-to-left or left-to-right reading order and check the result yourself; it is not semantic page recognition. Exclusion and cropping retain originals. Existing output files are not overwritten.
 - Development work data and dedicated profiles are under `artifacts/mvp-data/`, unless you explicitly select another local job location. Portable builds create `runtime/`, `data/`, and `temp/` beside the EXE.
 - **Login retention is ON by default.** Turning it off creates a separate temporary profile. Normal exit removes that temporary profile; crashes can leave data behind. Saved profiles are intended for the same PC and Windows user, and Amazon can still expire the session or require verification.

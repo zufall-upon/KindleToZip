@@ -6,6 +6,8 @@ const files = new Map([
   ['/reader-kindle-chrome.css', ['reader-kindle-chrome.css', 'text/css; charset=utf-8']],
   ['/reader-kindle-chrome.js', ['reader-kindle-chrome.js', 'text/javascript; charset=utf-8']],
   ['/reader.html', ['reader.html', 'text/html; charset=utf-8']],
+  ['/reader-image-review.html', ['reader-image-review.html', 'text/html; charset=utf-8']],
+  ['/reader-image-review.js', ['reader-image-review.js', 'text/javascript; charset=utf-8']],
   ['/reader.js', ['reader.js', 'text/javascript; charset=utf-8']],
   ['/reader.css', ['reader.css', 'text/css; charset=utf-8']],
   ['/reader-layout.html', ['reader-layout.html', 'text/html; charset=utf-8']],
@@ -17,7 +19,7 @@ const files = new Map([
 
 // Only fixed self-authored assets are served; never a general file server.
 export async function startFixture({ fixture = 'reader' } = {}) {
-  if (!['reader', 'layout', 'kindle-chrome', 'kindle-chrome-dynamic', 'kindle-chrome-hidden', 'kindle-chrome-recoverable', 'kindle-chrome-tabs', 'kindle-chrome-ambiguous'].includes(fixture)) throw new Error('invalid_sample_fixture');
+  if (!['reader', 'image-review', 'layout', 'kindle-chrome', 'kindle-chrome-dynamic', 'kindle-chrome-hidden', 'kindle-chrome-recoverable', 'kindle-chrome-tabs', 'kindle-chrome-ambiguous'].includes(fixture)) throw new Error('invalid_sample_fixture');
   const ambiguous = fixture === 'kindle-chrome-ambiguous';
   const tabs = fixture === 'kindle-chrome-tabs';
   const dynamic = fixture === 'kindle-chrome-dynamic';
@@ -50,7 +52,7 @@ export async function startFixture({ fixture = 'reader' } = {}) {
     server.listen(0, '127.0.0.1', resolve);
   });
   return {
-    url: `http://127.0.0.1:${server.address().port}/${assetFixture === 'kindle-chrome' ? 'reader-kindle-chrome.html' : assetFixture === 'layout' ? 'reader-layout.html' : 'reader.html'}${ambiguous ? '?ambiguous=1' : tabs ? '?tabs=1' : dynamic ? '?dynamic=1' : recoverable ? '?chrome=hidden&recovery=top-motion' : initialHidden ? '?chrome=hidden' : ''}`,
+    url: `http://127.0.0.1:${server.address().port}/${assetFixture === 'kindle-chrome' ? 'reader-kindle-chrome.html' : assetFixture === 'layout' ? 'reader-layout.html' : assetFixture === 'image-review' ? 'reader-image-review.html' : 'reader.html'}${ambiguous ? '?ambiguous=1' : tabs ? '?tabs=1' : dynamic ? '?dynamic=1' : recoverable ? '?chrome=hidden&recovery=top-motion' : initialHidden ? '?chrome=hidden' : ''}`,
     close: () => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())),
   };
 }

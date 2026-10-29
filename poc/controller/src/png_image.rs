@@ -23,6 +23,14 @@ impl DecodedPng {
     // viewport. This is independent of capture number and reader position.
     // This is geometric evidence, not semantic recognition of spread artwork.
     pub fn single_page(&self) -> bool {
+        self.single_page_with_asymmetric_band(true)
+    }
+
+    pub(crate) fn legacy_single_page(&self) -> bool {
+        self.single_page_with_asymmetric_band(false)
+    }
+
+    fn single_page_with_asymmetric_band(&self, allow_asymmetric_band: bool) -> bool {
         let channels = match self.color_type { ColorType::Grayscale => 1, ColorType::GrayscaleAlpha => 2, ColorType::Rgb => 3, _ => 4 };
         let bytes = if self.bit_depth == BitDepth::Sixteen { 2 } else { 1 };
         let colors = if channels <= 2 { 1 } else { 3 };
@@ -36,6 +44,31 @@ impl DecodedPng {
         let matches_background = |x: u32, y: u32| {
             (0..colors).all(|c| sample(x, y, c).abs_diff(background[c]) <= 12)
         };
+        // A cover can occupy only one side of a landscape reader, with
+        // toolbars at the top/bottom and a navigation button at the outer edge.
+        // Consider only a continuous, dark neutral band through the middle of
+        // the display. This selects an output layout, never discards pixels;
+        // the user can correct an ambiguous classification during review.
+        if allow_asymmetric_band && self.width >= self.height && self.width >= 40 && self.height >= 40 {
+            let y0 = self.height / 5;
+            let y1 = self.height - y0;
+            let edge = self.width / 10;
+            let band = |from_left: bool| {
+                let outer = if from_left { edge } else { self.width - 1 - edge };
+                let color: Vec<_> = (0..colors).map(|c| sample(outer, self.height / 2 - self.height / 4, c)).collect();
+                if *color.iter().max().unwrap() > 48 || color.iter().max().unwrap() - color.iter().min().unwrap() > 12 { return 0; }
+                let neutral_column = |x| (y0..y1).all(|y| (0..colors).all(|c| sample(x, y, c).abs_diff(color[c]) <= 12));
+                let run = (edge..self.width - edge).map(|x| if from_left { x } else { self.width - 1 - x })
+                    .take_while(|x| neutral_column(*x)).count() as u32;
+                if run > 0 { edge + run } else { 0 }
+            };
+            let left = band(true);
+            let right = band(false);
+            if left.max(right) >= self.width / 4 && left.min(right) < self.width / 10
+                && self.width - left.max(right) < self.height * 3 / 4 {
+                return true;
+            }
+        }
         // Ignore at most the outer 2% when probing an edge, so a subpixel clip
         // border cannot hide real margins. The saved image is never trimmed.
         let inset_y = self.height / 50;
@@ -67,6 +100,8 @@ impl DecodedPng {
 pub fn sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
+
+pub fn is_jpeg(bytes: &[u8]) -> bool { bytes.starts_with(&[0xff, 0xd8]) }
 
 pub fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = !0_u32;
@@ -161,6 +196,22 @@ fn decode_pixels(bytes: &[u8], black_per_thousand: u64) -> Result<DecodedPng, &'
     if bytes.is_empty() || bytes.len() > MAX_PNG_BYTES {
         return Err(if bytes.len() > MAX_PNG_BYTES { "png_too_large" } else { "invalid_png" });
     }
+    if is_jpeg(bytes) {
+        if !bytes.ends_with(&[0xff, 0xd9]) { return Err("invalid_jpeg"); }
+        let mut decoder = jpeg_decoder::Decoder::new(Cursor::new(bytes));
+        decoder.set_max_decoding_buffer_size(MAX_PNG_BYTES * 4);
+        decoder.read_info().map_err(|_| "invalid_jpeg")?;
+        let info = decoder.info().ok_or("invalid_jpeg")?;
+        let width = u32::from(info.width); let height = u32::from(info.height);
+        if width == 0 || height == 0 || u64::from(width) * u64::from(height) > MAX_PIXELS { return Err("invalid_dimensions"); }
+        let color = match info.pixel_format {
+            jpeg_decoder::PixelFormat::L8 => ColorType::Grayscale,
+            jpeg_decoder::PixelFormat::RGB24 => ColorType::Rgb,
+            _ => return Err("invalid_jpeg"),
+        };
+        let pixels = decoder.decode().map_err(|_| "invalid_jpeg")?;
+        return build_decoded(width, height, color, BitDepth::Eight, pixels, bytes, black_per_thousand);
+    }
     validate_chunk_stream(bytes)?;
     let mut decoder = Decoder::new(Cursor::new(bytes));
     decoder.set_transformations(Transformations::EXPAND);
@@ -178,28 +229,32 @@ fn decode_pixels(bytes: &[u8], black_per_thousand: u64) -> Result<DecodedPng, &'
     let info = reader.next_frame(&mut pixels).map_err(|_| "invalid_png")?;
     let pixel_size = info.buffer_size();
     pixels.truncate(pixel_size);
-    let channels = match info.color_type {
+    build_decoded(width, height, info.color_type, info.bit_depth, pixels, bytes, black_per_thousand)
+}
+
+fn build_decoded(width: u32, height: u32, color_type: ColorType, bit_depth: BitDepth, pixels: Vec<u8>, bytes: &[u8], black_per_thousand: u64) -> Result<DecodedPng, &'static str> {
+    let channels = match color_type {
         ColorType::Grayscale => 1_usize,
         ColorType::Rgb => 3,
         ColorType::GrayscaleAlpha => 2,
         ColorType::Rgba => 4,
         ColorType::Indexed => return Err("invalid_png"),
     };
-    let sample_bytes = match info.bit_depth {
+    let sample_bytes = match bit_depth {
         BitDepth::Eight => 1_usize,
         BitDepth::Sixteen => 2,
         _ => return Err("invalid_png"),
     };
     let stride = channels.checked_mul(sample_bytes).ok_or("invalid_dimensions")?;
     let expected = (width as usize).checked_mul(height as usize).and_then(|n| n.checked_mul(stride)).ok_or("invalid_dimensions")?;
-    if pixel_size != expected || pixels.len() != expected {
+    if pixels.len() != expected {
         return Err("invalid_png");
     }
 
     let max_sample = if sample_bytes == 1 { 255_u32 } else { 65_535_u32 };
     let dark_limit = if sample_bytes == 1 { 3_u32 } else { 771_u32 };
     let white_limit = max_sample - if sample_bytes == 1 { 4 } else { 1028 };
-    let alpha_index = match info.color_type {
+    let alpha_index = match color_type {
         ColorType::GrayscaleAlpha => Some(1),
         ColorType::Rgba => Some(3),
         _ => None,
@@ -222,7 +277,7 @@ fn decode_pixels(bytes: &[u8], black_per_thousand: u64) -> Result<DecodedPng, &'
             continue;
         }
         opaque_pixels += 1;
-        let (red, green, blue) = match info.color_type {
+        let (red, green, blue) = match color_type {
             ColorType::Grayscale | ColorType::GrayscaleAlpha => {
                 let gray = sample(0);
                 (gray, gray, gray)
@@ -247,8 +302,8 @@ fn decode_pixels(bytes: &[u8], black_per_thousand: u64) -> Result<DecodedPng, &'
     Ok(DecodedPng {
         width,
         height,
-        color_type: info.color_type,
-        bit_depth: info.bit_depth,
+        color_type,
+        bit_depth,
         pixels,
         sha256: sha256(bytes),
         black_candidate,
@@ -258,17 +313,17 @@ fn decode_pixels(bytes: &[u8], black_per_thousand: u64) -> Result<DecodedPng, &'
 
 pub fn crop(bytes: &[u8], x: u32, y: u32, width: u32, height: u32) -> Result<Vec<u8>, &'static str> {
     let decoded = decode_stored(bytes)?;
-    crop_decoded(&decoded, x, y, width, height)
+    crop_decoded(&decoded, x, y, width, height, None)
 }
 
-// Derived pages may be deliberately black after a user-selected crop. This is
-// not a capture validator: raw screenshots still enter through decode().
-pub(crate) fn crop_rendered(bytes: &[u8], x: u32, y: u32, width: u32, height: u32) -> Result<Vec<u8>, &'static str> {
+// Derived pages may be deliberately black after a user-selected crop. Raw
+// screenshots still enter through decode() before becoming originals.
+pub(crate) fn crop_same_format(bytes: &[u8], x: u32, y: u32, width: u32, height: u32, quality: u8) -> Result<Vec<u8>, &'static str> {
     let decoded = decode_rendered(bytes)?;
-    crop_decoded(&decoded, x, y, width, height)
+    crop_decoded(&decoded, x, y, width, height, is_jpeg(bytes).then_some(quality))
 }
 
-fn crop_decoded(decoded: &DecodedPng, x: u32, y: u32, width: u32, height: u32) -> Result<Vec<u8>, &'static str> {
+fn crop_decoded(decoded: &DecodedPng, x: u32, y: u32, width: u32, height: u32, jpeg_quality: Option<u8>) -> Result<Vec<u8>, &'static str> {
     if width == 0 || height == 0 || x.checked_add(width).filter(|right| *right <= decoded.width).is_none()
         || y.checked_add(height).filter(|bottom| *bottom <= decoded.height).is_none()
     {
@@ -296,7 +351,15 @@ fn crop_decoded(decoded: &DecodedPng, x: u32, y: u32, width: u32, height: u32) -
         cropped.extend_from_slice(&decoded.pixels[start..start + crop_stride]);
     }
     let mut output = Vec::new();
-    {
+    if let Some(quality) = jpeg_quality {
+        let color = match decoded.color_type {
+            ColorType::Grayscale => jpeg_encoder::ColorType::Luma,
+            ColorType::Rgb => jpeg_encoder::ColorType::Rgb,
+            _ => return Err("invalid_jpeg"),
+        };
+        jpeg_encoder::Encoder::new(&mut output, quality).encode(&cropped, width.try_into().map_err(|_| "invalid_dimensions")?, height.try_into().map_err(|_| "invalid_dimensions")?, color)
+            .map_err(|_| "crop_encode_failed")?;
+    } else {
         let mut encoder = Encoder::new(&mut output, width, height);
         encoder.set_color(decoded.color_type);
         encoder.set_depth(decoded.bit_depth);
@@ -430,5 +493,21 @@ mod tests {
         let mut bytes = make_png(1, 1, [1, 2, 3]);
         bytes.push(0);
         assert_eq!(decode(&bytes).unwrap_err(), "invalid_png");
+    }
+
+    #[test]
+    fn jpeg_is_decoded_bounded_cropped_and_corruption_is_rejected() {
+        let mut jpeg = Vec::new();
+        jpeg_encoder::Encoder::new(&mut jpeg, 65).encode(&[80, 140, 180, 190, 70, 30, 100, 80, 200, 160, 140, 90], 2, 2, jpeg_encoder::ColorType::Rgb).unwrap();
+        let decoded = decode(&jpeg).unwrap();
+        assert_eq!((decoded.width, decoded.height, decoded.sha256), (2, 2, sha256(&jpeg)));
+        let cropped = crop_same_format(&jpeg, 1, 0, 1, 2, 65).unwrap();
+        assert!(is_jpeg(&cropped));
+        let decoded_crop = decode_rendered(&cropped).unwrap();
+        assert_eq!((decoded_crop.width, decoded_crop.height), (1, 2));
+        let mut truncated = jpeg.clone(); truncated.truncate(truncated.len() - 2);
+        assert_eq!(decode(&truncated).unwrap_err(), "invalid_jpeg");
+        let mut trailing = jpeg; trailing.push(0);
+        assert_eq!(decode(&trailing).unwrap_err(), "invalid_jpeg");
     }
 }

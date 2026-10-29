@@ -190,6 +190,13 @@ try {
   assert.equal(initialProcess.code, 0, `packaged Portable first launch failed (exit=${initialProcess.code})\nstdout:\n${initialProcess.stdout}\nstderr:\n${initialProcess.stderr}`);
   assert.equal(initialProcess.timedOut, false);
   const first = smokeResult(initialProcess.stdout, 'first-launch');
+  assert.deepEqual(first.publicImageFlow.map(({ screenshots, ...result }) => result), ['png', 'jpeg'].map(imageFormat => ({
+    imageFormat, coverSingle: true, images: 2, crop: [560, 800], originalKept: true, zipAndCbzReopened: true, selection: 'public',
+  })));
+  for (const result of first.publicImageFlow) for (const screenshot of result.screenshots) {
+    assert.match(screenshot, /^fixture-(cover|preview|page|review)-(png|jpeg)\.(png|jpg)$/);
+    assert.ok((await stat(path.join(runDirectory, screenshot))).size > 0, 'anonymous packaged screen evidence retained');
+  }
   assert.equal(first.phase, 'created');
   assert.equal(first.headlessOnly, true);
   const initialHidden = first.publicPreviews.find(preview => preview.mode === 'kindle-initial-hidden');

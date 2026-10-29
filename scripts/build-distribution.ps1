@@ -85,6 +85,11 @@ try {
         $entries.Add([pscustomobject]@{ Source = $publicUiHelper.FullName; Relative = 'poc/browser/public-ui-controls.mjs'; Length = [long]$publicUiHelper.Length })
         Add-PackageDirectory 'node_modules/playwright' 'node_modules/playwright'
         Add-PackageDirectory 'node_modules/playwright-core' 'node_modules/playwright-core'
+        foreach ($relative in @('poc/fixtures/reader-image-review.html', 'poc/fixtures/reader-image-review.js')) {
+            $file = Get-Item -LiteralPath (Join-Path $root $relative)
+            if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing to bundle a reparse point: $relative" }
+            $entries.Add([pscustomobject]@{ Source = $file.FullName; Relative = $relative; Length = [long]$file.Length })
+        }
         Add-PackageDirectory "artifacts/browsers/$($browserNames[0])" "artifacts/browsers/$($browserNames[0])"
         Add-PackageDirectory "artifacts/browsers/$($browserNames[1])" "artifacts/browsers/$($browserNames[1])"
         Add-PackageDirectory "artifacts/browsers/$($browserNames[2])" "artifacts/browsers/$($browserNames[2])"
