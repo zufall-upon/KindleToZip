@@ -1,5 +1,11 @@
 # Initial source validation
 
+## v0.1.5 release admission failure — 2026-10-29
+
+Exact-source CI [40841975658](https://github.com/zufall-upon/KindleToZip/actions/runs/40841975658) passed every mandatory gate at `ccdefcc050f9da19dc87c8e278e971e2cf1d50ad` (15m40s job elapsed). The annotated `v0.1.5` tag retains that source and is not moved. Tagged release [40843974854](https://github.com/zufall-upon/KindleToZip/actions/runs/40843974854) passed Rust/IPC, then reported **154 passed / 1 failed / 155 tests**, **811.461 seconds** in public source UI. Build, packaged checks and Draft creation did not run; no v0.1.5 executable was produced or published.
+
+The JPEG regression requested crop after observing application `Review` and no acquisition loop, but before the stop command had completed the persisted store transition to `review`. The resulting `wrong_state` correctly enforced the crop precondition. The test now also waits for `manifest.state === 'review'`; application behavior, state guards and all image/quality/original/archive assertions are unchanged. The existing focused JPEG test passed (exit 0, 1/1, 23.187 s TAP duration; test body 21.661 s). No broad local suite, rebuild, cleanup or real-book operation was repeated. The next candidate is v0.1.6; it still requires its own exact-source CI and all tagged release gates before any publication.
+
 ## Review correction: region choice versus polling — 2026-10-29 (unreleased)
 
 Independent review reproduced a Medium public-UI defect: a previous `/api/state` response arriving during the change handler's initial paint could replace the selected US region with Japan before the command read the selection. The existing public region test now delivers that in-flight response after the change event. It failed before correction (`us` expected, `jp` actual; exit 1, 3.67 s TAP), without contacting Amazon. The handler now captures the event's selected ID synchronously, before yielding; the packaged region smoke exercises the same collision. Other adapter, capture, crop and Rust behavior is unchanged. This correction's final comparison is author self-recheck, not independent approval of the correction.

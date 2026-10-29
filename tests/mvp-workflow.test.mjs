@@ -1999,7 +1999,7 @@ test('JPEG画像軽量化: 公開設定で実取得し画質・原本・クロ�
   await ui.waitForFunction(() => !document.querySelector('#start').disabled);
   await ui.locator('#start').click(); await waitFor(r.app, s => s.job.manifest.images.length === 1);
   await ui.locator('#stop').click();
-  let snapshot = await waitFor(r.app, s => s.state === 'Review' && !s.busy);
+  let snapshot = await waitFor(r.app, s => s.state === 'Review' && s.job.manifest.state === 'review' && !s.busy);
   const item = snapshot.job.manifest.images[0], original = await r.app.image(item.capture_id, true);
   assert.equal(item.image_format, 'jpeg'); assert.equal(item.jpeg_quality, 35);
   assert.match(item.path, /\.jpg$/); assert.equal(original.subarray(0, 2).toString('hex'), 'ffd8');
