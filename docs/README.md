@@ -4,10 +4,10 @@
 
 - Product overview: [English](../README.md) · [日本語](../README.ja.md) · [简体中文](../README.zh-CN.md)
 - Run from source: [English](getting-started.md) · [日本語](getting-started.ja.md) · [简体中文](getting-started.zh-CN.md)
-- [Portable quick start / Portable版の使い方 / Portable 使用指南](portable.md) — instructions included in the release ZIP; availability is shown on Releases
+- [Portable quick start / Portable版の使い方 / Portable 使用指南](portable.md) — current instructions; the release ZIP retains the guide frozen at its source tag
 - [Actual app screenshots / 実画面 / 实际界面](screenshots.md) — preview, image review, ZIP export, and the original Japanese UI
 
-[Windows x64 Portable v0.1.2](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2) is publicly available as an **experimental release**, listed as Latest for visibility in the repository's Releases sidebar, not as stable-ready certification. The [Portable guide](portable.md) needs no development setup; the three source guides remain for development/source execution. Mandatory fixture checks passed, not clean-Windows or whole-real-book acceptance.
+[Windows x64 Portable v0.1.2](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2) is publicly available and listed as Latest in the repository's Releases sidebar. Mandatory fixture checks passed; the user separately confirmed clean-Windows operation and complete real-book capture on **2026-10-29**, then requested removal of the experimental label. The [Portable guide](portable.md) needs no development setup; the three source guides remain for development/source execution. User-reported checks are distinguished from automated evidence in the [validation record](validation.md).
 
 ## Details and implementation records
 

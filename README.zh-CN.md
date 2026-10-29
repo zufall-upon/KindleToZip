@@ -10,12 +10,12 @@
 
 **完全免费、开源 · Windows x64 · 无需注册 KindleToZip 账户 · 无付费 DLC**
 
-> **Windows x64 Portable v0.1.2 实验版现已提供。**
-> 必需的源代码检查与打包版本自制样本检查已通过；干净 Windows 和真实书籍完整获取仍未验证。
+> **Windows x64 Portable v0.1.2 现已提供。**
+> 必需的源代码检查与打包版本自制样本检查已通过；用户也已确认干净 Windows 环境下的运行和真实书籍的完整获取。
 
 **[下载 Portable ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.2/KindleToZip-Portable-v0.1.2-win-x64.zip)** · [Portable 使用指南](docs/portable.md) · [从源代码体验](docs/getting-started.zh-CN.md)
 
-[![开发状态：实验阶段](https://img.shields.io/badge/status-experimental-f59e0b?style=flat-square)](docs/validation.md) [![main 分支最新源代码检查](https://img.shields.io/github/actions/workflow/status/zufall-upon/KindleToZip/ci.yml?branch=main&style=flat-square&label=source%20checks)](https://github.com/zufall-upon/KindleToZip/actions/workflows/ci.yml) [![GitHub 星标数](https://img.shields.io/github/stars/zufall-upon/KindleToZip?style=flat-square&label=stars)](https://github.com/zufall-upon/KindleToZip/stargazers) [![仓库最近提交](https://img.shields.io/github/last-commit/zufall-upon/KindleToZip?style=flat-square)](https://github.com/zufall-upon/KindleToZip/commits/main/)
+[![发布状态：已发布](https://img.shields.io/badge/status-released-16a34a?style=flat-square)](docs/validation.md) [![main 分支最新源代码检查](https://img.shields.io/github/actions/workflow/status/zufall-upon/KindleToZip/ci.yml?branch=main&style=flat-square&label=source%20checks)](https://github.com/zufall-upon/KindleToZip/actions/workflows/ci.yml) [![GitHub 星标数](https://img.shields.io/github/stars/zufall-upon/KindleToZip?style=flat-square&label=stars)](https://github.com/zufall-upon/KindleToZip/stargazers) [![仓库最近提交](https://img.shields.io/github/last-commit/zufall-upon/KindleToZip?style=flat-square)](https://github.com/zufall-upon/KindleToZip/commits/main/)
 
 ## 从阅读页面到压缩包
 
@@ -40,7 +40,7 @@
 
 ## 让截图更好用
 
-实验性 Portable 版本与源代码包含以下功能，验证范围与限制见下文：
+Portable 版本与源代码包含以下功能，验证范围与限制见下文：
 
 - **获取前先检查。** 专用浏览器配置、区域选择、预览与明确确认，之后再单独开始。
 - **拆分与排序。** 可选左右跨页拆分、阅读方向选择和图像重排。
@@ -56,10 +56,10 @@
 
 ## 使用前须知
 
-- **质量：** v0.1.2 的**公开源代码界面检查142/142通过**，必需的部署检查及打包版本公开选择、导出回归检查也已通过。最初的**125项通过、12项失败**保留为历史记录，不是当前结果。样本成功不代表整本真实书籍或干净 Windows 已获验证。详见[验证历史与发布记录](docs/validation.md)（英语）。
+- **质量：** v0.1.2 的**公开源代码界面检查142/142通过**，必需的部署检查及打包版本公开选择、导出回归检查也已通过。最初的**125项通过、12项失败**保留为历史记录，不是当前结果。干净 Windows 下的运行和真实书籍完整获取已由用户另行确认。详见[验证历史与发布记录](docs/validation.md)（英语）。
 - **登录与本地数据：** 只在官方页面登录。**默认保存登录状态。** 关闭保留设置后会使用独立的临时配置，正常退出时删除，但异常退出可能留下文件。不要分享配置、Cookie、书籍信息或截图。详见[隐私与存储说明](docs/security-and-trust.md)（英语）。
 - **网络与信任：** 没有应用自建的登录服务器、遥测或自动更新检查。官方阅读与认证服务、浏览器和安装过程仍会联网。开源**不等于安全保证**，详见[网络目标与信任边界](docs/security-and-trust.md)（英语）。
-- **兼容性：** 当前入口面向日本地区的 Kindle 网页阅读器。其他地区、所有布局、干净的 Windows 环境、整本书获取、ZIP64 和所有 CBZ 阅读器均未验证。标准 / 2倍渲染有**每张 PNG 1600万像素 / 32 MiB** 的上限，无法恢复原始显示中不存在的细节。
+- **兼容性：** 当前入口面向日本地区的 Kindle 网页阅读器。其他地区、所有布局、ZIP64 和所有 CBZ 阅读器均未验证。用户确认的干净 Windows 与真实书籍运行情况不保证所有环境和书籍。标准 / 2倍渲染有**每张 PNG 1600万像素 / 32 MiB** 的上限，无法恢复原始显示中不存在的细节。
 - **条款与权利：** 不移除 DRM **不代表已获得法律或条款许可**。Amazon 的使用条件将机器人等数据收集工具排除在使用许可之外；自动获取和工具分发仍存在未解决的合同与版权问题。仅处理获准截取的内容，未经许可不要再分发页面。请阅读[法律注意事项](docs/legal-notes-ja.md)（日语）。
 
 KindleToZip 是**非官方、独立项目**，与 Amazon 无关联，未获其认可或赞助。Amazon 和 Kindle 是 Amazon.com, Inc. 或其关联公司的商标。本项目不声称已获得 Amazon 或法律专业人士的批准。

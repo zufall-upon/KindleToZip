@@ -8,11 +8,11 @@
 - A separate job verifies checksums, creates GitHub artifact attestations, and prepares a **draft** release. Only that job has release-writing and attestation permissions. Third-party actions are pinned to commit SHAs.
 - The archive contains the executable, project license and README, build metadata, and collected third-party notices. Collection is not a legal determination that every redistribution obligation has been met.
 
-There is no claim of bit-for-bit reproducible builds, independent security review, clean-Windows acceptance, real-Kindle acceptance, or legal clearance. The successful hosted release run below establishes the recorded fixture and package checks, not those broader claims.
+There is no claim of bit-for-bit reproducible builds, independent security review, or legal clearance. The successful hosted release run below establishes the recorded fixture and package checks. The user's later confirmation of clean-Windows operation and complete real-book capture is recorded separately, not attributed to the hosted tests.
 
-## Current public experimental release
+## Current public release
 
-[v0.1.2 for Windows x64](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2) was published on **2026-10-28** from `e3e3977588d75fffb72dae9f402288ca69f8bfe0`. Its exact source CI, tagged package gates, checksums, and GitHub build provenance passed. The public ZIP was downloaded without authentication and matched the verified draft. At the user's explicit request, it is a normal GitHub Release marked **Latest** so it appears in the TOP-right **Releases** pane, titled **v0.1.2 実験版 / Experimental**. This listing does not certify stability. See [the final public validation record](validation.md#v012-public-experimental-release--2026-10-28) and the [Portable quick start](portable.md). The earlier `v0.1.0` / `v0.1.1` tags have no executable release assets and are not replaced.
+[v0.1.2 for Windows x64](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2) was published on **2026-10-28** from `e3e3977588d75fffb72dae9f402288ca69f8bfe0`. Its exact source CI, tagged package gates, checksums, and GitHub build provenance passed. The public ZIP was downloaded without authentication and matched the verified draft. At the user's explicit request, it is a normal GitHub Release marked **Latest** in the TOP-right **Releases** pane, titled **v0.1.2**. On **2026-10-29**, the user confirmed clean-Windows operation and complete real-book capture and requested removal of the experimental label. This metadata/documentation change does not replace the tag or assets. See [the final public validation record](validation.md#v012-public-release--2026-10-28) and the [Portable quick start](portable.md). The earlier `v0.1.0` / `v0.1.1` tags have no executable release assets and are not replaced.
 
 ## Maintainer routine: freeze, draft, verify, publish
 
@@ -78,10 +78,10 @@ If a hosted failure is isolated to native save-dialog automation, use the manual
 
 ### 5. Publish only the authorized scope
 
-The workflow creates a **draft**, never a public release automatically. Publish only when the user explicitly requests general availability. The first public `v0.1.2` remains experimental, not a stable/clean-Windows or complete-book certification. GitHub cannot mark prereleases as Latest. The user explicitly chose a normal Release + Latest for the actual repository Releases sidebar, with the experimental title and limitations retained; do not silently revert that choice or substitute a README/About link for the requested widget.
+The workflow creates a **draft**, never a public release automatically. Publish only when the user explicitly requests general availability. GitHub cannot mark prereleases as Latest. For `v0.1.2`, the user explicitly chose a normal Release + Latest for the actual repository Releases sidebar, then requested removal of the experimental label after reporting successful clean-Windows and complete real-book checks. Keep the title **v0.1.2**, the normal Release + Latest classification, and the remaining compatibility/privacy/legal notices; do not silently restore the old label or substitute a README/About link for the requested widget.
 
 ```powershell
-gh release edit $tag --draft=false --prerelease=false --latest=true --title "$tag 実験版 / Experimental" --notes-file <reviewed-release-notes.md>
+gh release edit $tag --draft=false --prerelease=false --latest=true --title "$tag" --notes-file <reviewed-release-notes.md>
 ```
 
 Review [security disclosures](security-and-trust.md), [legal questions](legal-notes-ja.md), and the bundled third-party notices/source obligations when preparing the notes. Do not claim an independent audit or legal clearance. Existing releases/assets are never silently replaced.

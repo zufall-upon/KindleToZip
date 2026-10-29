@@ -10,8 +10,8 @@ Capture displayed pages in the Kindle web reader on Windows, review and split yo
 
 **Free & open source · Windows x64 · No KindleToZip account · No paid DLC**
 
-> **Experimental Windows x64 Portable v0.1.2 is available.**
-> Mandatory source and packaged-fixture checks passed. Clean Windows and complete real-book capture remain unverified.
+> **Windows x64 Portable v0.1.2 is available.**
+> Mandatory source and packaged-fixture checks passed. The user also confirmed clean-Windows operation and complete real-book capture.
 
 **[Download Portable ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.2/KindleToZip-Portable-v0.1.2-win-x64.zip)** · [Portable quick start](docs/portable.md) · [Run from source](docs/getting-started.md)
 
@@ -19,7 +19,7 @@ Capture displayed pages in the Kindle web reader on Windows, review and split yo
 
 *8-second sample demo · Japanese UI · Edited, with local paths masked. [Recording notes & still images](docs/screenshots.md#animation).*
 
-[![Status: experimental](https://img.shields.io/badge/status-experimental-f59e0b?style=flat-square)](docs/validation.md) [![Latest main-branch source checks](https://img.shields.io/github/actions/workflow/status/zufall-upon/KindleToZip/ci.yml?branch=main&style=flat-square&label=source%20checks)](https://github.com/zufall-upon/KindleToZip/actions/workflows/ci.yml) [![GitHub stars](https://img.shields.io/github/stars/zufall-upon/KindleToZip?style=flat-square&label=stars)](https://github.com/zufall-upon/KindleToZip/stargazers) [![Last repository commit](https://img.shields.io/github/last-commit/zufall-upon/KindleToZip?style=flat-square)](https://github.com/zufall-upon/KindleToZip/commits/main/)
+[![Status: released](https://img.shields.io/badge/status-released-16a34a?style=flat-square)](docs/validation.md) [![Latest main-branch source checks](https://img.shields.io/github/actions/workflow/status/zufall-upon/KindleToZip/ci.yml?branch=main&style=flat-square&label=source%20checks)](https://github.com/zufall-upon/KindleToZip/actions/workflows/ci.yml) [![GitHub stars](https://img.shields.io/github/stars/zufall-upon/KindleToZip?style=flat-square&label=stars)](https://github.com/zufall-upon/KindleToZip/stargazers) [![Last repository commit](https://img.shields.io/github/last-commit/zufall-upon/KindleToZip?style=flat-square)](https://github.com/zufall-upon/KindleToZip/commits/main/)
 
 ## From reader to archive
 
@@ -35,7 +35,7 @@ Capture displayed pages in the Kindle web reader on Windows, review and split yo
 
 ## Review and organize your captures
 
-Included in the experimental Portable build and source, with the limits below:
+Included in the Portable build and source, with the limits below:
 
 - **Check before capturing.** Dedicated browser profile, reading-area selection, preview, and explicit approval before a separate start action.
 - **Split and organize.** Optional left/right spread splitting, reading direction, and image reordering.
@@ -51,10 +51,10 @@ Included in the experimental Portable build and source, with the limits below:
 
 ## Before you use it
 
-- **Quality:** v0.1.2 passed **142/142 public source UI tests**, mandatory deployment checks, and packaged public selection/export regressions. The initial **125-pass / 12-fail** run remains historical, not the current result. Fixture success is not whole-book or clean-Windows acceptance; see [validation history and release evidence](docs/validation.md).
+- **Quality:** v0.1.2 passed **142/142 public source UI tests**, mandatory deployment checks, and packaged public selection/export regressions. The initial **125-pass / 12-fail** run remains historical, not the current result. Clean-Windows operation and complete real-book capture were separately confirmed by the user; see [validation history and release evidence](docs/validation.md).
 - **Login & local data:** sign in only on the official page. **Login state is saved by default.** Turn retention off for a separate temporary profile; normal shutdown removes temporary data, but crashes may leave files. Never share profiles, cookies, book data, or captured pages. See [privacy and storage details](docs/security-and-trust.md).
 - **Network & trust:** no app-operated login server, application telemetry, or automatic update checks. Reader, authentication, browser, and setup traffic still occurs. Open source is **not a security guarantee**; see [network destinations and trust boundaries](docs/security-and-trust.md).
-- **Compatibility:** the current entry point targets Japan's Kindle web reader. Other regions, every layout, clean Windows PCs, whole-book capture, ZIP64, and every CBZ viewer are unverified. Standard / 2× rendering has a **16-megapixel / 32 MiB limit per PNG**; it cannot restore missing source detail.
+- **Compatibility:** the current entry point targets Japan's Kindle web reader. Other regions, every layout, ZIP64, and every CBZ viewer are unverified. User-confirmed clean-Windows and real-book operation does not guarantee all environments or books. Standard / 2× rendering has a **16-megapixel / 32 MiB limit per PNG**; it cannot restore missing source detail.
 - **Terms & rights:** no DRM bypass does **not** establish legal permission. Amazon's conditions exclude robot-like data gathering tools from the granted permission; automated capture and tool distribution still raise unresolved contractual and copyright questions. Use only content you are authorized to capture, and do not redistribute pages without permission. Read the [legal notes](docs/legal-notes-ja.md) (Japanese).
 
 KindleToZip is **unofficial and independent**, not affiliated with, endorsed by, or sponsored by Amazon. Amazon and Kindle are trademarks of Amazon.com, Inc. or its affiliates. No Amazon approval or professional legal clearance is claimed.

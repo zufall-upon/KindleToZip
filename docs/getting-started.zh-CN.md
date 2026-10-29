@@ -6,7 +6,7 @@
 
 ## 目前提供什么？
 
-截至 **2026-10-28**，已[公开 Windows x64 Portable v0.1.2 实验版](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2)。必需的源代码与打包版本自制样本检查已通过，但干净 Windows 及真实书籍完整获取仍未验证。GitHub 的 Latest 标签用于首页展示，不代表稳定版认证。[验证历史](validation.md)另外保留早期失败记录。
+[Windows x64 Portable v0.1.2](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2) 自 **2026-10-28** 起公开，并列为 Latest。必需的源代码与打包版本自制样本检查已通过。**2026-10-29**，用户另行确认干净 Windows 下的运行和真实书籍完整获取，并要求移除实验版标记。[验证历史](validation.md)区分用户报告与自动检查，并保留早期失败记录。
 
 无需开发环境的用法见 [Portable 指南](portable.md)：下载发布 ZIP、校验哈希、完整解压，再运行 `KindleToZip-Portable.exe`。以下仅为**从源代码运行的步骤**。安装源代码和使用自制样本不需要 Amazon 登录信息。
 

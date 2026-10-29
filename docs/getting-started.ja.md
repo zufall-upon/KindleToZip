@@ -6,7 +6,7 @@
 
 ## 現在の提供状況
 
-**2026-10-28に、[Windows x64用Portable v0.1.2を実験版として一般公開](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2)しました。** 必須のソース検査・配布版の自作試料検査は成功していますが、クリーンWindowsや実書籍全冊の取得は未検証です。[検証履歴](validation.md)では過去の失敗を別に残しています。
+**[Windows x64用Portable v0.1.2](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2)は2026-10-28から一般公開中で、Latestに掲載しています。** 必須のソース検査・配布版の自作試料検査は成功済みです。**2026-10-29**に、クリーンWindowsでの動作と実書籍全冊の取得も利用者側で確認済みとの報告を受け、利用者の指定で実験版表記を外しました。[検証履歴](validation.md)では利用者の報告と自動検査を区別し、過去の失敗も別に残しています。
 
 開発環境なしで使う場合は[Portableガイド](portable.md)に従い、リリースZIPをハッシュ照合後に全体展開して `KindleToZip-Portable.exe` を起動してください。以下は**ソース実行専用の手順**です。ソースの導入や自作試料の利用にAmazonの認証情報は不要です。
 

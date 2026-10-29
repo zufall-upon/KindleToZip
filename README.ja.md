@@ -10,12 +10,12 @@ WindowsでKindle Webの表示画面をPNG画像として取得。点検・見開
 
 **完全無料・オープンソース · Windows x64 · 独自アカウント登録不要 · 有料DLCなし**
 
-> **Windows x64用Portable v0.1.2を実験版として公開しています。**
-> 必須のソース検査・配布版の自作試料検査は成功済みです。クリーンなWindowsや実書籍全冊の取得は未検証です。
+> **Windows x64用Portable v0.1.2を公開しています。**
+> 必須のソース検査・配布版の自作試料検査は成功済みです。クリーンなWindowsでの動作と実書籍全冊の取得も、利用者側で確認済みです。
 
 **[Portable ZIPをダウンロード](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.2/KindleToZip-Portable-v0.1.2-win-x64.zip)** · [Portable版の使い方](docs/portable.md) · [ソースから試す](docs/getting-started.ja.md)
 
-[![開発状況：実験段階](https://img.shields.io/badge/status-experimental-f59e0b?style=flat-square)](docs/validation.md) [![mainブランチの最新ソース検査](https://img.shields.io/github/actions/workflow/status/zufall-upon/KindleToZip/ci.yml?branch=main&style=flat-square&label=source%20checks)](https://github.com/zufall-upon/KindleToZip/actions/workflows/ci.yml) [![GitHubスター数](https://img.shields.io/github/stars/zufall-upon/KindleToZip?style=flat-square&label=stars)](https://github.com/zufall-upon/KindleToZip/stargazers) [![リポジトリの最終コミット](https://img.shields.io/github/last-commit/zufall-upon/KindleToZip?style=flat-square)](https://github.com/zufall-upon/KindleToZip/commits/main/)
+[![公開状況：リリース済み](https://img.shields.io/badge/status-released-16a34a?style=flat-square)](docs/validation.md) [![mainブランチの最新ソース検査](https://img.shields.io/github/actions/workflow/status/zufall-upon/KindleToZip/ci.yml?branch=main&style=flat-square&label=source%20checks)](https://github.com/zufall-upon/KindleToZip/actions/workflows/ci.yml) [![GitHubスター数](https://img.shields.io/github/stars/zufall-upon/KindleToZip?style=flat-square&label=stars)](https://github.com/zufall-upon/KindleToZip/stargazers) [![リポジトリの最終コミット](https://img.shields.io/github/last-commit/zufall-upon/KindleToZip?style=flat-square)](https://github.com/zufall-upon/KindleToZip/commits/main/)
 
 ## 読書画面からアーカイブまで
 
@@ -40,7 +40,7 @@ WindowsでKindle Webの表示画面をPNG画像として取得。点検・見開
 
 ## 撮った画像を、使いやすく
 
-以下は実験版Portableとソースに含まれる機能です。後述の検証範囲・制約があります。
+以下はPortable版とソースに含まれる機能です。後述の検証範囲・制約があります。
 
 - **取得前に確認。** 専用ブラウザのプロファイル、領域指定、プレビュー、明示承認と、それとは別の開始操作。
 - **分割・並べ替え。** 左右ページへの見開き分割、読み方向の選択、取得画像の順序調整。
@@ -56,10 +56,10 @@ WindowsでKindle Webの表示画面をPNG画像として取得。点検・見開
 
 ## 利用前に知っておきたいこと
 
-- **品質：** v0.1.2は**公開ソースUI検査142/142成功**、必須配備検査、配布版の公開選択・出力回帰検査を通過しています。初回の**125成功・12失敗**は履歴として残し、現在の結果とは区別しています。試料の成功は実書籍全冊・クリーンWindowsの検証ではありません。[検証履歴とリリース記録](docs/validation.md)（英語）を参照してください。
+- **品質：** v0.1.2は**公開ソースUI検査142/142成功**、必須配備検査、配布版の公開選択・出力回帰検査を通過しています。初回の**125成功・12失敗**は履歴として残し、現在の結果とは区別しています。クリーンWindowsでの動作と実書籍全冊の取得は、別途利用者側で確認済みです。[検証履歴とリリース記録](docs/validation.md)（英語）を参照してください。
 - **ログインと保存データ：** ログインは公式画面だけで行います。**ログイン状態は既定で保存します。** 保存をOFFにすると別の一時プロファイルを使い、通常終了で削除しますが、異常終了では残る場合があります。プロファイル・Cookie・書籍情報・取得画像は共有しないでください。[プライバシーと保存先](docs/security-and-trust.md)（英語）に詳細があります。
 - **通信と信頼：** アプリ独自の認証サーバー・テレメトリ・自動更新確認はありません。公式読書・認証サービス、ブラウザ、導入時の通信は発生します。ソース公開は**安全性の保証ではありません**。[通信先と信頼境界](docs/security-and-trust.md)（英語）を参照してください。
-- **動作範囲：** 現在の入口は日本向けKindle Webです。他地域、全レイアウト、クリーンなWindows、全冊取得、ZIP64、すべてのCBZビューアは未検証です。標準・2倍の描画密度には **PNGごとに16メガピクセル・32 MiB** の上限があり、元の表示にない細部は復元できません。
+- **動作範囲：** 現在の入口は日本向けKindle Webです。他地域、全レイアウト、ZIP64、すべてのCBZビューアは未検証です。利用者側で確認したクリーンWindows・実書籍の動作は、全環境・全書籍を保証するものではありません。標準・2倍の描画密度には **PNGごとに16メガピクセル・32 MiB** の上限があり、元の表示にない細部は復元できません。
 - **規約と権利：** DRMを解除しなくても、**適法・規約適合とは限りません**。Amazonの利用規約はロボットなどのデータ収集ツールを利用許可に含めておらず、自動取得やツール配布には契約・著作権上の未解決の問題があります。権限のあるコンテンツだけを扱い、許可なく取得ページを再配布しないでください。[法的な注意事項](docs/legal-notes-ja.md)をお読みください。
 
 KindleToZipは **Amazon非公式・非提携** で、Amazonの承認・支援を受けた製品ではありません。AmazonおよびKindleはAmazon.com, Inc.または関連会社の商標です。Amazonや法律の専門家による確認済みとはしていません。
