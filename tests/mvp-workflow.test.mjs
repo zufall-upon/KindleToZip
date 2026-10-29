@@ -1525,9 +1525,19 @@ test('MVP直下iframe送り: 通常送りを維持し座標取得中の要素・
         // Model a layout update immediately after the browser returns the
         // main-frame coordinates, rather than relying on timer timing.
         const bound = reader.requireBound.bind(reader);
+        const advance = reader.advance.bind(reader);
+        let advancing = false;
+        reader.advance = async (...args) => {
+          advancing = true;
+          try { return await advance(...args); }
+          finally { advancing = false; }
+        };
         let moved = false;
         reader.requireBound = async () => {
           const snapshot = await bound();
+          // Capture also queries navigation geometry to suppress eligible
+          // overlays. Inject this race only into the actual send operation.
+          if (!advancing) return snapshot;
           const get = snapshot.next.elementHandle.bind(snapshot.next);
           snapshot.next.elementHandle = async () => {
             const handle = await get();

@@ -1,5 +1,11 @@
 # Initial source validation
 
+## v0.1.3 release admission — 2026-10-29
+
+The first exact-source CI [40813169826](https://github.com/zufall-upon/KindleToZip/actions/runs/40813169826) at `db77598f3f8f3576ddf13fc7e54d9ade0682c176` passed Rust/IPC but failed public UI admission: **143 passed / 4 failed / 147 reported tests**, including the failed parent, in **806.25 seconds**. Deployment was skipped; no version tag or draft was created from this failed run.
+
+Two test assumptions predated navigation suppression. The iframe race hook now injects movement only during the actual advance operation, not the earlier capture geometry query. The same-position/different-image resume check now changes the anonymous canvas pixels, rather than relying on the next button's disabled appearance, which is intentionally excluded from captures. The existing geometry, no-wrong-click, retained-original, no-duplicate and separate resume approval assertions remain intact. The two affected groups passed locally (5 reported tests, **45.34 seconds** command elapsed). Application code and the accepted local EXE are unchanged; local broad suites, rebuilding and real-book operations were not repeated. The corrected exact source still requires mandatory CI before tagging.
+
 ## Image-layout and JPEG work, 2026-10-29 (current source)
 
 The two supplied screenshots were inspected privately; they are not included in this repository or the anonymous fixture. The first shows a colourful portrait cover on the left, a wide black area on the right, horizontal chrome above and below, and a right-edge navigation control. The second shows a white page on a black surround with a left-edge button overlapping page content. The independently drawn `reader-image-review` fixture reproduces those spatial relationships using simple coloured shapes and fictional panels; its geometry was visually compared with both screenshots. It does not reproduce their artwork, words, exact aspect ratios, real reader DOM, all layouts, or the actual books. It is not evidence of current Kindle or real-book operation. No existing login or real book was operated for this work.

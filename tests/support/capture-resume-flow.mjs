@@ -101,10 +101,16 @@ export async function checkCaptureResume({ startApplication, openControlWindow, 
     assert.equal(await readerPage.evaluate(() => window.anonymousTurns), count + 3, '欠落も二重送りもない');
     assert.ok(continued.job.manifest.images.every(image => image.book?.identity === continued.job.manifest.images[0].book.identity));
 
-    // Extending the fixture changes the next-control pixels inside the
-    // captured region. The position alone must not authorize skipping it.
+    // Navigation is suppressed during capture, so changing only its disabled
+    // appearance no longer changes image bytes. Mutate the anonymous page
+    // surface itself while retaining its position to exercise the same guard.
     await next(); await ui.locator('#resumeCapture').click();
     await readerPage.locator('#extendSample').click();
+    await readerPage.locator('#chromeSurface canvas').evaluate(canvas => {
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#ff00ff';
+      context.fillRect(10, 10, 40, 40);
+    });
     await next(); await ui.locator('#previewImage').waitFor({ state: 'visible' });
     await wait(s => s.resumePlan?.mode === 'blocked' && !s.busy);
     await assert.rejects(running.app.command('approve', { confirmed: true, resumeConfirmed: true }), error => error.code === 'resume_position_required');
