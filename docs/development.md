@@ -34,6 +34,27 @@ npm run test:distribution
 
 Browser fixtures contain self-authored shapes and text, not real book content. See [fixture rights](../poc/fixtures/RIGHTS.md). Automated fixture success does not establish real Kindle compatibility or clean-Windows acceptance.
 
+### Experimental Ubuntu source development
+
+This is a source-development path for self-authored fixtures, not a Linux distribution. Linux Kindle launching and capture are explicitly unavailable; normal Wayland reading, real Kindle, Windows GUI and arm64 execution have not been established by Linux fixture tests. The control window is headed; the Linux fixture reader is headless. The save-dialog button is unavailable on Linux: type the destination. Existing files are never overwritten. If a storage synchronization or publication result is uncertain, stop, restart and inspect the indicated destination and data; restarting does not itself prove consistency.
+
+Reuse an already available Node 22, Rust 1.99.1 controller, pinned npm dependencies and Playwright Chromium revision 1248. Check space and mounts first. Do not download or replace an installed but incompatible tool without an explicit choice; provision missing prerequisites separately in an isolated location. With existing local `artifacts/browsers` and `artifacts/rust-target` (which may be previously established symlinks), resume from the project root:
+
+```bash
+export PLAYWRIGHT_BROWSERS_PATH="$PWD/artifacts/browsers"
+export CARGO_TARGET_DIR="$PWD/artifacts/rust-target"
+# If this exact controller is already built, do not rebuild merely to resume.
+test -x "$CARGO_TARGET_DIR/debug/ktz-g02-controller"
+npm run test:store
+# The public-start lifecycle test needs an X display; Xvfb is not Wayland acceptance.
+npm test
+npm start
+```
+
+`KTZ_CONTROLLER_PATH` explicitly selects another controller; there is no PATH search or automatic build. The default is `artifacts/rust-target/debug/ktz-g02-controller` on Linux and the existing `.exe` path on Windows. Node sets a process-only `umask 077`; dedicated directories/files are private and unsafe existing settings/session entries are rejected, not repaired. If an inherited `TMPDIR` is too long for Chromium's Unix socket, select a short, private local temporary location rather than weakening permissions. Application-owned temporary browser data is removed on normal close; no personal browser profile is used.
+
+The Ubuntu CI job installs dependencies on an ephemeral runner, including Rust, npm dependencies, Chromium headless shell and headed Chromium, OS browser libraries and Xvfb. The local retained copies occupy approximately 660 MiB (Rust), 681 MiB (browsers), 20 MiB (npm modules), and 401 MiB (Rust target); runner download and OS package sizes vary and can require several GiB of temporary space. This does not authorize downloads or global system changes on a developer's machine. CI remains unverified until a run actually completes; its virtual display does not prove normal Ubuntu/Wayland or Windows desktop behavior.
+
 The following tests open visible windows. Run them only when you can participate without disrupting other work:
 
 ```powershell

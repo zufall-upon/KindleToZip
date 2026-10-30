@@ -6,7 +6,7 @@ const { chromium } = await import('playwright');
 // The control UI never uses the user's default browser/profile/extensions.
 // Its temporary browser contains only this loopback UI, not Kindle login state.
 // Explicit startup may open it; acquisition never activates an OS window.
-export async function openControlWindow(url, { headless = false, onClose } = {}) {
+export async function openControlWindow(url, { headless = false, onClose, handleSignals = true } = {}) {
   const target = new URL(url);
   if (target.protocol !== 'http:' || target.hostname !== '127.0.0.1' || target.pathname !== '/'
     || target.search || target.username || target.password || !/^#[a-f0-9]{64}$/.test(target.hash)) throw new Error('invalid_control_url');
@@ -23,7 +23,8 @@ export async function openControlWindow(url, { headless = false, onClose } = {})
     HOME: tempDirectory, USERPROFILE: tempDirectory,
     XDG_CACHE_HOME: tempDirectory, XDG_CONFIG_HOME: tempDirectory, XDG_DATA_HOME: tempDirectory,
   } : undefined;
-  const browser = await chromium.launch({ headless, ...(browserEnvironment ? { env: browserEnvironment } : {}) });
+  const browser = await chromium.launch({ headless, ...(browserEnvironment ? { env: browserEnvironment } : {}),
+    ...(handleSignals ? {} : { handleSIGINT: false, handleSIGTERM: false }) });
   try {
     const context = await browser.newContext({
       viewport: { width: 1100, height: 850 }, colorScheme: 'light',

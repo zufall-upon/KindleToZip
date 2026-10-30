@@ -7,7 +7,7 @@ import { PNG } from 'pngjs';
 import { startFixture } from './fixture-server.mjs';
 
 // Install and run the exact Playwright browser in this project's disposable area.
-process.env.PLAYWRIGHT_BROWSERS_PATH = fileURLToPath(new URL('../../artifacts/browsers', import.meta.url));
+process.env.PLAYWRIGHT_BROWSERS_PATH ||= fileURLToPath(new URL('../../artifacts/browsers', import.meta.url));
 const { chromium } = await import('playwright');
 const require = createRequire(import.meta.url);
 const MAX_PNG = 32 * 1024 * 1024;

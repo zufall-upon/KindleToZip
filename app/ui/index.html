@@ -13,6 +13,7 @@
       <div class="flow-status"><strong id="state">接続中</strong><span id="reason"></span></div>
       <div class="next-action"><strong>次の1操作</strong><p id="nextAction">アプリへ接続しています。</p><button id="reconnect" hidden>接続を確認し直す</button></div>
       <p id="message" role="status" aria-live="polite"></p>
+      <p id="storageUncertain" role="alert" hidden></p>
     </div>
     <div id="operationStatus" data-status="idle" aria-busy="false">
       <div class="operation-heading"><span id="operationLabel" role="status">待機中</span><span id="operationPercent">0%</span></div>
@@ -50,6 +51,7 @@
     <p id="jobPath"></p><p id="issues"></p></details>
   </section>
   <section data-stage="browser"><h2>2. 専用ブラウザで本を開く</h2>
+    <p id="kindleUnsupported" role="status" hidden>Linuxでは実Kindleの起動・取得は未対応です。補助操作から自作試料を開いてください。</p>
     <p>利用地域を選び、本人がログインして1冊を開きます。本棚タブは閉じなくてかまいません。</p>
     <label>Kindle利用地域<select id="kindleRegion"></select></label>
     <p id="kindleRegionHelp">表示言語とは別の設定です。地域を変えるには専用ブラウザを閉じ、対象タブの選択・プレビュー・承認をやり直してください。</p>
@@ -154,7 +156,7 @@
   <section data-stage="export"><h2>5. ZIPを保存</h2>
     <p>初期保存先はこの作業のフォルダです。既存ファイルは上書きしません。</p>
     <label>保存先のファイル名<input id="destination" placeholder="既存フォルダ\作品.zip"></label>
-    <button id="chooseDestination">保存先を選ぶ…</button><p>ダイアログで選ぶだけでは保存・取得を開始しません。手入力も利用できます。</p>
+    <button id="chooseDestination">保存先を選ぶ…</button><p id="destinationDialogHelp">ダイアログで選ぶだけでは保存・取得を開始しません。手入力も利用できます。</p>
     <p>停止・プレビュー失敗後も、保存済みの採用画像をZIPにできます。</p>
     <p id="exportHelp" role="status"></p>
     <details id="exportOptions"><summary>範囲確認・点検済みの印（任意）</summary>

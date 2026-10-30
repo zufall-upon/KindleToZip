@@ -3,12 +3,151 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openKindleForUser } from '../app/startup.mjs';
 import { configureReaderNetwork, readerContextOptions } from '../app/reader.mjs';
+import { controllerPath } from '../app/controller-path.mjs';
+import { StoreClient } from '../app/store-client.mjs';
+import { RustGuard, guardExecutable } from '../poc/browser/rust-guard.mjs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, readdir, lstat } from 'node:fs/promises';
+import { spawn, spawnSync } from 'node:child_process';
+import net from 'node:net';
+import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { PNG } from 'pngjs';
 const { chromium } = await import('playwright');
+
+test('controller解決: 明示指定とOS既定を共用し、起動時に不在を拒否する', async () => {
+  assert.match(controllerPath({ platform: 'win32', env: {} }), /ktz-g02-controller\.exe$/);
+  assert.match(controllerPath({ platform: 'linux', env: {} }), /ktz-g02-controller$/);
+  const previous = process.env.KTZ_CONTROLLER_PATH;
+  try {
+    process.env.KTZ_CONTROLLER_PATH = guardExecutable;
+    const store = new StoreClient();
+    process.env.KTZ_CONTROLLER_PATH = path.join(path.dirname(guardExecutable), 'missing-controller-for-regression');
+    try {
+      assert.equal((await store.call('state')).state, 'Preview', '既存childは作成時の設定を保持する');
+      assert.throws(() => new StoreClient(), { code: 'controller_not_found' });
+      assert.throws(() => new RustGuard(), { code: 'controller_not_found' });
+    } finally { await store.close(); }
+    process.env.KTZ_CONTROLLER_PATH = guardExecutable;
+    const guard = new RustGuard();
+    try { assert.equal((await guard.request({ kind: 'state' })).state, 'Preview'); }
+    finally { await guard.close(); }
+  } finally {
+    if (previous === undefined) delete process.env.KTZ_CONTROLLER_PATH; else process.env.KTZ_CONTROLLER_PATH = previous;
+  }
+});
+
+if (process.platform === 'linux') test('Linux公開npm start: 実headed画面の操作と画面閉鎖・Ctrl+Cで所有資源を回収', { timeout: 90_000 }, async t => {
+  assert.ok(process.env.DISPLAY, 'headed検査には明示的なX displayが必要');
+  const project = fileURLToPath(new URL('../', import.meta.url));
+  const socketRoot = await mkdtemp(path.join(existsSync('/tmp/opencode') ? '/tmp/opencode' : '/tmp', 'ktz-public-'));
+  t.after(() => rm(socketRoot, { recursive: true, force: true }));
+  const screenshot = fileURLToPath(new URL('../artifacts/linux-port/public-start.png', import.meta.url));
+  const hook = new URL('./support/public-start-hook.mjs', import.meta.url).href;
+  for (const mode of ['window', 'sigint']) await t.test(mode, async () => {
+    const fixture = await mkdtemp(path.join(socketRoot, `${mode}-`));
+    const temp = path.join(fixture, 't'); await mkdir(temp, { mode: 0o700 });
+    const socketPath = path.join(fixture, 's');
+    const server = net.createServer();
+    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(socketPath, resolve); });
+    const connected = new Promise(resolve => server.once('connection', resolve));
+    const env = { ...process.env, KTZ_USER_DATA_DIR: path.join(fixture, 'data'), KTZ_TEMP_DIR: temp,
+      KTZ_PUBLIC_TEST_SOCKET: socketPath, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${hook}` };
+    // The SIGINT case uses a real pseudo-terminal: byte 0x03 is Ctrl+C,
+    // delivered by the terminal to its foreground process group.
+    const quotedProject = `'${project.replaceAll("'", "'\\''")}'`;
+    const executable = mode === 'sigint' ? 'script' : 'npm';
+    const args = mode === 'sigint' ? ['-q', '-e', '-c', `npm --prefix ${quotedProject} start`, '/dev/null'] : ['--prefix', project, 'start'];
+    const child = spawn(executable, args, { cwd: fixture, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    let output = ''; child.stdout.on('data', text => { output += text; }); child.stderr.on('data', text => { output += text; });
+    const exited = new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })));
+    let socket;
+    const deadline = ms => new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error(`public_start_timeout: ${output}`)), ms); timer.unref(); });
+    try {
+      socket = await Promise.race([connected, deadline(25_000)]);
+      let buffer = ''; const events = []; const waiters = [];
+      socket.on('data', chunk => {
+        buffer += chunk; let end;
+        while ((end = buffer.indexOf('\n')) >= 0) {
+          const value = JSON.parse(buffer.slice(0, end)); buffer = buffer.slice(end + 1);
+          const waiter = waiters.shift(); if (waiter) waiter(value); else events.push(value);
+        }
+      });
+      const receive = () => events.length ? Promise.resolve(events.shift()) : new Promise(resolve => waiters.push(resolve));
+      const ready = await Promise.race([receive(), deadline(25_000)]);
+      assert.equal(ready.event, 'ready', JSON.stringify(ready));
+      assert.match(ready.title, /KindleToZip/);
+      socket.write(`${JSON.stringify({ action: 'exercise', ...(mode === 'window' ? { screenshot } : {}) })}\n`);
+      const exercised = await Promise.race([receive(), deadline(25_000)]);
+      assert.equal(exercised.event, 'exercised', JSON.stringify(exercised));
+      assert.equal(exercised.kindleDisabled, true);
+      assert.match(exercised.notice, /Linux.*未対応/);
+      assert.equal((await lstat(path.join(fixture, 'data'))).mode & 0o7777, 0o700);
+      const owned = (await readdir(temp)).map(name => path.join(temp, name));
+      assert.equal(owned.length, 1);
+      assert.equal((await lstat(owned[0])).mode & 0o7777, 0o700);
+      const processes = spawnSync('ps', ['-eo', 'pid=,ppid=,args='], { encoding: 'utf8' }).stdout.split('\n')
+        .map(line => /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line)).filter(Boolean);
+      // Playwright starts Chromium in its own process group: ancestry, not
+      // npm's group id, determines which processes this particular run owns.
+      const ownedPids = new Set([child.pid]);
+      let count;
+      do { count = ownedPids.size; for (const match of processes) if (ownedPids.has(Number(match[2]))) ownedPids.add(Number(match[1])); } while (ownedPids.size !== count);
+      assert.ok(processes.some(match => ownedPids.has(Number(match[1])) && /ktz-g02-controller/.test(match[3])), 'owned Rust controller exists');
+      assert.ok(processes.some(match => ownedPids.has(Number(match[1])) && /chrome-linux64\/chrome/.test(match[3])), 'owned headed Chromium exists');
+      assert.ok(processes.some(match => ownedPids.has(Number(match[1])) && /chrome-headless-shell/.test(match[3])), 'owned sample Chromium exists');
+      const profile = (await readdir(path.join(fixture, 'data'))).find(name => name.startsWith('temporary-'));
+      assert.ok(profile, 'self-authored sample has a dedicated temporary profile');
+      async function privateTree(directory) {
+        for (const name of await readdir(directory)) {
+          const filename = path.join(directory, name), info = await lstat(filename);
+          if (info.isSymbolicLink()) continue; // Chromium singleton links are not followed.
+          assert.equal(info.uid, process.geteuid());
+          assert.equal(info.mode & 0o077, 0, `private browser object: ${filename}`);
+          if (info.isDirectory()) await privateTree(filename);
+        }
+      }
+      await privateTree(path.join(fixture, 'data', profile));
+      if (mode === 'window') { socket.write('{"action":"close"}\n'); await Promise.race([receive(), deadline(5000)]); }
+      else child.stdin.write('\x03');
+      const result = await Promise.race([exited, deadline(25_000)]);
+      assert.ok(mode === 'sigint' ? [0, 130].includes(result.code) : result.code === 0, `${JSON.stringify(result)} ${output}`);
+      const limit = Date.now() + 10_000;
+      let active;
+      do {
+        active = [...ownedPids].filter(pid => {
+          const stat = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).stdout.trim();
+          return Boolean(stat);
+        });
+        if (active.length) await new Promise(resolve => setTimeout(resolve, 50));
+      } while (active.length && Date.now() < limit);
+      assert.deepEqual(active, [], `owned processes remain active: ${active}`);
+      await assert.rejects(fetch(ready.origin, { signal: AbortSignal.timeout(3000) }));
+      assert.deepEqual(await readdir(temp), [], 'owned temporary browser runtime removed');
+      if (mode === 'window') assert.ok((await lstat(screenshot)).size > 0);
+    } finally {
+      socket?.destroy(); server.close();
+      if (child.exitCode === null && child.signalCode === null) { try { process.kill(-child.pid, 'SIGTERM'); } catch {} await exited; }
+    }
+  });
+});
+
+if (process.platform === 'linux') test('Linux公開CLI: Kindle開始と復帰はブラウザ・保存領域作成前に拒否', async t => {
+  const project = fileURLToPath(new URL('../', import.meta.url));
+  const fixture = await mkdtemp(path.join(tmpdir(), 'ktz-cli-'));
+  t.after(() => rm(fixture, { recursive: true, force: true }));
+  for (const option of ['--kindle', '--resume-kindle']) {
+    const data = path.join(fixture, option.slice(2));
+    const run = spawnSync('npm', ['--prefix', project, 'start', '--', option], { cwd: fixture, encoding: 'utf8', timeout: 15_000,
+      env: { ...process.env, KTZ_USER_DATA_DIR: data, KTZ_CONTROLLER_PATH: path.join(fixture, 'missing-controller') } });
+    assert.equal(run.status, 1, `${option}: ${run.stderr}`);
+    assert.match(run.stderr, /LinuxではKindleの起動・取得は未対応/);
+    assert.doesNotMatch(run.stderr, /controller_not_found/);
+    await assert.rejects(lstat(data), { code: 'ENOENT' });
+  }
+});
 
 test('明示Kindle起動は保存・再利用の専用ブラウザだけを開き、プレビュー・取得・代理認証をしない', async () => {
   const calls = [];

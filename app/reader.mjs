@@ -191,9 +191,10 @@ export async function configureReaderNetwork(context, sampleUrl) {
 // The live adapter uses only visible official UI chosen by the user. Unknown
 // layouts are rejected, not replaced by hidden APIs or image extraction.
 export class Reader {
-  static async open({ profile, sampleUrl, regionId = 'jp', preconfiguredSample = true, headless = false, onChange, readGuard }) {
+  static async open({ profile, sampleUrl, regionId = 'jp', preconfiguredSample = true, headless = false, onChange, readGuard, handleSignals = true }) {
     const adapter = createStoreAdapter({ regionId, sampleUrl });
-    const context = await chromium.launchPersistentContext(profile, readerContextOptions({ sampleUrl, headless }));
+    const context = await chromium.launchPersistentContext(profile, { ...readerContextOptions({ sampleUrl, headless }),
+      ...(handleSignals ? {} : { handleSIGINT: false, handleSIGTERM: false }) });
     try {
       await configureReaderNetwork(context, sampleUrl);
       const page = context.pages()[0] ?? await context.newPage();

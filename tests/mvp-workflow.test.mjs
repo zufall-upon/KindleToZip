@@ -1,13 +1,13 @@
 import './chromium-test-log-sink.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, symlink, lstat, writeFile, link as hardlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, lstat, stat, chmod, writeFile, link as hardlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startApplication } from '../app/server.mjs';
-import { StoreClient } from '../app/store-client.mjs';
+import { StoreClient, AppError } from '../app/store-client.mjs';
 import { Reader, sampleConfig } from '../app/reader.mjs';
 import { createStoreAdapter } from '../app/stores/index.mjs';
 import { kindleRegions } from '../app/stores/kindle.mjs';
@@ -24,10 +24,31 @@ const { chromium } = await import('playwright');
 const root = fileURLToPath(new URL('../artifacts/mvp-tests/', import.meta.url));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-async function setup(t, { sampleFixture = 'reader' } = {}) {
+// Match the existing local-store archive oracle against the public UI outputs.
+function readStoredEntries(bytes) {
+  const end = bytes.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  assert.notEqual(end, -1);
+  const count = bytes.readUInt16LE(end + 10);
+  let offset = bytes.readUInt32LE(end + 16);
+  const entries = [];
+  for (let i = 0; i < count; i++) {
+    assert.equal(bytes.readUInt32LE(offset), 0x02014b50);
+    const size = bytes.readUInt32LE(offset + 24), nameLength = bytes.readUInt16LE(offset + 28);
+    const extraLength = bytes.readUInt16LE(offset + 30), commentLength = bytes.readUInt16LE(offset + 32);
+    const local = bytes.readUInt32LE(offset + 42);
+    assert.equal(bytes.readUInt32LE(local), 0x04034b50);
+    const data = local + 30 + bytes.readUInt16LE(local + 26) + bytes.readUInt16LE(local + 28);
+    entries.push({ name: bytes.subarray(offset + 46, offset + 46 + nameLength).toString('ascii'), bytes: bytes.subarray(data, data + size) });
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+async function setup(t, { sampleFixture = 'reader', sampleHeadless } = {}) {
   await mkdir(root, { recursive: true });
   const directory = await mkdtemp(path.join(root, 'workflow-'));
-  const running = await startApplication({ dataDir: path.join(directory, 'data'), sampleFixture });
+  const running = await startApplication({ dataDir: path.join(directory, 'data'), sampleFixture,
+    ...(sampleHeadless === undefined ? {} : { sampleHeadless }) });
   t.after(async () => { await running.close(); await rm(directory, { recursive: true, force: true }); });
   const request = async (action, input = {}) => {
     const response = await fetch(`${running.origin}/api/command`, { method: 'POST', headers: {
@@ -87,6 +108,95 @@ async function imagePixel(ui, bytes, x, y) {
     const context = canvas.getContext('2d'); context.drawImage(bitmap, 0, 0); bitmap.close();
     return [...context.getImageData(x, y, 1, 1).data].slice(0, 3);
   }, { base64: bytes.toString('base64'), x, y });
+}
+
+if (process.platform === 'linux') {
+  test('Linux自作試料: 呼出側のheaded指定でも試料はheadlessに固定する', async t => {
+    const r = await setup(t, { sampleHeadless: false });
+    const launch = chromium.launchPersistentContext.bind(chromium);
+    let observed;
+    chromium.launchPersistentContext = (directory, options) => { observed = options.headless; return launch(directory, options); };
+    try {
+      await r.request('create'); await r.request('openBrowser', { mode: 'sample' });
+      assert.equal(observed, true);
+      assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
+    } finally { chromium.launchPersistentContext = launch; }
+  });
+  test('Linux設定領域: 不正な既存modeとhardlinkを変更せず起動拒否する', async t => {
+    await t.test('mode', async sub => {
+      const r = await setup(sub); await r.close();
+      const file = path.join(r.app.dataDir, 'reader-presets.json');
+      await writeFile(file, '{"version":1}', { mode: 0o600 }); await chmod(file, 0o644);
+      const before = await lstat(file), content = await readFile(file);
+      await assert.rejects(startApplication({ dataDir: r.app.dataDir }), { code: 'unsafe_presets' });
+      const after = await lstat(file);
+      assert.equal(after.mode & 0o7777, 0o644); assert.equal(after.ino, before.ino); assert.deepEqual(await readFile(file), content);
+    });
+    await t.test('hardlink', async sub => {
+      const r = await setup(sub); await r.close();
+      const file = path.join(r.app.dataDir, 'kindle-session.json');
+      await writeFile(file, '{}', { mode: 0o600 }); await hardlink(file, path.join(r.app.dataDir, 'linked-fixture'));
+      const before = await lstat(file), content = await readFile(file);
+      await assert.rejects(startApplication({ dataDir: r.app.dataDir }), { code: 'unsafe_session_preferences' });
+      const after = await lstat(file);
+      assert.equal(after.nlink, 2); assert.equal(after.ino, before.ino); assert.deepEqual(await readFile(file), content);
+    });
+  });
+
+  test('Linux公開UI: 保存同期不明と公開済み未記録を区別し再出力せず安全停止する', async t => {
+    for (const [code, expected] of [
+      ['output_published_durability_uncertain', /公開済みの可能性.*永続性は未確認/],
+      ['output_published_manifest_update_failed', /出力済み.*保存履歴の記録に失敗/],
+      ['output_published_manifest_durability_uncertain', /出力済み.*保存履歴の永続性は未確認/],
+      ['output_path_changed', /出力先の経路が変化/],
+    ]) await t.test(code, async sub => {
+      const r = await setup(sub); await r.request('create');
+      const control = await openControlWindow(r.url, { headless: true }); sub.after(() => control.close());
+      const destination = path.join(r.directory, 'known.zip');
+      const call = r.app.store.call.bind(r.app.store);
+      r.app.store.call = (kind, ...args) => {
+        if (kind !== 'export') return call(kind, ...args);
+        const error = new AppError(code);
+        for (const listener of r.app.store.errorListeners) listener(error);
+        return Promise.reject(error);
+      };
+      await assert.rejects(r.app.command('export', { destination, format: 'zip' }), { code });
+      await control.page.waitForFunction(() => !document.querySelector('#storageUncertain').hidden);
+      const warning = await control.page.locator('#storageUncertain').textContent();
+      assert.match(warning, expected); assert.ok(warning.includes(destination)); assert.match(warning, /再起動/);
+      assert.deepEqual((await r.app.snapshot()).storageUncertain, { code, destination });
+      for (const action of ['start', 'export', 'savePreset', 'closeJob']) {
+        await assert.rejects(r.app.command(action, { destination, format: 'zip' }), { code: 'storage_reopen_required' });
+      }
+      await assert.rejects(lstat(destination), { code: 'ENOENT' });
+      assert.equal(await control.page.locator('#decisionButton').isDisabled(), true);
+    });
+  });
+
+  test('Linux公開取得: controller切断時に未確定画像もページ送りも進めない', async t => {
+    const r = await setup(t);
+    await r.request('create'); await r.request('openBrowser', { mode: 'sample' });
+    await r.request('preview', { config: sampleConfig }); await r.request('approve', { confirmed: true });
+    const jobPath = (await r.app.snapshot()).job.job_path;
+    const call = r.app.store.call.bind(r.app.store);
+    let entered, release;
+    const atCommit = new Promise(resolve => { entered = resolve; });
+    const gate = new Promise(resolve => { release = resolve; });
+    r.app.store.call = async (kind, ...args) => {
+      if (kind === 'capture_commit') { entered(); await gate; }
+      return call(kind, ...args);
+    };
+    await r.request('start', { confirmed: true });
+    await atCommit;
+    r.app.store.child.kill(); await r.app.store.exited; release();
+    await r.app.loop;
+    const state = await r.app.snapshot();
+    assert.equal(state.state, 'NeedsAttention');
+    assert.equal(state.job.manifest.images.length, 0);
+    assert.deepEqual(await readdir(path.join(jobPath, 'originals')), []);
+    assert.equal(await r.app.reader.page.locator('#position').innerText(), '1 / 12');
+    await assert.rejects(r.app.command('start', { confirmed: true }), /explicit_start_required/);
+  });
 }
 
 // All HTTPS-looking pages below are local, self-authored responses. Never fall
@@ -159,7 +269,7 @@ test('Kindle地域境界: 同じ明示リストをタブ・picker・取得前後
   });
 });
 
-test('Kindle地域公開UI: 言語と独立して選択し実際の開始URLへ渡し開いた間は変更しない', async t => {
+test(process.platform === 'linux' ? 'Kindle地域公開UI: Linuxでは実Kindle起動を拒否する' : 'Kindle地域公開UI: 言語と独立して選択し実際の開始URLへ渡し開いた間は変更しない', async t => {
   const r = await setup(t);
   const control = await openControlWindow(r.url, { headless: true }); t.after(() => control.close());
   const ui = control.page;
@@ -190,6 +300,22 @@ test('Kindle地域公開UI: 言語と独立して選択し実際の開始URLへ�
     assert.equal(await ui.locator('#kindleStartUrl').textContent(), 'https://read.amazon.com/');
   }
   await assert.rejects(r.app.command('setKindleRegion', { id: 'cn' }), /invalid_kindle_region/);
+  if (process.platform === 'linux') {
+    await ui.locator('#create').click();
+    await waitFor(r.app, s => Boolean(s.job) && !s.busy);
+    await ui.waitForFunction(() => document.querySelector('#kindleUnsupported').hidden === false);
+    assert.equal(await ui.locator('#openKindle').isDisabled(), true);
+    const before = (await r.app.snapshot()).sessions;
+    const response = await fetch(`${r.origin}/api/command`, { method: 'POST', headers: {
+      Authorization: `Bearer ${r.token}`, 'Content-Type': 'application/json', Origin: r.origin,
+    }, body: JSON.stringify({ action: 'openBrowser', input: { mode: 'kindle' } }) });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).code, 'linux_kindle_unsupported');
+    await assert.rejects(r.app.command('openBrowser', { mode: 'kindle' }), { code: 'linux_kindle_unsupported' });
+    assert.deepEqual((await r.app.snapshot()).sessions, before);
+    assert.equal(r.app.reader, undefined);
+    return;
+  }
   const launch = chromium.launchPersistentContext.bind(chromium);
   chromium.launchPersistentContext = async (profile, options) => {
     const context = await launch(profile, { ...options, headless: true, serviceWorkers: 'block' });
@@ -1055,11 +1181,13 @@ test('公開MVP画面: 試料プレビュー・明示開始・一時停止/復�
   await page.locator('#previewImage').waitFor({ state: 'visible' });
   assert.equal(await r.app.reader.page.locator('#position').innerText(), '1 / 12');
   assert.equal((await r.app.snapshot()).job.manifest.images.length, 0, 'プレビューはディスクの作業画像を作らない');
+  assert.deepEqual(await readdir(path.join((await r.app.snapshot()).job.job_path, 'originals')), []);
   await assert.rejects(r.app.command('start', { confirmed: true }), /explicit_start_required/);
   await page.locator('#previewConfirmed').check();
   await page.locator('#approve').click();
   await page.waitForFunction(() => !document.querySelector('#start').disabled);
   assert.equal((await r.app.snapshot()).job.manifest.images.length, 0, '承認だけでは取得しない');
+  assert.deepEqual(await readdir(path.join((await r.app.snapshot()).job.job_path, 'originals')), []);
   await page.locator('#start').click();
   await waitFor(r.app, s => s.job.manifest.images.length >= 2);
   await page.waitForFunction(() => document.querySelector('#state').textContent === '取得中');
@@ -1116,6 +1244,18 @@ test('公開MVP画面: 試料プレビュー・明示開始・一時停止/復�
   const output = await readFile(destination);
   assert.equal(output.readUInt32LE(0), 0x04034b50);
   const info = await r.app.snapshot();
+  const expectedImages = [await r.app.image(2), await r.app.image(1)];
+  const verifyEntries = archive => {
+    const entries = readStoredEntries(archive);
+    assert.deepEqual(entries.map(entry => entry.name), ['000001.png', '000002.png']);
+    assert.equal(entries.length, expectedImages.length);
+    entries.forEach((entry, index) => {
+      assert.deepEqual(entry.bytes, expectedImages[index], `image ${index + 1} bytes/order`);
+      assert.equal(createHash('sha256').update(entry.bytes).digest('hex'), createHash('sha256').update(expectedImages[index]).digest('hex'));
+      assert.ok(PNG.sync.read(entry.bytes).width > 0);
+    });
+  };
+  verifyEntries(output);
   assert.equal(info.job.manifest.exports[0].entry_count, 2);
   assert.equal(info.job.manifest.exports[0].range_confirmed, false);
   assert.equal(info.job.manifest.exports[0].sha256, createHash('sha256').update(output).digest('hex'));
@@ -1125,10 +1265,13 @@ test('公開MVP画面: 試料プレビュー・明示開始・一時停止/復�
   await page.locator('#export').click();
   const zipInfo = await waitFor(r.app, s => s.job.manifest.exports.length === 2 && !s.busy);
   const zipOutput = await readFile(zipDestination);
+  verifyEntries(zipOutput);
   assert.equal(zipOutput.readUInt32LE(0), 0x04034b50);
   assert.equal(zipInfo.job.manifest.exports[1].entry_count, 2);
   assert.equal(zipInfo.job.manifest.exports[1].sha256, createHash('sha256').update(zipOutput).digest('hex'));
+  const existing = await stat(destination);
   await assert.rejects(r.app.command('export', { destination, format: 'cbz', warningsAccepted: true }), /output_exists/);
+  assert.equal((await stat(destination)).ino, existing.ino);
   assert.deepEqual(await readFile(destination), output);
   assert.deepEqual(await readFile(path.join(jobPath, 'originals', '000001.png')), original);
   assert.deepEqual(foreign, []);
@@ -1303,7 +1446,7 @@ test('専用セッション: 明示保存・再利用・明示削除と一時領
   assert.deepEqual((await r.app.snapshot()).sessions, []);
 });
 
-test('専用セッション既定: 公開Kindle入口と通常再起動で同じ領域を再利用し、一時利用は分離する', async t => {
+test(process.platform === 'linux' ? '専用セッション既定: Linuxでは公開Kindle入口を拒否する' : '専用セッション既定: 公開Kindle入口と通常再起動で同じ領域を再利用し、一時利用は分離する', async t => {
   await mkdir(root, { recursive: true });
   const directory = await mkdtemp(path.join(root, 'session-restart-'));
   const r = await startApplication({ dataDir: path.join(directory, 'data') });
@@ -1323,6 +1466,13 @@ test('専用セッション既定: 公開Kindle入口と通常再起動で同じ
   await ui.locator('#create').click();
   await ui.locator('[data-stage="browser"] details > summary').click();
   assert.equal(await ui.locator('#keep').isChecked(), true);
+  if (process.platform === 'linux') {
+    assert.equal(await ui.locator('#openKindle').isDisabled(), true);
+    await assert.rejects(r.app.command('openBrowser', { mode: 'kindle' }), { code: 'linux_kindle_unsupported' });
+    assert.deepEqual((await r.app.snapshot()).sessions, []);
+    assert.equal(r.app.reader, undefined);
+    return;
+  }
   await ui.locator('#openKindle').click();
   await waitFor(r.app, s => s.browserOpen && !s.busy);
   const first = r.app.profile;
@@ -1386,7 +1536,7 @@ test('専用セッション既定: 公開Kindle入口と通常再起動で同じ
   assert.equal(restarted.app.profile, first);
 });
 
-test('専用セッション保存寿命: 旧temporaryの保存指定を領域切替・再起動後も保持する', async t => {
+test(process.platform === 'linux' ? '専用セッション保存寿命: 旧temporaryの保存指定を自作試料で保持する' : '専用セッション保存寿命: 旧temporaryの保存指定を領域切替・再起動後も保持する', async t => {
   const r = await setup(t);
   await r.request('create');
   await r.request('openBrowser', { mode: 'sample' });
@@ -1409,6 +1559,15 @@ test('専用セッション保存寿命: 旧temporaryの保存指定を領域切
   });
   restarted = await startApplication({ dataDir: r.app.dataDir });
   await restarted.app.command('create');
+  if (process.platform === 'linux') {
+    assert.equal((await restarted.app.snapshot()).preferredKindleSession, retained);
+    await assert.rejects(restarted.app.command('openBrowser', { mode: 'kindle' }), { code: 'linux_kindle_unsupported' });
+    await restarted.app.command('openBrowser', { mode: 'sample', session: retained });
+    assert.equal(path.basename(restarted.app.profile), retained);
+    await restarted.app.command('closeBrowser');
+    assert.equal((await lstat(path.join(r.app.dataDir, retained))).isDirectory(), true);
+    return;
+  }
   await restarted.app.command('openBrowser', { mode: 'kindle' });
   assert.equal(path.basename(restarted.app.profile), retained, 'version:1の旧保存指定を同じパスで再利用する');
   await restarted.app.reader.context.addCookies([{ name: 'retained-temporary-fixture', value: 'retained', url: fixture.url, expires: Math.floor(Date.now() / 1000) + 3600 }]);

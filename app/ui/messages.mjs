@@ -1,5 +1,12 @@
 // Japanese is the canonical UI copy; parameters, paths and user labels stay intact.
 export const messages = [
+  ['Linuxでは実Kindleの起動・取得は未対応です。補助操作から自作試料を開いてください。', 'On Linux, launching or capturing from real Kindle is not supported. Open a self-authored fixture in the auxiliary controls.', 'Linux 尚不支持启动或获取真实 Kindle。请在辅助操作中打开自制样本。'],
+  ['保存操作は適用済みの可能性があり、永続性を確認できません。取得・保存を停止しています。アプリを再起動し、保存領域を点検してください。', 'The storage operation may have been applied, but its durability is unknown. Capture and saving are stopped. Restart the app and inspect storage.', '存储操作可能已应用，但持久性未知。获取和保存已停止。请重启应用并检查存储区域。'],
+  ['保存状態の確認が必要です。取得・保存は停止しています。アプリを再起動し、保存領域を点検してください。再起動だけで整合性が保証されるわけではありません。', 'Storage needs inspection. Capture and saving are stopped. Restart the app and inspect storage; restarting alone does not guarantee consistency.', '需要检查存储状态。获取和保存已停止。请重启应用并检查存储区域；仅重启不能保证一致性。'],
+  ['出力先の経路が変化したため処理を停止しました。出力の成功と扱わず、自動で再出力・削除しません。再起動後に出力先と保存領域を点検してください。', 'The output path changed, so processing stopped. This is not treated as successful output; nothing is automatically re-exported or deleted. After restarting, inspect the destination and storage.', '输出路径发生变化，处理已停止。此情况不视为输出成功；不会自动重新导出或删除。重启后请检查输出位置和存储区域。'],
+  ['出力が公開済みの可能性がありますが、永続性は未確認です。自動で再出力・削除しません。再起動後に出力先と保存領域を点検してください。', 'The output may already be published, but its durability is unknown. Nothing is automatically re-exported or deleted. After restarting, inspect the destination and storage.', '输出可能已发布，但持久性未知。不会自动重新导出或删除。重启后请检查输出位置和存储区域。'],
+  ['出力済みですが保存履歴の記録に失敗しました。自動で再出力・削除しません。再起動後に出力先と保存領域を点検してください。', 'The output was published, but recording its history failed. Nothing is automatically re-exported or deleted. After restarting, inspect the destination and storage.', '输出已发布，但保存历史记录失败。不会自动重新导出或删除。重启后请检查输出位置和存储区域。'],
+  ['出力済みですが保存履歴の永続性は未確認です。自動で再出力・削除しません。再起動後に出力先と保存領域を点検してください。', 'The output was published, but the durability of its history is unknown. Nothing is automatically re-exported or deleted. After restarting, inspect the destination and storage.', '输出已发布，但保存历史的持久性未知。不会自动重新导出或删除。重启后请检查输出位置和存储区域。'],
   ['Kindle利用地域', 'Kindle region', 'Kindle 使用地区'],
   ['日本', 'Japan', '日本'], ['米国', 'United States', '美国'], ['英国', 'United Kingdom', '英国'],
   ['利用地域を選び、本人がログインして1冊を開きます。本棚タブは閉じなくてかまいません。', 'Select your region, sign in and open a book yourself. The library tab can stay open.', '请选择使用地区，由本人登录并打开一本书。无需关闭书库标签页。'],

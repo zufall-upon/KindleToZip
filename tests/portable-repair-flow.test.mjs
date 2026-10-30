@@ -13,6 +13,7 @@ import { Application } from '../app/application.mjs';
 import { Reader } from '../app/reader.mjs';
 import { createStoreAdapter } from '../app/stores/index.mjs';
 import { openControlWindow as openWindow } from '../app/control-window.mjs';
+import { chooseSaveDestination } from '../app/save-dialog.mjs';
 import { withPublicDisclosures } from '../poc/browser/public-ui-controls.mjs';
 import { checkLanguageFlow } from './support/language-flow.mjs';
 import { checkCaptureResume } from './support/capture-resume-flow.mjs';
@@ -228,13 +229,19 @@ test('3ボタン公開導線・処理インジケーター: 開始直後のpaint
   await ui.screenshot({ path: path.join(evidence, 'anonymous-next-job.png') });
 });
 
-test('保存先ドライバ: 従来型Windowsダイアログのファイル名欄で取消と非保存の選択ができる', async t => {
+test(process.platform === 'linux' ? '保存先ドライバ: Linuxでは未対応を返し保存しない' : '保存先ドライバ: 従来型Windowsダイアログのファイル名欄で取消と非保存の選択ができる', async t => {
   const evidence = path.resolve('artifacts/indicator-review'); await mkdir(evidence, { recursive: true });
   const directory = await mkdtemp(path.join(evidence, 'legacy-dialog-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const source = await readFile('app/save-dialog.ps1', 'utf8');
   const declaration = '$dialog = [System.Windows.Forms.SaveFileDialog]::new()';
   assert.equal(source.split(declaration).length, 2);
+  if (process.platform === 'linux') {
+    const destination = path.join(directory, 'manual.zip');
+    assert.throws(() => chooseSaveDestination({ destination, format: 'zip' }), { code: 'save_dialog_unavailable' });
+    await assert.rejects(stat(destination), { code: 'ENOENT' }, '未対応の選択だけでは保存しない');
+    return;
+  }
   // Exercise the platform's older common-dialog control IDs without changing
   // the application's default dialog or replacing any native interaction.
   const script = path.join(directory, 'legacy-dialog.ps1');
@@ -267,7 +274,7 @@ test('保存先ドライバ: 従来型Windowsダイアログのファイル名�
   });
 });
 
-test('3ボタン公開導線・保存先ダイアログ: 実Windows表示・書名初期値・選択・取消・ZIP・再開後の所有名', async t => {
+test(process.platform === 'linux' ? '3ボタン公開導線・Linux手入力: ダイアログ無効・ZIP・再開後の所有名' : '3ボタン公開導線・保存先ダイアログ: 実Windows表示・書名初期値・選択・取消・ZIP・再開後の所有名', async t => {
   const evidence = path.resolve('artifacts/indicator-review'); await mkdir(evidence, { recursive: true });
   const directory = await mkdtemp(path.join(evidence, 'native-anonymous-'));
   const r = await startApplication({ dataDir: path.join(directory, 'data'), sampleFixture: 'layout' });
@@ -278,6 +285,24 @@ test('3ボタン公開導線・保存先ダイアログ: 実Windows表示・書�
   });
   await ui.locator('[data-stage-target="export"]').first().click();
   const initial = await ui.locator('#destination').inputValue();
+  if (process.platform === 'linux') {
+    assert.equal(await ui.locator('#chooseDestination').isDisabled(), true);
+    assert.match(await ui.locator('#destinationDialogHelp').textContent(), /手入力/);
+    await assert.rejects(r.app.command('chooseDestination', { destination: initial, format: 'zip' }), { code: 'save_dialog_unavailable' });
+    const chosen = path.join(directory, '本人が手入力した匿名名.zip');
+    await assert.rejects(stat(chosen), { code: 'ENOENT' });
+    await ui.locator('#destination').fill(chosen); await saveRepairContextArchive(ui, r.app, 1);
+    const archive = await readFile(chosen);
+    assert.equal(storedPngEntries(archive).length, 1);
+    await assert.rejects(r.app.command('export', { destination: chosen, format: 'zip' }), { code: 'output_exists' });
+    assert.deepEqual(await readFile(chosen), archive);
+    await closeRepairSaveContext(ui, r.app);
+    await ui.locator('#recoverPath').fill(captured.job.job_path); await ui.locator('#recover').click();
+    const recovered = await wait(r.app, s => s.job && !s.busy);
+    assert.equal(recovered.browserOpen, false);
+    assert.equal(path.basename(recovered.suggestedDestination), '匿名保存試料 第１巻.zip');
+    return;
+  }
   const driver = async (action, destination, screenshot) => {
     const { stdout } = await promisify(execFile)('pwsh', ['-NoProfile', '-File', 'scripts/drive-owned-save-dialog.ps1', '-OwnerPid', String(process.pid), '-Action', action,
       ...(destination ? ['-Destination', destination] : []), ...(screenshot ? ['-Screenshot', path.join(evidence, screenshot)] : [])], { timeout: 45000, encoding: 'utf8' });
@@ -679,7 +704,16 @@ test('Kindle初回hiddenのページ内復帰候補: 公開試料の実観測復
     const nodes = await page.evaluateHandle(() => [document.querySelector('#readerChromeTitle'), document.querySelector('#position'), document.querySelector('nav')]);
     for (const selector of ['#readerChromeTitle', '#position', 'nav']) assert.equal(await page.locator(selector).isVisible(), false);
     page.mouse.move = () => { throw new Error('initial recovery must not use the browser mouse API'); };
-    await ui.locator('#quickPreview').click(); await ui.locator('#previewImage').waitFor({ state: 'visible' });
+    const completedPreview = async () => {
+      const previous = (await r.app.snapshot()).operationRevision;
+      await ui.locator('#quickPreview').click();
+      await wait(r.app, snapshot => snapshot.operationRevision > previous && snapshot.previewReady && !snapshot.busy);
+      // A previously visible image is not proof that this asynchronous preview
+      // has finished rendering and retained the user's confirmation checkbox.
+      await ui.waitForFunction(() => !document.querySelector('#previewImage').hidden
+        && !document.querySelector('#quickPreview').disabled && document.querySelector('#operationStatus').dataset.status === 'success');
+    };
+    await completedPreview();
     const pixels = PNG.sync.read(r.app.previewImage);
     assert.ok(pixels.width > 0 && pixels.height > 0);
     assert.equal(await page.evaluate(() => window.chromeRecoveryCount), 1);
@@ -694,9 +728,7 @@ test('Kindle初回hiddenのページ内復帰候補: 公開試料の実観測復
       // No invented Kindle auto-hide delay: the fixture's explicit control
       // supplies this independent transition; the real idle delay is unmeasured.
       await page.locator('#hideChrome').click();
-      await ui.locator('#quickPreview').click();
-      await ui.waitForFunction(() => document.querySelector('#operationStatus').dataset.status === 'success');
-      await ui.locator('#previewImage').waitFor({ state: 'visible' });
+      await completedPreview();
       const repeated = await r.app.snapshot();
       assert.equal(repeated.previewApproved, false);
       assert.equal(repeated.job.manifest.images.length, 0);
@@ -708,7 +740,7 @@ test('Kindle初回hiddenのページ内復帰候補: 公開試料の実観測復
       assert.equal(await page.evaluate(() => window.chromeRecoveryCount), 2, 'approval cannot inherit the explicit-preview DOM recovery');
       assert.equal((await r.app.snapshot()).previewApproved, false);
       assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
-      await ui.locator('#quickPreview').click(); await ui.locator('#previewImage').waitFor({ state: 'visible' });
+      await completedPreview();
       await ui.locator('#previewConfirmed').check(); await ui.locator('#approve').click();
       await wait(r.app, snapshot => snapshot.previewApproved && !snapshot.busy);
       await page.locator('#hideChrome').click();

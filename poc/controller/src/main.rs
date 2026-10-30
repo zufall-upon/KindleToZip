@@ -1,4 +1,6 @@
+#[cfg(windows)]
 mod windows_observer;
+mod observer;
 
 use ktz_g02_controller::store::{create_private_session_directory, lock_data_directory, ArchiveFormat, AutoCropCandidate, BookIdentity, CaptureSettings, PageOutputMode, PageSide, Store};
 use ktz_g02_controller::{transition, Event, State};
@@ -6,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
-use windows_observer::{is_above, snapshot, window_for_process, Monitor};
+use observer::{is_above, snapshot, window_for_process, Monitor};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -35,8 +37,10 @@ enum Command {
 }
 
 fn main() -> io::Result<()> {
-    let mut input = io::stdin().lock();
-    let mut output = io::stdout().lock();
+    run(io::stdin().lock(), io::stdout().lock())
+}
+
+fn run(mut input: impl BufRead, mut output: impl Write) -> io::Result<()> {
     let mut state = State::Preview;
     let mut monitor: Option<Monitor> = None;
     let mut store: Option<Store> = None;
@@ -83,13 +87,14 @@ fn main() -> io::Result<()> {
                 Some(bytes) => ktz_g02_controller::png_image::decode(&bytes).map(|image| json!({"layout": if image.single_page() { "single_page" } else { "spread" }})),
                 None => Err("invalid_chunk"),
             },
-            Command::Snapshot {} => Ok(json!({"snapshot":snapshot()})),
-            Command::WindowForProcess { pid } => Ok(json!({"window":window_for_process(pid)})),
-            Command::WindowAbove { higher, lower } => Ok(json!({"above":is_above(higher, lower)})),
-            Command::ObserveStart {} if monitor.is_none() => { monitor = Some(Monitor::start()); Ok(json!({})) },
+            Command::Snapshot {} => snapshot().map(|value| json!({"snapshot":value})),
+            Command::WindowForProcess { pid } => window_for_process(pid).map(|value| json!({"window":value})),
+            Command::WindowAbove { higher, lower } => is_above(higher, lower).map(|value| json!({"above":value})),
+            Command::ObserveStart {} if monitor.is_none() => Monitor::start().map(|active| { monitor = Some(active); json!({}) }),
             Command::ObserveStart {} => Err("observer_busy"),
+            Command::ObserveStop {} if !observer::SUPPORTED => Err("observer_unsupported"),
             Command::ObserveStop {} => match monitor.take() {
-                Some(active) => active.finish().map(|result| json!({"observation":result})).map_err(|_| "observer_failed"),
+                Some(active) => active.finish().map(|result| json!({"observation":result})),
                 None => Err("observer_not_started"),
             },
             Command::CreateJob { base_dir } => {
@@ -271,5 +276,28 @@ fn base64_value(byte: u8) -> Option<u8> {
         b'+' => Some(62),
         b'/' => Some(63),
         _ => None,
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_observer_commands_fail_without_fabricating_observations() {
+        let commands = [json!({"kind":"snapshot"}), json!({"kind":"window_for_process","pid":1}),
+            json!({"kind":"window_above","higher":1,"lower":2}), json!({"kind":"observe_start"}),
+            json!({"kind":"observe_stop"}), json!({"kind":"observe_start"}), json!({"kind":"state"}), json!({"kind":"close"})];
+        let input = commands.iter().enumerate().map(|(i, command)|
+            format!("{}\n", json!({"version":1,"id":i+1,"command":command}))).collect::<String>();
+        let mut output = Vec::new();
+        run(io::Cursor::new(input), &mut output).unwrap();
+        let responses: Vec<Value> = String::from_utf8(output).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        assert_eq!(responses.len(), commands.len());
+        for (i, response) in responses[..6].iter().enumerate() {
+            assert_eq!(response, &json!({"version":1,"id":i+1,"ok":false,"code":"observer_unsupported"}));
+        }
+        assert_eq!(responses[6]["payload"]["state"], "Preview");
+        assert_eq!(responses[7]["ok"], true);
     }
 }

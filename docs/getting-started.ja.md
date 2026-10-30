@@ -12,6 +12,25 @@
 
 ## 必要な環境
 
+### Ubuntuソース開発時の再開（試験段階）
+
+以下のWindows手順とは別に、Ubuntuでは自作試料だけを試験できます。実Kindle起動・取得、Waylandでの通常読書、Linux配布は未対応／未検証です。操作画面は有頭、自作試料の読書画面はheadlessで、保存先は手入力します。実アカウントや実書籍は使わないでください。
+
+先に空き容量・マウントを確認し、既存のNode 22、Rust 1.99.1、依存物、PlaywrightのChromium revision 1248、退避済みリンクを再利用してください。インストール済みの非互換版を「未導入」とみなして無断で置換しません。新規取得の前には必要容量と導入先を確認します。
+
+```bash
+export PLAYWRIGHT_BROWSERS_PATH="$PWD/artifacts/browsers"
+export CARGO_TARGET_DIR="$PWD/artifacts/rust-target"
+test -x "$CARGO_TARGET_DIR/debug/ktz-g02-controller"
+npm run test:store
+npm test   # 公開GUI起動検査にはX displayが必要。XvfbはWayland実機の代替ではない
+npm start
+```
+
+controllerは `KTZ_CONTROLLER_PATH` で明示できます。PATH探索・自動ビルドは行いません。専用領域の不正な権限・所有者・種類・ハードリンクは修復せず停止します。同期不明や公開済み未記録の際は表示された保存先と保存領域を再起動後に点検し、再起動だけで整合性が保証されたとは扱いません。長い `TMPDIR` でChromiumのUnixソケットが作れない場合は、短いprivate一時領域を使用します。詳しくは[開発手順](development.md)を参照してください。
+
+### Windows x64
+
 - Windows x64と、書き込み可能なローカルのプロジェクトフォルダ。
 - Git・**Node.js 22以降**・**PowerShell 7**（`pwsh`）。以下はWindows PowerShell 5.1ではなくPowerShell 7で実行します。
 - ツール・依存物を初回取得するためのインターネット接続。

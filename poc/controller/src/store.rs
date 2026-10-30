@@ -1,8 +1,12 @@
 use crate::archive::{ArchiveInput, ArchiveSummary};
 use crate::png_image::{crop_same_format, decode, decode_rendered, decode_stored, is_jpeg, sha256, CropRect, DecodedPng, MAX_PNG_BYTES};
 use serde::{Deserialize, Serialize};
+use crate::mutation::{MutationError, MutationResult};
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashSet};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
+#[cfg(not(target_os = "linux"))]
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -306,6 +310,8 @@ pub struct Store {
     manifest: Manifest,
     lock: Option<JobLock>,
     pending: Option<PendingCapture>,
+    durability_uncertain: Cell<bool>,
+    reopen_required: Cell<bool>,
 }
 
 // Kept outside the browser profile so the browser can be closed and its own
@@ -321,11 +327,12 @@ pub fn lock_data_directory(path: &Path) -> Result<DataLock, StoreError> {
 impl Store {
     pub fn create(base: &Path) -> Result<Self, StoreError> {
         ensure_real_directory(base)?;
+        validate_private_directory(base)?;
         let jobs = base.join("jobs");
         match fs::symlink_metadata(&jobs) {
-            Ok(_) => ensure_real_directory(&jobs)?,
+            Ok(_) => { ensure_real_directory(&jobs)?; validate_private_directory(&jobs)?; },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                fs::create_dir(&jobs).map_err(|_| StoreError("job_create_failed"))?;
+                create_directory(&jobs).map_err(|error| mutation_error(error, "job_create_failed"))?;
                 if let Err(error) = apply_current_user_acl(&jobs) {
                     let _ = fs::remove_dir(&jobs);
                     return Err(error);
@@ -336,7 +343,7 @@ impl Store {
         for _ in 0..16 {
             let job_id = new_job_id();
             let path = jobs.join(&job_id);
-            match fs::create_dir(&path) {
+            match create_directory(&path) {
                 Ok(()) => {
                     if let Err(error) = apply_current_user_acl(&path) {
                         let _ = fs::remove_dir(&path);
@@ -364,14 +371,14 @@ impl Store {
                         reset_files: Vec::new(),
                     };
                     for name in ["originals", "pending", "rendered"] {
-                        fs::create_dir(path.join(name)).map_err(|_| StoreError("job_create_failed"))?;
+                        create_directory(&path.join(name)).map_err(|error| mutation_error(error, "job_create_failed"))?;
                     }
                     let lock = acquire_job_lock(&path)?;
                     write_manifest(&path, &manifest, false)?;
-                    return Ok(Self { path, manifest, lock: Some(lock), pending: None });
+                    return Ok(Self { path, manifest, lock: Some(lock), pending: None, durability_uncertain: Cell::new(false), reopen_required: Cell::new(false) });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(_) => return Err(StoreError("job_create_failed")),
+                Err(error) => return Err(mutation_error(error, "job_create_failed")),
             }
         }
         Err(StoreError("job_create_failed"))
@@ -379,8 +386,10 @@ impl Store {
 
     pub fn open(path: &Path) -> Result<Self, StoreError> {
         ensure_real_directory(path)?;
+        validate_private_directory(path)?;
         for name in ["originals", "pending", "rendered"] {
             ensure_real_directory(&path.join(name))?;
+            validate_private_directory(&path.join(name))?;
         }
         let lock = acquire_job_lock(path)?;
         let manifest_path = path.join("manifest.json");
@@ -400,7 +409,7 @@ impl Store {
             return Err(StoreError("unsupported_manifest"));
         }
         validate_manifest(&manifest)?;
-        let mut store = Self { path: path.to_path_buf(), manifest, lock: Some(lock), pending: None };
+        let mut store = Self { path: path.to_path_buf(), manifest, lock: Some(lock), pending: None, durability_uncertain: Cell::new(false), reopen_required: Cell::new(false) };
         // A persisted deletion journal is already explicitly authorized. Never
         // publish old image records after an interrupted reset.
         if !store.manifest.reset_files.is_empty() { store.finish_reset()?; }
@@ -423,6 +432,7 @@ impl Store {
     pub fn manifest(&self) -> &Manifest { &self.manifest }
 
     pub fn reset_images(&mut self) -> Result<JobSnapshot, StoreError> {
+        self.ensure_mutable()?;
         if self.pending.is_some() || self.manifest.state == JobState::Capturing {
             return Err(StoreError("capture_pending"));
         }
@@ -450,13 +460,14 @@ impl Store {
             self.manifest.state = JobState::Ready;
             // Do not reuse IDs: stale image requests cannot resolve new images.
             self.manifest.reset_files = files;
-            if let Err(error) = self.persist() { self.manifest = previous; return Err(error); }
+            self.persist_checked(previous)?;
         }
         self.finish_reset()?;
         self.snapshot()
     }
 
     fn finish_reset(&mut self) -> Result<(), StoreError> {
+        self.ensure_mutable()?;
         for relative in &self.manifest.reset_files {
             if !reset_owned_path(relative) { return Err(StoreError("manifest_path_invalid")); }
             let file = self.path.join(relative);
@@ -465,14 +476,16 @@ impl Store {
                 Err(_) => return Err(StoreError("reset_cleanup_failed")),
                 Ok(_) => ensure_regular_file(&file)?,
             }
-            fs::remove_file(file).map_err(|_| StoreError("reset_cleanup_failed"))?;
+            #[cfg(test)]
+            injected_failure(TestFailure::ResetCleanup).map_err(|_| StoreError("reset_cleanup_failed"))?;
+            self.mutation(remove_file(&file), "reset_cleanup_failed")?;
         }
         let previous = self.manifest.clone();
         self.manifest.reset_files.clear();
         self.manifest.state = JobState::Ready;
         self.manifest.range_confirmed = false;
         self.manifest.range_confirmed_at_ms = None;
-        if let Err(error) = self.persist() { self.manifest = previous; return Err(error); }
+        self.persist_checked(previous)?;
         Ok(())
     }
 
@@ -491,12 +504,13 @@ impl Store {
             }
         }
         if self.manifest.images.iter().zip(&previous.images).any(|(a,b)| a.split.is_some() != b.split.is_some()) {
-            if self.persist().is_err() { self.manifest = previous; return Err(StoreError("manifest_write_failed")); }
+            self.persist_checked(previous)?;
         }
         Ok(())
     }
 
     pub fn set_capture_settings(&mut self, settings: CaptureSettings) -> Result<JobSnapshot, StoreError> {
+        self.ensure_mutable()?;
         if self.pending.is_some() || self.manifest.state == JobState::Capturing {
             return Err(StoreError("wrong_state"));
         }
@@ -505,14 +519,12 @@ impl Store {
         }
         let previous = self.manifest.clone();
         self.manifest.capture_settings = settings;
-        if self.persist().is_err() {
-            self.manifest = previous;
-            return Err(StoreError("manifest_write_failed"));
-        }
+        self.persist_checked(previous)?;
         self.snapshot()
     }
 
     pub fn start_capture(&mut self) -> Result<JobState, StoreError> {
+        self.ensure_mutable()?;
         if !self.manifest.reset_files.is_empty() { return Err(StoreError("reset_cleanup_failed")); }
         if self.manifest.state != JobState::Ready || self.pending.is_some() {
             return Err(StoreError("wrong_state"));
@@ -522,6 +534,7 @@ impl Store {
     }
 
     pub fn pause_capture(&mut self) -> Result<JobState, StoreError> {
+        self.ensure_mutable()?;
         if self.manifest.state != JobState::Capturing {
             return Err(StoreError("wrong_state"));
         }
@@ -530,6 +543,7 @@ impl Store {
     }
 
     pub fn stop_capture(&mut self) -> Result<JobState, StoreError> {
+        self.ensure_mutable()?;
         if !matches!(self.manifest.state, JobState::Ready | JobState::Capturing | JobState::Paused | JobState::NeedsAttention | JobState::Interrupted) {
             return Err(StoreError("wrong_state"));
         }
@@ -538,6 +552,7 @@ impl Store {
     }
 
     pub fn confirm_resume(&mut self, last_capture_id: Option<u64>, target_confirmed: bool) -> Result<JobState, StoreError> {
+        self.ensure_mutable()?;
         if self.pending.is_some() || !matches!(self.manifest.state,
             JobState::Paused | JobState::Interrupted | JobState::NeedsAttention | JobState::Stopped | JobState::Review)
             || !target_confirmed || last_capture_id != self.manifest.last_capture_id
@@ -553,6 +568,7 @@ impl Store {
     }
 
     pub fn begin_capture(&mut self) -> Result<u64, StoreError> {
+        self.ensure_mutable()?;
         if self.manifest.state != JobState::Capturing {
             return Err(StoreError("wrong_state"));
         }
@@ -565,22 +581,21 @@ impl Store {
         }
         let previous = self.manifest.clone();
         self.manifest.next_capture_id += 1;
-        if self.persist().is_err() {
-            self.manifest = previous;
-            return Err(StoreError("manifest_write_failed"));
-        }
+        self.persist_checked(previous)?;
         let pending_dir = self.path.join("pending");
         ensure_real_directory(&pending_dir)?;
+        validate_private_directory(&pending_dir)?;
         let path = pending_dir.join(format!("{capture_id:06}.upload"));
         if fs::symlink_metadata(&path).is_ok() {
             return Err(StoreError("pending_exists"));
         }
-        let file = OpenOptions::new().write(true).create_new(true).open(&path).map_err(|_| StoreError("pending_create_failed"))?;
+        let file = self.mutation(create_file(&path, false), "pending_create_failed")?;
         self.pending = Some(PendingCapture { capture_id, path, bytes: 0, file: Some(file) });
         Ok(capture_id)
     }
 
     pub fn write_capture_chunk(&mut self, capture_id: u64, bytes: &[u8]) -> Result<u64, StoreError> {
+        self.ensure_mutable()?;
         if bytes.is_empty() || bytes.len() > MAX_CHUNK_BYTES {
             return Err(StoreError("invalid_chunk"));
         }
@@ -607,6 +622,7 @@ impl Store {
     }
 
     pub fn record_advance(&mut self, capture_id: u64, dispatch: String) -> Result<(), StoreError> {
+        self.ensure_mutable()?;
         let checkpoint = self.manifest.checkpoint.as_ref().ok_or(StoreError("resume_checkpoint_required"))?;
         if self.manifest.state != JobState::Capturing || checkpoint.capture_id != capture_id
             || self.manifest.last_capture_id != Some(capture_id)
@@ -615,11 +631,12 @@ impl Store {
         }
         let previous = self.manifest.clone();
         self.manifest.checkpoint.as_mut().unwrap().dispatch = dispatch;
-        if let Err(error) = self.persist() { self.manifest = previous; return Err(error); }
+        self.persist_checked(previous)?;
         Ok(())
     }
 
     pub fn commit_capture_at(&mut self, book: Option<BookIdentity>, position: Option<String>) -> Result<CaptureResult, StoreError> {
+        self.ensure_mutable()?;
         if position.as_ref().is_some_and(|value| value.is_empty() || value.chars().count() > 200) {
             return Err(StoreError("invalid_capture_position"));
         }
@@ -650,7 +667,9 @@ impl Store {
             Err(code) => {
                 let previous = self.manifest.clone();
                 self.manifest.state = JobState::NeedsAttention;
-                if self.persist().is_err() { self.manifest = previous; }
+                if let Err(error) = self.persist_checked(previous) {
+                    if self.durability_uncertain.get() { return Err(error); }
+                }
                 return Err(StoreError(code));
             }
         };
@@ -665,12 +684,14 @@ impl Store {
         let quality = self.manifest.capture_settings.jpeg_quality;
         let relative = format!("originals/{pending_id:06}.{}", format.extension());
         ensure_real_directory(&self.path.join("originals"))?;
+        validate_private_directory(&self.path.join("originals"))?;
         let destination = self.path.join(&relative);
         if fs::symlink_metadata(&destination).is_ok() {
             return Err(StoreError("capture_conflict"));
         }
-        let mut destination_file = OpenOptions::new().write(true).create_new(true).open(&destination)
-            .map_err(|error| StoreError(if error.kind() == std::io::ErrorKind::AlreadyExists { "capture_conflict" } else { "capture_commit_failed" }))?;
+        let created = create_file(&destination, false);
+        let code = if created.as_ref().is_err_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists) { "capture_conflict" } else { "capture_commit_failed" };
+        let mut destination_file = self.mutation(created, code)?;
         if destination_file.write_all(&bytes).is_err() || destination_file.sync_all().is_err() {
             return Err(StoreError("capture_commit_failed"));
         }
@@ -708,12 +729,13 @@ impl Store {
         self.manifest.checkpoint = position.map(|position| CaptureCheckpoint { capture_id: pending_id, position, dispatch: "not_sent".to_owned() });
         self.manifest.selected_capture_ids.push(pending_id);
         self.manifest.images.push(record);
-        if self.persist().is_err() {
-            self.manifest = previous;
-            return Err(StoreError("manifest_write_failed"));
-        }
+        self.persist_checked(previous)?;
         self.pending = None;
-        let cleanup_warning = fs::remove_file(&pending_path).is_err();
+        let cleanup_warning = match self.mutation(remove_file(&pending_path), "pending_cleanup_failed") {
+            Ok(()) => false,
+            Err(error) if self.durability_uncertain.get() => return Err(error),
+            Err(_) => true,
+        };
         Ok(CaptureResult {
             capture_id: pending_id,
             width: decoded.width,
@@ -728,10 +750,12 @@ impl Store {
     }
 
     pub fn abort_capture(&mut self) -> Result<(), StoreError> {
+        self.ensure_mutable()?;
         let pending = self.pending.as_mut().ok_or(StoreError("capture_not_started"))?;
         pending.file.take();
-        ensure_regular_file(&pending.path)?;
-        fs::remove_file(&pending.path).map_err(|_| StoreError("pending_cleanup_failed"))?;
+        let path = pending.path.clone();
+        ensure_regular_file(&path)?;
+        self.mutation(remove_file(&path), "pending_cleanup_failed")?;
         self.pending = None;
         if self.manifest.state == JobState::Capturing {
             self.update_state(JobState::NeedsAttention)?;
@@ -740,6 +764,7 @@ impl Store {
     }
 
     pub fn set_review_order(&mut self, order: Vec<u64>) -> Result<JobSnapshot, StoreError> {
+        self.ensure_mutable()?;
         if self.pending.is_some() || self.manifest.state == JobState::Capturing {
             return Err(StoreError("wrong_state"));
         }
@@ -752,24 +777,19 @@ impl Store {
         self.manifest.selected_capture_ids = order;
         self.manifest.excluded_capture_ids = known.difference(&selected).copied().collect::<BTreeSet<_>>().into_iter().collect();
         self.manifest.state = JobState::Review;
-        if self.persist().is_err() {
-            self.manifest = previous;
-            return Err(StoreError("manifest_write_failed"));
-        }
+        self.persist_checked(previous)?;
         self.snapshot()
     }
 
     pub fn confirm_range(&mut self, confirmed: bool) -> Result<JobSnapshot, StoreError> {
+        self.ensure_mutable()?;
         if self.pending.is_some() || self.manifest.state == JobState::Capturing {
             return Err(StoreError("capture_in_progress"));
         }
         let previous = self.manifest.clone();
         self.manifest.range_confirmed = confirmed;
         self.manifest.range_confirmed_at_ms = if confirmed { Some(now_ms()) } else { None };
-        if self.persist().is_err() {
-            self.manifest = previous;
-            return Err(StoreError("manifest_write_failed"));
-        }
+        self.persist_checked(previous)?;
         self.snapshot()
     }
 
@@ -793,6 +813,7 @@ impl Store {
     }
 
     pub fn crop_image(&mut self, capture_id: u64, x: u32, y: u32, width: u32, height: u32) -> Result<CropResult, StoreError> {
+        self.ensure_mutable()?;
         if self.manifest.state != JobState::Review || self.pending.is_some() {
             return Err(StoreError("wrong_state"));
         }
@@ -823,16 +844,14 @@ impl Store {
         image.crop = Some(crop.clone());
         image.split = split;
         self.manifest.next_render_version = split_version.map(|value| value + 1).unwrap_or(version + 1);
-        if self.persist().is_err() {
-            self.manifest = previous;
-            return Err(StoreError("manifest_write_failed"));
-        }
+        self.persist_checked(previous)?;
         Ok(CropResult { crop, cleanup_warning: false })
     }
 
     // Review changes only the derived output. Never overwrite originals or
     // prior exports; require an explicit order for each requested split.
     pub fn set_page_layout(&mut self, capture_id: u64, mode: PageOutputMode, first_page: PageSide) -> Result<JobSnapshot, StoreError> {
+        self.ensure_mutable()?;
         if self.manifest.state != JobState::Review || self.pending.is_some() { return Err(StoreError("wrong_state")); }
         let source = self.manifest.images.iter().find(|image| image.capture_id == capture_id).ok_or(StoreError("capture_not_found"))?.clone();
         let (bytes, _, _, _) = self.read_selected(&source)?;
@@ -848,11 +867,12 @@ impl Store {
         image.page_layout = Some(mode);
         image.layout_override = true;
         if mode == PageOutputMode::SplitSpread { self.manifest.next_render_version += 1; }
-        if self.persist().is_err() { self.manifest = previous; return Err(StoreError("manifest_write_failed")); }
+        self.persist_checked(previous)?;
         self.snapshot()
     }
 
     pub fn reset_crop(&mut self, capture_id: u64) -> Result<JobSnapshot, StoreError> {
+        self.ensure_mutable()?;
         if self.manifest.state != JobState::Review || self.pending.is_some() { return Err(StoreError("wrong_state")); }
         let source = self.manifest.images.iter().find(|image| image.capture_id == capture_id).ok_or(StoreError("capture_not_found"))?.clone();
         let bytes = self.read_original(&source)?;
@@ -866,7 +886,7 @@ impl Store {
         let image = self.manifest.images.iter_mut().find(|image| image.capture_id == capture_id).ok_or(StoreError("capture_not_found"))?;
         image.crop = None; image.split = split;
         if source.split.is_some() { self.manifest.next_render_version += 1; }
-        if self.persist().is_err() { self.manifest = previous; return Err(StoreError("manifest_write_failed")); }
+        self.persist_checked(previous)?;
         self.snapshot()
     }
 
@@ -875,6 +895,7 @@ impl Store {
     }
 
     pub fn export_progress(&mut self, destination: &Path, format: ArchiveFormat, progress: &mut impl FnMut(usize, usize, &'static str)) -> Result<ExportResult, StoreError> {
+        self.ensure_mutable()?;
         if self.pending.is_some() || self.manifest.state == JobState::Capturing {
             return Err(StoreError("capture_in_progress"));
         }
@@ -898,10 +919,30 @@ impl Store {
             name: format!("{:06}.{}", index + 1, path.extension().and_then(|ext| ext.to_str()).unwrap_or("png")), path, bytes: *bytes, sha256: digest, width: *width, height: *height, allow_black: *allow_black,
         }).collect();
         let parent = destination.parent().ok_or(StoreError("invalid_output_path"))?;
+        #[cfg(target_os = "linux")]
+        let (summary, cleanup_warning) = {
+            let mut stage = self.mutation(crate::linux_fs::ExportStage::new(&destination), "archive_temp_create_failed")?;
+            let summary: ArchiveSummary = crate::archive::write_and_verify_progress(&mut stage.file, &inputs, progress).map_err(StoreError)?;
+            if let Err(error) = stage.publish() {
+                let code = if error.applied() {
+                    self.durability_uncertain.set(true);
+                    "output_published_durability_uncertain"
+                } else if error.kind() == std::io::ErrorKind::InvalidData {
+                    self.reopen_required.set(true);
+                    "output_path_changed"
+                } else if error.kind() == std::io::ErrorKind::AlreadyExists { "output_exists" }
+                else { "output_publish_failed" };
+                return Err(StoreError(code));
+            }
+            let warning = stage.finish();
+            (summary, warning)
+        };
+        #[cfg(not(target_os = "linux"))]
+        let (summary, cleanup_warning) = {
         let temp_path = (0..16).find_map(|_| {
             let suffix = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
             let candidate = parent.join(format!(".partial-{}-{}-{}.tmp", self.manifest.job_id, std::process::id(), suffix));
-            match OpenOptions::new().read(true).write(true).create_new(true).open(&candidate) {
+            match create_file(&candidate, true) {
                 Ok(file) => Some((candidate, file)),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
                 Err(_) => None,
@@ -912,19 +953,22 @@ impl Store {
             Ok(summary) => summary,
             Err(error) => {
                 drop(temp_file);
-                let _ = fs::remove_file(&temp_path);
+                let _ = remove_file(&temp_path);
                 return Err(StoreError(error));
             }
         };
         drop(temp_file);
-        match fs::hard_link(&temp_path, &destination) {
+        match publish_new(&temp_path, &destination) {
             Ok(()) => {},
             Err(error) => {
-                let _ = fs::remove_file(&temp_path);
+                let _ = remove_file(&temp_path);
                 return Err(StoreError(if error.kind() == std::io::ErrorKind::AlreadyExists { "output_exists" } else { "output_publish_failed" }));
             }
         }
-        let cleanup_warning = fs::remove_file(&temp_path).is_err();
+        let cleanup_warning = remove_file(&temp_path).is_err();
+        (summary, cleanup_warning)
+        };
+        let _ = parent;
         let record = ExportRecord {
             file_name: file_name.clone(), destination: Some(output_destination), format: format.as_str().to_owned(), bytes: summary.bytes,
             sha256: summary.sha256.clone(), entry_count: summary.entries,
@@ -932,9 +976,10 @@ impl Store {
         };
         let previous = self.manifest.clone();
         self.manifest.exports.push(record);
-        if self.persist().is_err() {
-            self.manifest = previous;
-            return Err(StoreError("output_published_manifest_update_failed"));
+        if let Err(error) = self.persist_checked(previous) {
+            self.reopen_required.set(true);
+            return Err(if self.durability_uncertain.get() { StoreError("output_published_manifest_durability_uncertain") }
+                else { let _ = error; StoreError("output_published_manifest_update_failed") });
         }
         Ok(ExportResult {
             file_name, format: format.as_str().to_owned(), bytes: summary.bytes,
@@ -944,6 +989,7 @@ impl Store {
     }
 
     pub fn close(mut self) -> Result<(), StoreError> {
+        if let Err(error) = self.ensure_mutable() { self.lock.take(); return Err(error); }
         if self.manifest.state == JobState::Capturing {
             self.manifest.state = JobState::Interrupted;
             self.persist()?;
@@ -953,18 +999,41 @@ impl Store {
     }
 
     fn update_state(&mut self, state: JobState) -> Result<(), StoreError> {
+        self.ensure_mutable()?;
         let previous = self.manifest.clone();
         self.manifest.state = state;
-        if self.persist().is_err() {
-            self.manifest = previous;
-            return Err(StoreError("manifest_write_failed"));
-        }
+        self.persist_checked(previous)?;
         Ok(())
     }
 
     fn persist(&mut self) -> Result<(), StoreError> {
+        self.ensure_mutable()?;
         self.manifest.updated_at_ms = now_ms();
-        write_manifest(&self.path, &self.manifest, true)
+        let result = write_manifest(&self.path, &self.manifest, true);
+        if result.as_ref().is_err_and(|error| error.code() == "storage_durability_uncertain") { self.durability_uncertain.set(true); }
+        result
+    }
+
+    fn persist_checked(&mut self, previous: Manifest) -> Result<(), StoreError> {
+        match self.persist() {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                if !self.durability_uncertain.get() { self.manifest = previous; }
+                Err(error)
+            }
+        }
+    }
+
+    fn ensure_mutable(&self) -> Result<(), StoreError> {
+        if self.durability_uncertain.get() || self.reopen_required.get() { Err(StoreError("storage_reopen_required")) }
+        else { Ok(()) }
+    }
+
+    fn mutation<T>(&self, result: MutationResult<T>, code: &'static str) -> Result<T, StoreError> {
+        result.map_err(|error| {
+            if error.applied() { self.durability_uncertain.set(true); }
+            mutation_error(error, code)
+        })
     }
 
     fn read_original(&self, image: &ImageRecord) -> Result<Vec<u8>, StoreError> {
@@ -999,10 +1068,12 @@ impl Store {
     }
 
     fn write_rendered(&self, relative: &str, bytes: &[u8], expected: &DecodedPng, write_error: &'static str, verify_error: &'static str) -> Result<(), StoreError> {
+        self.ensure_mutable()?;
         ensure_real_directory(&self.path.join("rendered"))?;
+        validate_private_directory(&self.path.join("rendered"))?;
         let destination = self.path.join(relative);
         if fs::symlink_metadata(&destination).is_ok() { return Err(StoreError(write_error)); }
-        let mut file = OpenOptions::new().write(true).create_new(true).open(&destination).map_err(|_| StoreError(write_error))?;
+        let mut file = self.mutation(create_file(&destination, false), write_error)?;
         if file.write_all(bytes).is_err() || file.sync_all().is_err() { return Err(StoreError(write_error)); }
         drop(file);
         let committed = read_bounded(&destination, MAX_PNG_BYTES as u64).map_err(|_| StoreError(verify_error))?;
@@ -1080,6 +1151,8 @@ impl Store {
     fn inspect_internal(&self) -> Result<JobSnapshot, StoreError> {
         ensure_real_directory(&self.path)?;
         let mut issues = Vec::new();
+        if self.durability_uncertain.get() { issues.push("storage_durability_uncertain".to_owned()); }
+        if self.reopen_required.get() { issues.push("storage_reopen_required".to_owned()); }
         let mut referenced = HashSet::<String>::new();
         let mut latest = 0_u64;
         for image in &self.manifest.images {
@@ -1156,7 +1229,7 @@ impl Store {
 impl Drop for Store {
     fn drop(&mut self) {
         // A live capture is deliberately left uncommitted and is never auto-resumed.
-        if self.manifest.state == JobState::Capturing {
+        if self.ensure_mutable().is_ok() && self.manifest.state == JobState::Capturing {
             self.manifest.state = JobState::Interrupted;
             self.manifest.updated_at_ms = now_ms();
             let _ = write_manifest(&self.path, &self.manifest, true);
@@ -1284,10 +1357,15 @@ fn ensure_regular_file(path: &Path) -> Result<(), StoreError> {
     ensure_no_reparse_chain(path)?;
     let metadata = fs::symlink_metadata(path).map_err(|_| StoreError("file_not_found"))?;
     if !metadata.is_file() || metadata.file_type().is_symlink() { return Err(StoreError("file_invalid")); }
+    #[cfg(target_os = "linux")]
+    {
+        validate_private_directory(path.parent().ok_or(StoreError("invalid_path"))?)?;
+        crate::linux_fs::private_metadata(&metadata, false).map_err(|_| StoreError("file_permissions_invalid"))?;
+    }
     Ok(())
 }
 
-fn open_existing_regular(path: &Path) -> Result<File, StoreError> {
+pub(crate) fn open_existing_regular(path: &Path) -> Result<File, StoreError> {
     ensure_regular_file(path)?;
     #[cfg(windows)]
     {
@@ -1301,9 +1379,13 @@ fn open_existing_regular(path: &Path) -> Result<File, StoreError> {
         }
         Ok(file)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     {
-        File::open(path).map_err(|_| StoreError("file_read_failed"))
+        crate::linux_fs::open_regular(path, false, false, false).map_err(|_| StoreError("file_read_failed"))
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        Err(StoreError("storage_unsupported"))
     }
 }
 
@@ -1332,6 +1414,9 @@ fn read_bounded(path: &Path, max_bytes: u64) -> Result<Vec<u8>, &'static str> {
 
 fn write_manifest(path: &Path, manifest: &Manifest, replace: bool) -> Result<(), StoreError> {
     ensure_real_directory(path)?;
+    validate_private_directory(path)?;
+    #[cfg(test)]
+    injected_failure(TestFailure::ManifestWrite).map_err(|_| StoreError("manifest_write_failed"))?;
     let manifest_path = path.join("manifest.json");
     if replace {
         ensure_regular_file(&manifest_path)?;
@@ -1340,24 +1425,33 @@ fn write_manifest(path: &Path, manifest: &Manifest, replace: bool) -> Result<(),
     }
     let bytes = serde_json::to_vec(manifest).map_err(|_| StoreError("manifest_write_failed"))?;
     let temp_path = path.join(format!(".manifest-{}-{}.tmp", std::process::id(), TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)));
-    let mut file = OpenOptions::new().write(true).create_new(true).open(&temp_path).map_err(|_| StoreError("manifest_write_failed"))?;
+    let mut file = create_file(&temp_path, false).map_err(|error| mutation_error(error, "manifest_write_failed"))?;
     if file.write_all(&bytes).is_err() || file.sync_all().is_err() {
         drop(file);
-        let _ = fs::remove_file(&temp_path);
+        if remove_file(&temp_path).is_err_and(|error| error.applied()) { return Err(StoreError("storage_durability_uncertain")); }
         return Err(StoreError("manifest_write_failed"));
     }
     drop(file);
     let result = if replace {
         replace_file(&temp_path, &manifest_path)
     } else {
-        fs::hard_link(&temp_path, &manifest_path).map_err(|_| StoreError("manifest_write_failed"))
+        publish_new(&temp_path, &manifest_path).map_err(|error| mutation_error(error, "manifest_write_failed"))
     };
     if result.is_err() {
-        let _ = fs::remove_file(&temp_path);
+        if result.as_ref().is_err_and(|error| error.code() == "storage_durability_uncertain") { return result; }
+        if remove_file(&temp_path).is_err_and(|error| error.applied()) { return Err(StoreError("storage_durability_uncertain")); }
         return result;
     }
-    if fs::remove_file(&temp_path).is_err() {
-        // The destination is durable; an extra uniquely-owned manifest temp is visible on recovery.
+    if !replace {
+        let cleanup = remove_file(&temp_path);
+        #[cfg(target_os = "linux")]
+        if cleanup.is_err() {
+        // Initial publication is already applied. A leftover hard link would
+        // violate the private single-link file contract; do not report success.
+        return Err(StoreError("storage_durability_uncertain"));
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = cleanup;
     }
     Ok(())
 }
@@ -1373,9 +1467,14 @@ fn replace_file(source: &Path, destination: &Path) -> Result<(), StoreError> {
     if result == 0 { Err(StoreError("manifest_write_failed")) } else { Ok(()) }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn replace_file(source: &Path, destination: &Path) -> Result<(), StoreError> {
-    fs::rename(source, destination).map_err(|_| StoreError("manifest_write_failed"))
+    crate::linux_fs::publish(source, destination, true).map_err(|error| mutation_error(error, "manifest_write_failed"))
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn replace_file(_source: &Path, _destination: &Path) -> Result<(), StoreError> {
+    Err(StoreError("storage_unsupported"))
 }
 
 fn validate_output_path(path: &Path, format: ArchiveFormat) -> Result<(PathBuf, String), StoreError> {
@@ -1399,7 +1498,7 @@ pub fn create_private_session_directory(path: &Path) -> Result<String, StoreErro
     let parent = path.parent().ok_or(StoreError("invalid_path"))?;
     ensure_real_directory(parent)?;
     if fs::symlink_metadata(path).is_ok() { return Err(StoreError("directory_exists")); }
-    fs::create_dir(path).map_err(|_| StoreError("directory_create_failed"))?;
+    create_directory(path).map_err(|error| mutation_error(error, "directory_create_failed"))?;
     if let Err(error) = apply_current_user_acl(path) {
         let _ = fs::remove_dir(path);
         return Err(error);
@@ -1429,9 +1528,70 @@ fn apply_current_user_acl(path: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn apply_current_user_acl(path: &Path) -> Result<(), StoreError> {
+    // Never chmod or chown an existing user directory to make it pass.
+    validate_private_directory(path)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn apply_current_user_acl(_path: &Path) -> Result<(), StoreError> {
     Err(StoreError("acl_unsupported"))
+}
+
+fn validate_private_directory(_path: &Path) -> Result<(), StoreError> {
+    #[cfg(target_os = "linux")]
+    crate::linux_fs::private_directory(_path).map_err(|_| StoreError("directory_permissions_invalid"))?;
+    Ok(())
+}
+
+fn mutation_error(error: MutationError, code: &'static str) -> StoreError {
+    StoreError(if error.applied() { "storage_durability_uncertain" } else { code })
+}
+
+fn create_directory(path: &Path) -> MutationResult<()> {
+    #[cfg(target_os = "linux")]
+    { crate::linux_fs::create_directory(path) }
+    #[cfg(not(target_os = "linux"))]
+    { fs::create_dir(path).map_err(Into::into) }
+}
+
+fn create_file(path: &Path, _read: bool) -> MutationResult<File> {
+    #[cfg(target_os = "linux")]
+    { crate::linux_fs::open_regular(path, true, true, true) }
+    #[cfg(not(target_os = "linux"))]
+    { OpenOptions::new().read(_read).write(true).create_new(true).open(path).map_err(Into::into) }
+}
+
+fn remove_file(path: &Path) -> MutationResult<()> {
+    #[cfg(target_os = "linux")]
+    { crate::linux_fs::remove_file(path) }
+    #[cfg(not(target_os = "linux"))]
+    { fs::remove_file(path).map_err(Into::into) }
+}
+
+fn publish_new(source: &Path, destination: &Path) -> MutationResult<()> {
+    #[cfg(target_os = "linux")]
+    { crate::linux_fs::publish(source, destination, false) }
+    #[cfg(not(target_os = "linux"))]
+    { fs::hard_link(source, destination).map_err(Into::into) }
+}
+
+// Thread-local, one-shot faults exercise the real journal/rollback branches on
+// Unix, where an open file does not prohibit unlink or manifest replacement.
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TestFailure { ResetCleanup, ManifestWrite }
+#[cfg(test)]
+thread_local! { static TEST_FAILURE: std::cell::Cell<Option<TestFailure>> = const { std::cell::Cell::new(None) }; }
+#[cfg(test)]
+fn injected_failure(point: TestFailure) -> std::io::Result<()> {
+    TEST_FAILURE.with(|failure| {
+        if failure.get() == Some(point) {
+            failure.set(None);
+            Err(std::io::Error::other("injected storage failure"))
+        } else { Ok(()) }
+    })
 }
 
 #[cfg(windows)]
@@ -1489,10 +1649,28 @@ impl Drop for JobLock {
     }
 }
 
-#[cfg(not(windows))]
-struct JobLock;
+#[cfg(target_os = "linux")]
+struct JobLock { _file: File }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn acquire_job_lock(path: &Path) -> Result<JobLock, StoreError> {
+    ensure_real_directory(path)?;
+    validate_private_directory(path)?;
+    let lock_path = path.join(".job.lock");
+    if fs::symlink_metadata(&lock_path).is_ok() { ensure_regular_file(&lock_path)?; }
+    let file = crate::linux_fs::open_regular(&lock_path, true, true, false).map_err(|error| mutation_error(error, "job_lock_failed"))?;
+    // flock-based, nonblocking on Linux. File owns the lock; process death also
+    // releases it. Never unlink the lock inode (which would permit split locks).
+    file.try_lock().map_err(|error| StoreError(match error {
+        std::fs::TryLockError::WouldBlock => "job_busy",
+        std::fs::TryLockError::Error(_) => "job_lock_failed",
+    }))?;
+    Ok(JobLock { _file: file })
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+struct JobLock;
+#[cfg(not(any(windows, target_os = "linux")))]
 fn acquire_job_lock(_path: &Path) -> Result<JobLock, StoreError> {
     Err(StoreError("job_lock_unsupported"))
 }
@@ -1510,7 +1688,7 @@ mod tests {
             let base = fs::canonicalize(base).unwrap();
             for _ in 0..32 {
                 let path = base.join(format!("{label}-{}-{}", std::process::id(), TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)));
-                match fs::create_dir(&path) {
+                match create_directory(&path) {
                     Ok(()) => return Self(path),
                     Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                     Err(error) => panic!("failed to create test directory: {error}"),
@@ -1557,6 +1735,7 @@ mod tests {
 
     #[test]
     fn reset_rejects_writer_and_recovers_durable_cleanup_without_reviving_images() {
+        #[cfg(windows)]
         use std::os::windows::fs::OpenOptionsExt;
         let temp = TempDir::new("reset");
         let mut store = Store::create(&temp.0).unwrap();
@@ -1576,7 +1755,10 @@ mod tests {
         store.set_review_order(vec![]).unwrap();
         let original = store.path.join(&store.manifest.images[0].path);
         fs::write(store.path.join("keep.zip"), b"existing-output").unwrap();
+        #[cfg(windows)]
         let locked = OpenOptions::new().read(true).share_mode(1).open(&original).unwrap();
+        #[cfg(not(windows))]
+        TEST_FAILURE.with(|failure| failure.set(Some(TestFailure::ResetCleanup)));
         assert_eq!(store.reset_images().unwrap_err().code(), "reset_cleanup_failed");
         assert!(store.manifest.images.is_empty());
         assert!(!store.manifest.reset_files.is_empty());
@@ -1587,6 +1769,7 @@ mod tests {
         store.confirm_range(true).unwrap();
         let path = store.path.clone();
         store.close().unwrap();
+        #[cfg(windows)]
         drop(locked);
         let mut reopened = Store::open(&path).unwrap();
         assert!(!original.exists());
@@ -1607,6 +1790,7 @@ mod tests {
 
     #[test]
     fn reset_preflight_refuses_unowned_paths_and_manifest_failure_preserves_originals() {
+        #[cfg(windows)]
         use std::os::windows::fs::OpenOptionsExt;
         let temp = TempDir::new("reset-failure");
         let mut store = Store::create(&temp.0).unwrap();
@@ -1619,10 +1803,14 @@ mod tests {
         assert_eq!(store.reset_images().unwrap_err().code(), "reset_unowned_file");
         assert!(original.exists());
         fs::remove_file(unknown).unwrap();
+        #[cfg(windows)]
         let locked = OpenOptions::new().read(true).share_mode(1).open(store.path.join("manifest.json")).unwrap();
+        #[cfg(not(windows))]
+        TEST_FAILURE.with(|failure| failure.set(Some(TestFailure::ManifestWrite)));
         assert!(store.reset_images().is_err());
         assert_eq!(store.manifest.images.len(), 1);
         assert!(original.exists());
+        #[cfg(windows)]
         drop(locked);
         store.reset_images().unwrap();
         assert!(!original.exists());
@@ -1861,5 +2049,356 @@ mod tests {
             Ok(opened) => { drop(opened); panic!("escaping manifest path unexpectedly opened"); }
         }
         assert_eq!(fs::read(outside).unwrap(), b"keep");
+    }
+
+    #[cfg(target_os = "linux")]
+    mod linux_safety {
+        use super::*;
+        use std::io::{BufRead, BufReader};
+        use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+        use std::process::{Command, Stdio};
+
+        #[test]
+        fn private_creation_is_independent_of_permissive_umask() {
+            // Change only a child shell's umask, never the parallel test process.
+            let status = Command::new("sh").args(["-c", "umask 000; exec \"$@\"", "ktz-umask-test"])
+                .arg(std::env::current_exe().unwrap())
+                .args(["--exact", "store::tests::linux_safety::private_creation_child", "--ignored", "--nocapture"])
+                .env("KTZ_TEST_PRIVATE_CREATION", "1").status().unwrap();
+            assert!(status.success());
+        }
+
+        #[test]
+        #[ignore = "subprocess helper; exercised by private_creation_is_independent_of_permissive_umask"]
+        fn private_creation_child() {
+            assert!(std::env::var_os("KTZ_TEST_PRIVATE_CREATION").is_some());
+            let temp = TempDir::new("private-modes");
+            let session = temp.0.join("session");
+            create_private_session_directory(&session).unwrap();
+            let data_lock = lock_data_directory(&temp.0).unwrap();
+            let mut store = Store::create(&temp.0).unwrap();
+            store.start_capture().unwrap();
+            let id = store.begin_capture().unwrap();
+            let pending = store.path.join(format!("pending/{id:06}.upload"));
+            assert_eq!(fs::metadata(&pending).unwrap().mode() & 0o7777, 0o600);
+            store.write_capture_chunk(id, &png(3, 2)).unwrap();
+            store.commit_capture().unwrap();
+            store.stop_capture().unwrap();
+            store.set_review_order(vec![id]).unwrap();
+            store.crop_image(id, 0, 0, 2, 2).unwrap();
+            let destination = temp.0.join("private.cbz");
+            store.export(&destination, ArchiveFormat::Cbz).unwrap();
+            for path in [&temp.0, &temp.0.join("jobs"), &store.path, &store.path.join("originals"),
+                &store.path.join("pending"), &store.path.join("rendered"), &session] {
+                assert_eq!(fs::metadata(path).unwrap().mode() & 0o7777, 0o700, "{}", path.display());
+            }
+            for path in [store.path.join("manifest.json"), temp.0.join(".job.lock"), store.path.join(".job.lock"),
+                store.path.join(&store.manifest.images[0].path), store.path.join(&store.manifest.images[0].crop.as_ref().unwrap().path), destination] {
+                let metadata = fs::metadata(&path).unwrap();
+                assert_eq!(metadata.mode() & 0o7777, 0o600, "{}", path.display());
+                assert_eq!(metadata.nlink(), 1, "no leaked publication links: {}", path.display());
+            }
+            drop(data_lock);
+        }
+
+        #[test]
+        fn unsafe_permissions_links_and_special_files_are_rejected_without_repair() {
+            let temp = TempDir::new("unsafe-paths");
+            let unsafe_base = temp.0.join("public");
+            fs::create_dir(&unsafe_base).unwrap();
+            fs::set_permissions(&unsafe_base, fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(lock_data_directory(&unsafe_base).err().unwrap().code(), "directory_permissions_invalid");
+            assert!(Store::create(&unsafe_base).is_err());
+            assert_eq!(fs::metadata(&unsafe_base).unwrap().mode() & 0o7777, 0o755);
+            assert!(!unsafe_base.join(".job.lock").exists());
+            fs::set_permissions(&unsafe_base, fs::Permissions::from_mode(0o777)).unwrap();
+            assert!(validate_output_path(&unsafe_base.join("out.zip"), ArchiveFormat::Zip).is_ok());
+            assert!(!unsafe_base.join("out.zip").exists());
+
+            let target = temp.0.join("target");
+            create_file(&target, false).unwrap().write_all(b"preserve").unwrap();
+            assert!(create_file(&target, false).is_err());
+            let link = temp.0.join("link");
+            symlink(&target, &link).unwrap();
+            assert_eq!(open_existing_regular(&link).err().unwrap().code(), "reparse_point_rejected");
+            assert!(crate::linux_fs::open_regular(&link, false, false, false).is_err());
+            symlink(&target, temp.0.join(".job.lock")).unwrap();
+            assert_eq!(lock_data_directory(&temp.0).err().unwrap().code(), "reparse_point_rejected");
+            fs::remove_file(temp.0.join(".job.lock")).unwrap();
+            let alias = temp.0.join("alias");
+            symlink(&temp.0, &alias).unwrap();
+            assert!(crate::linux_fs::open_regular(&alias.join("target"), false, false, false).is_err());
+            assert!(create_private_session_directory(&alias.join("session")).is_err());
+            assert!(!temp.0.join("session").exists());
+            let hardlink = temp.0.join("hardlink");
+            fs::hard_link(&target, &hardlink).unwrap();
+            assert_eq!(open_existing_regular(&hardlink).err().unwrap().code(), "file_permissions_invalid");
+            assert!(crate::linux_fs::open_regular(&hardlink, true, false, false).is_err());
+            fs::hard_link(&target, temp.0.join(".job.lock")).unwrap();
+            assert_eq!(lock_data_directory(&temp.0).err().unwrap().code(), "file_permissions_invalid");
+            fs::remove_file(temp.0.join(".job.lock")).unwrap();
+            assert_eq!(fs::read(&target).unwrap(), b"preserve");
+
+            let fifo = temp.0.join("fifo");
+            unsafe extern "C" { fn mkfifo(path: *const std::ffi::c_char, mode: u32) -> i32; }
+            use std::os::unix::ffi::OsStrExt;
+            let fifo_name = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+            assert_eq!(unsafe { mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
+            assert!(crate::linux_fs::open_regular(&fifo, false, false, false).is_err());
+            assert!(crate::linux_fs::open_regular(&fifo, true, true, false).is_err());
+
+            let store = Store::create(&temp.0).unwrap();
+            let job = store.path.clone();
+            store.close().unwrap();
+            fs::set_permissions(job.join("manifest.json"), fs::Permissions::from_mode(0o644)).unwrap();
+            assert_eq!(Store::open(&job).err().unwrap().code(), "file_permissions_invalid");
+            assert_eq!(fs::metadata(job.join("manifest.json")).unwrap().mode() & 0o7777, 0o644);
+        }
+
+        #[test]
+        fn capture_conflict_never_overwrites_existing_original() {
+            let temp = TempDir::new("capture-conflict");
+            let mut store = Store::create(&temp.0).unwrap();
+            store.start_capture().unwrap();
+            let id = store.begin_capture().unwrap();
+            store.write_capture_chunk(id, &png(2, 2)).unwrap();
+            let destination = store.path.join(format!("originals/{id:06}.png"));
+            create_file(&destination, false).unwrap().write_all(b"existing-original").unwrap();
+            assert_eq!(store.commit_capture().unwrap_err().code(), "capture_conflict");
+            assert_eq!(fs::read(destination).unwrap(), b"existing-original");
+            assert!(store.manifest.images.is_empty());
+        }
+
+        fn review_job(temp: &TempDir) -> Store {
+            let mut store = Store::create(&temp.0).unwrap();
+            store.start_capture().unwrap();
+            let id = capture(&mut store, &png(3, 2));
+            store.stop_capture().unwrap();
+            store.set_review_order(vec![id]).unwrap();
+            store
+        }
+
+        #[test]
+        fn shared_output_accepts_zip_and_cbz_without_chmod_or_overwrite() {
+            let temp = TempDir::new("shared-export");
+            let mut store = review_job(&temp);
+            for mode in [0o777, 0o2770] {
+                let output = temp.0.join(format!("shared-{mode:o}"));
+                fs::create_dir(&output).unwrap();
+                fs::set_permissions(&output, fs::Permissions::from_mode(mode)).unwrap();
+                let before = fs::metadata(&output).unwrap();
+                for (format, name) in [(ArchiveFormat::Zip, "chosen.zip"), (ArchiveFormat::Cbz, "chosen.cbz")] {
+                    let destination = output.join(name);
+                    let result = store.export_progress(&destination, format, &mut |done, _, stage| {
+                        if done != 0 || stage != "write" { return; }
+                        let stage_path = fs::read_dir(&output).unwrap().map(|entry| entry.unwrap().path())
+                            .find(|p| p.file_name().unwrap().to_string_lossy().starts_with(".ktz-stage-")).unwrap();
+                        assert_eq!(fs::metadata(&stage_path).unwrap().mode() & 0o7777, 0o700);
+                        assert_eq!(fs::metadata(stage_path.join("archive.tmp")).unwrap().mode() & 0o7777, 0o600);
+                    }).unwrap();
+                    let metadata = fs::metadata(&destination).unwrap();
+                    let bytes = fs::read(&destination).unwrap();
+                    assert_eq!(sha256(&bytes), result.sha256);
+                    assert_eq!(metadata.mode() & 0o7777, 0o600);
+                    assert_eq!(metadata.nlink(), 1);
+                    assert_eq!(store.export(&destination, format).unwrap_err().code(), "output_exists");
+                    assert_eq!(fs::metadata(&destination).unwrap().ino(), metadata.ino());
+                    assert_eq!(fs::read(&destination).unwrap(), bytes);
+                }
+                let after = fs::metadata(&output).unwrap();
+                assert_eq!(after.mode() & 0o7777, mode);
+                assert_eq!((after.dev(), after.ino(), after.uid(), after.gid()), (before.dev(), before.ino(), before.uid(), before.gid()));
+                assert_eq!(fs::read_dir(&output).unwrap().count(), 2, "private stages cleaned");
+            }
+        }
+
+        #[test]
+        fn replaced_staging_source_and_renamed_output_are_never_reported_as_success() {
+            let temp = TempDir::new("stage-swap");
+            let output = temp.0.join("output");
+            create_directory(&output).unwrap();
+            let mut store = review_job(&temp);
+            let mut swapped = false;
+            let destination = output.join("safe.zip");
+            let error = store.export_progress(&destination, ArchiveFormat::Zip, &mut |_, _, stage| {
+                if stage != "publish" || swapped { return; }
+                let stage_path = fs::read_dir(&output).unwrap().map(|entry| entry.unwrap().path()).find(|p| p.file_name().unwrap().to_string_lossy().starts_with(".ktz-stage-")).unwrap();
+                fs::rename(stage_path.join("archive.tmp"), stage_path.join("original.tmp")).unwrap();
+                create_file(&stage_path.join("archive.tmp"), false).unwrap().write_all(b"replacement-not-the-archive").unwrap();
+                swapped = true;
+            }).unwrap_err();
+            assert!(swapped);
+            assert_eq!(error.code(), "output_path_changed");
+            assert!(!destination.exists());
+            assert_eq!(store.reset_images().unwrap_err().code(), "storage_reopen_required");
+            assert_eq!(store.close().unwrap_err().code(), "storage_reopen_required");
+
+            let mut store = review_job(&temp);
+            let moved = temp.0.join("moved-output");
+            let mut renamed = false;
+            let error = store.export_progress(&destination, ArchiveFormat::Zip, &mut |_, _, stage| {
+                if stage != "publish" || renamed { return; }
+                fs::rename(&output, &moved).unwrap();
+                create_directory(&output).unwrap();
+                renamed = true;
+            }).unwrap_err();
+            assert!(renamed);
+            assert_eq!(error.code(), "output_path_changed");
+            assert!(!destination.exists());
+            assert!(!moved.join("safe.zip").exists());
+        }
+
+        #[test]
+        fn export_failures_distinguish_before_link_after_link_and_manifest_stages() {
+            use crate::linux_fs::{fail_once, FaultPoint};
+            let temp = TempDir::new("export-faults");
+            let mut store = review_job(&temp);
+            let destination = temp.0.join("before.zip");
+            fail_once(FaultPoint::ExportLinkBefore);
+            assert_eq!(store.export(&destination, ArchiveFormat::Zip).unwrap_err().code(), "output_publish_failed");
+            assert!(!destination.exists());
+            assert!(!store.durability_uncertain.get());
+            assert!(store.manifest.exports.is_empty());
+            store.export(&destination, ArchiveFormat::Zip).unwrap();
+
+            for (point, code, recorded) in [
+                (FaultPoint::ExportLinkSync, "output_published_durability_uncertain", false),
+                (FaultPoint::ManifestRenameBefore, "output_published_manifest_update_failed", false),
+                (FaultPoint::ManifestRenameSync, "output_published_manifest_durability_uncertain", true),
+            ] {
+                let mut store = review_job(&temp);
+                let path = store.path.clone();
+                let output = temp.0.join(format!("{point:?}.cbz"));
+                fail_once(point);
+                assert_eq!(store.export(&output, ArchiveFormat::Cbz).unwrap_err().code(), code);
+                let published = fs::read(&output).unwrap();
+                assert_eq!(store.manifest.exports.len(), usize::from(recorded));
+                let disk = fs::read(path.join("manifest.json")).unwrap();
+                assert_eq!(store.confirm_range(true).unwrap_err().code(), "storage_reopen_required");
+                assert_eq!(store.export(&temp.0.join("blocked.zip"), ArchiveFormat::Zip).unwrap_err().code(), "storage_reopen_required");
+                assert_eq!(store.reset_images().unwrap_err().code(), "storage_reopen_required");
+                assert_eq!(store.close().unwrap_err().code(), "storage_reopen_required");
+                assert_eq!(fs::read(path.join("manifest.json")).unwrap(), disk, "close/Drop must not rewrite disk");
+                assert_eq!(fs::read(&output).unwrap(), published, "never delete a published output to roll back");
+                let reopened = Store::open(&path).unwrap();
+                assert_eq!(reopened.manifest.exports.len(), usize::from(recorded));
+                assert!(reopened.snapshot().unwrap().issues.is_empty(), "reopen reads actual disk, not the discarded memory");
+            }
+        }
+
+        #[test]
+        fn manifest_sync_failure_keeps_applied_memory_blocks_writes_and_drop_does_not_persist() {
+            use crate::linux_fs::{fail_once, FaultPoint};
+            let temp = TempDir::new("manifest-sync");
+            let mut store = Store::create(&temp.0).unwrap();
+            let path = store.path.clone();
+            let before = fs::read(path.join("manifest.json")).unwrap();
+            fail_once(FaultPoint::ManifestRenameBefore);
+            assert_eq!(store.start_capture().unwrap_err().code(), "manifest_write_failed");
+            assert_eq!(store.manifest.state, JobState::Ready);
+            assert_eq!(fs::read(path.join("manifest.json")).unwrap(), before);
+            fail_once(FaultPoint::ManifestRenameSync);
+            assert_eq!(store.start_capture().unwrap_err().code(), "storage_durability_uncertain");
+            assert_eq!(store.manifest.state, JobState::Capturing, "rename was applied; never restore old memory");
+            let after = fs::read(path.join("manifest.json")).unwrap();
+            assert_eq!(serde_json::from_slice::<Manifest>(&after).unwrap().state, JobState::Capturing);
+            assert_eq!(store.begin_capture().unwrap_err().code(), "storage_reopen_required");
+            assert_eq!(store.stop_capture().unwrap_err().code(), "storage_reopen_required");
+            assert!(store.snapshot().unwrap().issues.contains(&"storage_durability_uncertain".to_owned()));
+            drop(store);
+            assert_eq!(fs::read(path.join("manifest.json")).unwrap(), after);
+            let reopened = Store::open(&path).unwrap();
+            assert_eq!(reopened.manifest.state, JobState::Interrupted);
+            assert!(reopened.snapshot().unwrap().resume_check_required);
+        }
+
+        #[test]
+        fn applied_creation_and_deletion_sync_errors_are_not_flattened_to_normal_failure() {
+            use crate::linux_fs::{fail_once, FaultPoint};
+            let temp = TempDir::new("mutation-sync");
+            let directory = temp.0.join("created");
+            fail_once(FaultPoint::CreateDirectorySync);
+            assert!(create_directory(&directory).unwrap_err().applied());
+            assert!(directory.is_dir());
+            let file = directory.join("created.file");
+            fail_once(FaultPoint::CreateFileSync);
+            assert!(create_file(&file, false).unwrap_err().applied());
+            assert!(file.is_file());
+
+            let mut store = Store::create(&temp.0).unwrap();
+            store.start_capture().unwrap();
+            fail_once(FaultPoint::CreateFileSync);
+            // This fires on the pending file (the preceding manifest replacement
+            // also creates a temp), so exercise the shared mapper directly first.
+            let error = store.mutation(create_file(&store.path.join("pending/fault.upload"), false), "pending_create_failed").unwrap_err();
+            assert_eq!(error.code(), "storage_durability_uncertain");
+            assert!(store.durability_uncertain.get());
+            drop(store);
+
+            let mut store = review_job(&temp);
+            let path = store.path.clone();
+            let original = path.join(&store.manifest.images[0].path);
+            fail_once(FaultPoint::RemoveSync);
+            assert_eq!(store.reset_images().unwrap_err().code(), "storage_durability_uncertain");
+            assert!(!original.exists(), "unlink succeeded before the injected sync failure");
+            assert!(!store.manifest.reset_files.is_empty());
+            assert_eq!(store.reset_images().unwrap_err().code(), "storage_reopen_required");
+            let disk = fs::read(path.join("manifest.json")).unwrap();
+            assert_eq!(store.close().unwrap_err().code(), "storage_reopen_required");
+            assert_eq!(fs::read(path.join("manifest.json")).unwrap(), disk);
+            let reopened = Store::open(&path).unwrap();
+            assert!(reopened.manifest.reset_files.is_empty());
+            assert!(reopened.manifest.images.is_empty());
+        }
+
+        #[test]
+        #[ignore = "subprocess helper; exercised by data_and_job_locks_exclude_other_processes_and_release_after_process_death"]
+        fn lock_holder_child() {
+            let job = std::env::var_os("KTZ_TEST_LOCK_JOB").unwrap();
+            let data = std::env::var_os("KTZ_TEST_LOCK_DATA").unwrap();
+            let _data_lock = lock_data_directory(Path::new(&data)).unwrap();
+            let mut store = Store::open(Path::new(&job)).unwrap();
+            store.start_capture().unwrap();
+            let id = store.begin_capture().unwrap();
+            store.write_capture_chunk(id, b"uncommitted").unwrap();
+            println!("KTZ_LOCKS_HELD");
+            std::io::stdout().flush().unwrap();
+            let mut byte = [0];
+            let _ = std::io::stdin().read_exact(&mut byte);
+        }
+
+        #[test]
+        fn data_and_job_locks_exclude_other_processes_and_release_after_process_death() {
+            let temp = TempDir::new("process-lock");
+            let store = Store::create(&temp.0).unwrap();
+            let job = store.path.clone();
+            store.close().unwrap();
+            let mut child = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "store::tests::linux_safety::lock_holder_child", "--ignored", "--nocapture"])
+                .env("KTZ_TEST_LOCK_JOB", &job).env("KTZ_TEST_LOCK_DATA", &temp.0)
+                .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+            // Always kill/reap the holder if an assertion fails.
+            struct Reap(std::process::Child);
+            impl Drop for Reap { fn drop(&mut self) { let _ = self.0.kill(); let _ = self.0.wait(); } }
+            let stdout = child.stdout.take().unwrap();
+            let mut child = Reap(child);
+            let mut lines = BufReader::new(stdout).lines();
+            assert!(lines.any(|line| line.unwrap() == "KTZ_LOCKS_HELD"));
+            assert_eq!(lock_data_directory(&temp.0).err().unwrap().code(), "job_busy");
+            assert_eq!(Store::open(&job).err().unwrap().code(), "job_busy");
+            let data_inode = fs::metadata(temp.0.join(".job.lock")).unwrap().ino();
+            let job_inode = fs::metadata(job.join(".job.lock")).unwrap().ino();
+            child.0.kill().unwrap();
+            assert!(!child.0.wait().unwrap().success());
+            let _data_lock = lock_data_directory(&temp.0).unwrap();
+            let reopened = Store::open(&job).unwrap();
+            let report = reopened.snapshot().unwrap();
+            assert_eq!(report.manifest.state, JobState::Interrupted);
+            assert!(report.manifest.images.is_empty());
+            assert!(report.resume_check_required);
+            assert_eq!(report.orphan_files, vec!["pending/000001.upload"]);
+            assert_eq!(fs::metadata(temp.0.join(".job.lock")).unwrap().ino(), data_inode);
+            assert_eq!(fs::metadata(job.join(".job.lock")).unwrap().ino(), job_inode);
+        }
     }
 }
