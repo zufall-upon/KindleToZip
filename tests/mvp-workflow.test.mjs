@@ -1,5 +1,5 @@
 import './chromium-test-log-sink.mjs';
-import test from 'node:test';
+import nodeTest from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, lstat, stat, chmod, writeFile, link as hardlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -20,6 +20,9 @@ async function openControlWindow(...args) {
 import { PNG } from 'pngjs';
 import { startFixture } from '../poc/browser/fixture-server.mjs';
 import { readSessionPreference, saveSessionPreference } from '../app/session-preference.mjs';
+import { createLifetime } from './support/test-lifetime.mjs';
+const trace = createLifetime();
+const test = trace.instrument(nodeTest);
 const { chromium } = await import('playwright');
 const root = fileURLToPath(new URL('../artifacts/mvp-tests/', import.meta.url));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -85,8 +88,13 @@ async function setup(t, { sampleFixture = 'reader', sampleHeadless } = {}) {
   await mkdir(root, { recursive: true });
   const directory = await mkdtemp(path.join(root, 'workflow-'));
   lifetime(t, 'fixture', 'created', { fixture: path.basename(directory) });
+  if (trace.enabled) {
+    const info = await lstat(directory, { bigint: true });
+    trace.emit(t, 'owned_fixture', 'created', { fixture: path.basename(directory), dev: String(info.dev), ino: String(info.ino) });
+  }
   const running = await lifetimeStep(t, 'application.start', () => startApplication({ dataDir: path.join(directory, 'data'), sampleFixture,
     ...(sampleHeadless === undefined ? {} : { sampleHeadless }) }));
+  trace.trackStore(t, running.app.store);
   t.after(async () => {
     await lifetimeStep(t, 'running.close', () => running.close());
     await lifetimeStep(t, 'fixture.remove', () => rm(directory, { recursive: true, force: true }));
@@ -311,25 +319,26 @@ test('Kindle地域境界: 同じ明示リストをタブ・picker・取得前後
 });
 
 test(process.platform === 'linux' ? 'Kindle地域公開UI: Linuxでは実Kindle起動を拒否する' : 'Kindle地域公開UI: 言語と独立して選択し実際の開始URLへ渡し開いた間は変更しない', async t => {
-  const r = await setup(t);
-  const control = await openControlWindow(r.url, { headless: true }); t.after(() => control.close());
+  const r = await trace.step(t, 'region.setup', () => setup(t));
+  const control = await trace.step(t, 'region.control', () => openControlWindow(r.url, { headless: true })); t.after(() => control.close());
   const ui = control.page;
-  await ui.waitForFunction(() => document.querySelector('#kindleRegion').options.length === 3);
+  await trace.step(t, 'region.options', () => ui.waitForFunction(() => document.querySelector('#kindleRegion').options.length === 3));
   assert.deepEqual(await ui.locator('#kindleRegion option').evaluateAll(options => options.map(option => option.value)), ['jp', 'us', 'uk']);
+  trace.emit(t, 'region.options_assert', 'complete');
   // A poll already in flight may finish during run()'s initial paint. The
   // selected region belongs to the change event, not that older snapshot.
   let holdPoll;
   const pendingPoll = new Promise(resolve => { holdPoll = resolve; });
-  const interceptPoll = route => holdPoll(route);
-  await ui.route('**/api/state', interceptPoll);
-  const oldPoll = await pendingPoll;
+  const interceptPoll = route => { trace.emit(t, 'region.intercept', 'called'); return holdPoll(route); };
+  await trace.step(t, 'region.route', () => ui.route('**/api/state', interceptPoll));
+  const oldPoll = await trace.step(t, 'region.pendingPoll', () => pendingPoll);
   const oldSnapshot = await r.app.snapshot();
   await ui.evaluate(() => {
     const select = document.querySelector('#kindleRegion');
     select.value = 'us';
     select.dispatchEvent(new Event('change', { bubbles: true }));
   });
-  await oldPoll.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(oldSnapshot) });
+  await trace.step(t, 'region.fulfill', () => oldPoll.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(oldSnapshot) }));
   await ui.unroute('**/api/state', interceptPoll);
   await ui.waitForFunction(() => !document.querySelector('#kindleRegion').disabled);
   assert.equal(r.app.kindleRegion, 'us', 'a prior polling response must not replace the user-selected region');
@@ -355,6 +364,7 @@ test(process.platform === 'linux' ? 'Kindle地域公開UI: Linuxでは実Kindle�
     await assert.rejects(r.app.command('openBrowser', { mode: 'kindle' }), { code: 'linux_kindle_unsupported' });
     assert.deepEqual((await r.app.snapshot()).sessions, before);
     assert.equal(r.app.reader, undefined);
+    trace.emit(t, 'region.assertions', 'complete');
     return;
   }
   const launch = chromium.launchPersistentContext.bind(chromium);
@@ -379,6 +389,7 @@ test(process.platform === 'linux' ? 'Kindle地域公開UI: Linuxでは実Kindle�
     await waitFor(r.app, s => s.kindleRegion === 'uk' && !s.busy);
     assert.equal((await r.app.snapshot()).previewApproved, false);
     assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
+    trace.emit(t, 'region.assertions', 'complete');
   } finally { chromium.launchPersistentContext = launch; }
 });
 
