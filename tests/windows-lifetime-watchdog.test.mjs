@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
@@ -129,7 +130,7 @@ test('Windows監視: 所有子孫が終了不明なら成功や残存0にしな�
   assert.ok(result.forced.some(item => item.method === 'direct_child_handle'));
 });
 
-test('Windows監視: CIM問合せtimeout自体とstream待ちも有界で不明を報告', async () => {
+test('Windows監視: CIM問合せtimeout自体とstream待ちも有界で不明を報告', async t => {
   const started = performance.now();
   await assert.rejects(boundedProcess(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { timeoutMs: 150, closeMs: 400 }),
     error => ['monitor_command_timeout', 'monitor_helper_unconfirmed'].includes(error.code));
@@ -148,6 +149,53 @@ test('Windows監視: CIM問合せtimeout自体とstream待ちも有界で不明�
   } });
   assert.equal(result.outcome, 'failed'); assert.equal(result.collectionError, 'monitor_command_timeout');
   assert.equal(result.remainingState, 'unknown'); assert.ok(result.forced.some(item => item.method === 'direct_child_handle'));
+
+  await t.test('補助の終了未確認でもprocess参照を解放する', async () => {
+    let child, originalKill, unrefs = 0;
+    try {
+      await assert.rejects(boundedProcess(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+        timeoutMs: 100, closeMs: 60, spawnFn(command, args, options) {
+          child = spawn(command, args, options);
+          originalKill = child.kill.bind(child);
+          const originalUnref = child.unref.bind(child);
+          child.kill = () => false; // Portable fixture for an unconfirmed termination.
+          child.unref = () => { unrefs++; return originalUnref(); };
+          return child;
+        },
+      }), { code: 'monitor_helper_unconfirmed' });
+      assert.equal(child.exitCode, null); assert.equal(child.signalCode, null);
+      assert.equal(child.stdout.destroyed, true); assert.equal(child.stderr.destroyed, true);
+      assert.equal(unrefs, 1);
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) {
+        child.ref(); const exited = new Promise(resolve => child.once('exit', resolve));
+        originalKill('SIGKILL'); await exited;
+      }
+    }
+  });
+  await t.test('runnerの終了未確認でも非成功と残存不明を保ちprocess参照を解放する', async () => {
+    let child, originalKill, unrefs = 0;
+    try {
+      const { result } = await fixture(root, 'setInterval(()=>{},1000)', { streamMs: 60, backendFactory(p) {
+        child = p; originalKill = child.kill.bind(child);
+        const originalUnref = child.unref.bind(child);
+        child.kill = () => false;
+        child.unref = () => { unrefs++; return originalUnref(); };
+        return { async query() { throw Object.assign(new Error('fixture'), { code: 'monitor_command_timeout' }); } };
+      } });
+      assert.equal(result.outcome, 'failed'); assert.equal(result.collectionError, 'monitor_command_timeout');
+      assert.equal(result.remainingState, 'unknown'); assert.equal(result.childExit, null);
+      assert.deepEqual(result.forced, []);
+      assert.deepEqual(result.terminationAttempts, [{ pid: child.pid, reason: 'monitor_failure', status: 'unknown' }]);
+      assert.equal(child.stdout.destroyed, true); assert.equal(child.stderr.destroyed, true);
+      assert.equal(unrefs, 1);
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) {
+        child.ref(); const exited = new Promise(resolve => child.once('exit', resolve));
+        originalKill('SIGKILL'); await exited;
+      }
+    }
+  });
 });
 
 test('Windows監視: spawn失敗と矛盾するTAPを成功にしない', async () => {

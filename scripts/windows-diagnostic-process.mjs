@@ -16,7 +16,13 @@ export function boundedProcess(command, args, { timeoutMs = 5000, closeMs = 1000
     const finish = (error, result) => {
       if (finished) return;
       finished = true; clearTimeout(timer); clearTimeout(closeTimer);
-      if (error) { child?.stdout?.destroy(); child?.stderr?.destroy(); reject(failure(error)); }
+      if (error) {
+        child?.stdout?.destroy(); child?.stderr?.destroy();
+        // An unconfirmed helper must not keep the diagnostic CLI alive after
+        // its finite wait. Releasing the reference is not proof of exit.
+        if (!exited) child?.unref();
+        reject(failure(error));
+      }
       else resolve(result);
     };
     const abort = code => {

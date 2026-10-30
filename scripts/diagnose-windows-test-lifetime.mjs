@@ -213,7 +213,13 @@ export async function runWindowsDiagnostic({ command, args, cwd = root, env = pr
     clearInterval(timer);
     const until = now() + streamMs;
     while (!closeDone && now() < until) await pause(Math.min(50, Math.max(1, until - now())));
-    if (!closeDone) { child.stdout?.destroy(); child.stderr?.destroy(); collectionError ||= 'streams_not_closed'; remainingState = 'unknown'; }
+    if (!closeDone) {
+      child.stdout?.destroy(); child.stderr?.destroy();
+      // The bounded supervisor must itself be able to exit even when the
+      // directly owned runner's termination remains unconfirmed.
+      if (!childExit) child.unref();
+      collectionError ||= 'streams_not_closed'; remainingState = 'unknown';
+    }
     try { await drain(); } catch (error) { collectionError ||= codeOf(error); remainingState = 'unknown'; }
   }
   const outcome = timeout ? 'timeout' : spawnError || collectionError || !childExit || childExit.code !== 0
