@@ -24,6 +24,41 @@ const { chromium } = await import('playwright');
 const root = fileURLToPath(new URL('../artifacts/mvp-tests/', import.meta.url));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+// 明示opt-inの試験寿命診断。URL・画像・profile・例外messageは記録しない。
+const lifetimeNames = new Set([
+  'MVP親領域選択候補失効: クリックしたDOMノードの置換後は古い候補を広げない',
+  'MVP親領域選択画面遷移: 対象フレームの再読込で保存候補を破棄する',
+  'MVP次へ表示: 本人指定した公式ボタンをページ内hoverで表示し、隠れたままなら送らない',
+]);
+const lifetimeEnabled = process.env.KTZ_TEST_LIFETIME_DIAGNOSTICS === '1';
+const lifetimes = new WeakMap();
+function lifetime(t, boundary, event, extra = {}) {
+  if (!lifetimeEnabled || !lifetimeNames.has(t.name)) return;
+  console.log(`KTZ_LIFETIME:${JSON.stringify({ pid: process.pid, test: t.name, boundary, event, monotonicMs: performance.now(), ...extra })}`);
+}
+function lifetimeStep(t, boundary, operation) {
+  if (!lifetimeEnabled || !lifetimeNames.has(t.name)) return operation();
+  return (async () => {
+    lifetime(t, boundary, 'start');
+    try {
+      const value = await operation();
+      lifetime(t, boundary, 'end');
+      const state = lifetimes.get(t);
+      if (state?.pending.delete(boundary) && !state.pending.size) lifetime(t, 'teardown', 'complete');
+      return value;
+    } catch (error) {
+      lifetime(t, boundary, 'error', { code: /^[A-Za-z0-9_]+$/.test(error?.code ?? '') ? error.code : 'operation_failed' });
+      throw error;
+    }
+  })();
+}
+function lifetimeBrowserCleanup(t, browser) {
+  lifetimes.get(t)?.pending.add('browser.close');
+  t.after(() => lifetimeStep(t, 'browser.close', () => browser.close()));
+}
+if (lifetimeEnabled) process.once('exit', code => console.log(`KTZ_LIFETIME:${JSON.stringify({ pid: process.pid,
+  test: 'process', boundary: 'process_exit', event: 'complete', exitCode: code, monotonicMs: performance.now() })}`));
+
 // Match the existing local-store archive oracle against the public UI outputs.
 function readStoredEntries(bytes) {
   const end = bytes.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
@@ -45,11 +80,17 @@ function readStoredEntries(bytes) {
 }
 
 async function setup(t, { sampleFixture = 'reader', sampleHeadless } = {}) {
+  if (lifetimeEnabled && lifetimeNames.has(t.name)) lifetimes.set(t, { pending: new Set(['running.close', 'fixture.remove']) });
+  lifetime(t, 'test', 'begin');
   await mkdir(root, { recursive: true });
   const directory = await mkdtemp(path.join(root, 'workflow-'));
-  const running = await startApplication({ dataDir: path.join(directory, 'data'), sampleFixture,
-    ...(sampleHeadless === undefined ? {} : { sampleHeadless }) });
-  t.after(async () => { await running.close(); await rm(directory, { recursive: true, force: true }); });
+  lifetime(t, 'fixture', 'created', { fixture: path.basename(directory) });
+  const running = await lifetimeStep(t, 'application.start', () => startApplication({ dataDir: path.join(directory, 'data'), sampleFixture,
+    ...(sampleHeadless === undefined ? {} : { sampleHeadless }) }));
+  t.after(async () => {
+    await lifetimeStep(t, 'running.close', () => running.close());
+    await lifetimeStep(t, 'fixture.remove', () => rm(directory, { recursive: true, force: true }));
+  });
   const request = async (action, input = {}) => {
     const response = await fetch(`${running.origin}/api/command`, { method: 'POST', headers: {
       Authorization: `Bearer ${running.token}`, 'Content-Type': 'application/json', Origin: running.origin,
@@ -61,11 +102,11 @@ async function setup(t, { sampleFixture = 'reader', sampleHeadless } = {}) {
   return { ...running, directory, request };
 }
 
-async function waitFor(app, predicate, timeout = 25_000) {
+async function waitFor(app, predicate, timeout = 25_000, diagnostic) {
   const deadline = Date.now() + timeout;
   let snapshot;
   do {
-    snapshot = await app.snapshot();
+    snapshot = diagnostic ? await lifetimeStep(diagnostic.t, `${diagnostic.phase}.snapshot`, () => app.snapshot()) : await app.snapshot();
     if (predicate(snapshot)) return snapshot;
     await sleep(100);
   } while (Date.now() < deadline);
@@ -755,7 +796,7 @@ test('MVP親領域選択失敗回復: 遮蔽された可視クリック候補を
 test('MVP親領域選択候補失効: クリックしたDOMノードの置換後は古い候補を広げない', async t => {
   const r = await setup(t);
   await r.request('create'); await r.request('openBrowser', { mode: 'sample' });
-  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
+  const browser = await lifetimeStep(t, 'browser.launch', () => chromium.launch({ headless: true })); lifetimeBrowserCleanup(t, browser);
   const ui = withPublicDisclosures(await browser.newPage()); await ui.goto(r.url);
   await selectVisibleReaderTab(ui); await openManualOptions(ui);
   const page = r.app.reader.page;
@@ -765,11 +806,11 @@ test('MVP親領域選択候補失効: クリックしたDOMノードの置換後
     cover.style.cssText = `position:fixed;left:${rect.x + rect.width * .1}px;top:${rect.y + rect.height * .1}px;width:5px;height:5px;background:transparent;z-index:10000`;
     document.body.append(cover);
   });
-  await ui.locator('#pickReader').click();
-  await waitFor(r.app, snapshot => snapshot.pickingField === 'reader' && snapshot.pickerStage === 'waiting_click');
+  await lifetimeStep(t, 'picker.open', () => ui.locator('#pickReader').click());
+  await lifetimeStep(t, 'picker.wait', () => waitFor(r.app, snapshot => snapshot.pickingField === 'reader' && snapshot.pickerStage === 'waiting_click', undefined, { t, phase: 'picker' }));
   const box = await page.locator('#sheet').boundingBox();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await waitFor(r.app, snapshot => snapshot.readerCandidateAvailable);
+  await lifetimeStep(t, 'picker.click', () => page.mouse.click(box.x + box.width / 2, box.y + box.height / 2));
+  await lifetimeStep(t, 'candidate.wait', () => waitFor(r.app, snapshot => snapshot.readerCandidateAvailable, undefined, { t, phase: 'candidate' }));
   assert.equal((await r.app.snapshot()).readerCandidateAvailable, true);
   await page.locator('#sheet').evaluate(canvas => canvas.replaceWith(canvas.cloneNode(true)));
   await ui.locator('#expandReader').click();
@@ -779,14 +820,17 @@ test('MVP親領域選択候補失効: クリックしたDOMノードの置換後
   assert.equal(await ui.locator('#expandReader').isDisabled(), true);
   assert.equal(await ui.locator('#preview').isDisabled(), true);
   assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
+  lifetime(t, 'test_body', 'complete');
 });
 
 test('MVP親領域選択画面遷移: 対象フレームの再読込で保存候補を破棄する', async t => {
   const r = await setup(t);
-  await r.request('create'); await r.request('openBrowser', { mode: 'sample' });
-  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
-  const ui = withPublicDisclosures(await browser.newPage()); await ui.goto(r.url);
-  await selectVisibleReaderTab(ui); await openManualOptions(ui);
+  await lifetimeStep(t, 'job.create', () => r.request('create'));
+  await lifetimeStep(t, 'reader.open', () => r.request('openBrowser', { mode: 'sample' }));
+  const browser = await lifetimeStep(t, 'browser.launch', () => chromium.launch({ headless: true })); lifetimeBrowserCleanup(t, browser);
+  const ui = withPublicDisclosures(await browser.newPage()); await lifetimeStep(t, 'control.load', () => ui.goto(r.url));
+  await lifetimeStep(t, 'reader.select', () => selectVisibleReaderTab(ui));
+  await lifetimeStep(t, 'manual.open', () => openManualOptions(ui));
   const page = r.app.reader.page;
   await page.locator('#sheet').evaluate(canvas => {
     const rect = canvas.getBoundingClientRect();
@@ -794,18 +838,19 @@ test('MVP親領域選択画面遷移: 対象フレームの再読込で保存候
     cover.style.cssText = `position:fixed;left:${rect.x + rect.width * .1}px;top:${rect.y + rect.height * .1}px;width:5px;height:5px;background:transparent;z-index:10000`;
     document.body.append(cover);
   });
-  await ui.locator('#pickReader').click();
-  await waitFor(r.app, snapshot => snapshot.pickingField === 'reader' && snapshot.pickerStage === 'waiting_click');
+  await lifetimeStep(t, 'picker.open', () => ui.locator('#pickReader').click());
+  await lifetimeStep(t, 'picker.wait', () => waitFor(r.app, snapshot => snapshot.pickingField === 'reader' && snapshot.pickerStage === 'waiting_click', undefined, { t, phase: 'picker' }));
   const box = await page.locator('#sheet').boundingBox();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await waitFor(r.app, snapshot => snapshot.readerCandidateAvailable);
-  await page.reload();
-  await page.locator('#sheet').waitFor({ state: 'visible' });
-  await waitFor(r.app, snapshot => !snapshot.readerCandidateAvailable && snapshot.pickingField === null);
-  await ui.waitForFunction(() => document.querySelector('#expandReader').disabled);
+  await lifetimeStep(t, 'picker.click', () => page.mouse.click(box.x + box.width / 2, box.y + box.height / 2));
+  await lifetimeStep(t, 'candidate.wait', () => waitFor(r.app, snapshot => snapshot.readerCandidateAvailable, undefined, { t, phase: 'candidate' }));
+  await lifetimeStep(t, 'page.reload', () => page.reload());
+  await lifetimeStep(t, 'dom.visible', () => page.locator('#sheet').waitFor({ state: 'visible' }));
+  await lifetimeStep(t, 'candidate.invalidate', () => waitFor(r.app, snapshot => !snapshot.readerCandidateAvailable && snapshot.pickingField === null, undefined, { t, phase: 'invalidate' }));
+  await lifetimeStep(t, 'invalidate.ui', () => ui.waitForFunction(() => document.querySelector('#expandReader').disabled));
   assert.equal(await ui.locator('#expandReader').isDisabled(), true);
   assert.equal(await ui.locator('#reader').inputValue(), '');
   assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
+  lifetime(t, 'test_body', 'complete');
 });
 
 test('MVP次へ表示: 本人指定した公式ボタンをページ内hoverで表示し、隠れたままなら送らない', async t => {
@@ -831,6 +876,7 @@ test('MVP次へ表示: 本人指定した公式ボタンをページ内hoverで�
   });
   assert.equal(await page.locator('#position').innerText(), '1 / 12');
   assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
+  lifetime(t, 'test_body', 'complete');
 });
 
 test('MVP読書タブ: 本棚を残して公開UIで対象を選び、4項目指定と承認破棄・取得中の固定を保つ', async t => {
