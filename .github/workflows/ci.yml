@@ -42,8 +42,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Rust and IPC tests
         run: ./scripts/test-rust.ps1
+      - name: Windows lifetime supervisor safety regressions
+        run: node --test tests/windows-lifetime-watchdog.test.mjs
+      - name: Bounded Windows region UI diagnostic
+        run: node scripts/diagnose-windows-test-lifetime.mjs single
+      - name: Bounded Windows adjacent region diagnostics
+        run: node scripts/diagnose-windows-test-lifetime.mjs near
       - name: Public source UI regressions
-        run: npm test
+        run: node scripts/diagnose-windows-test-lifetime.mjs full
       - name: Deployment regressions
         run: npm run test:distribution
 
