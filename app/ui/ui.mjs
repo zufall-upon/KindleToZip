@@ -233,7 +233,7 @@ function mappingStatus() {
   $('kindleRegion').disabled = !connected || state?.browserOpen || busy;
   $('chooseDestination').disabled = busy || !state?.job || state?.saveDialogAvailable === false || Boolean(state?.storageUncertain);
   $('destinationDialogHelp').textContent = state?.saveDialogAvailable === false
-    ? 'この環境ではWindows保存先ダイアログを利用できません。保存先を手入力してください。'
+    ? 'この環境では保存先ダイアログを利用できません。保存先を手入力してください。'
     : 'ダイアログで選ぶだけでは保存・取得を開始しません。手入力も利用できます。';
   updateOperationStatus();
   if (busy) $('reason').textContent = '';
@@ -417,8 +417,8 @@ Object.assign(errors, {
   output_published_manifest_update_failed: '出力済みですが保存履歴の記録に失敗しました。自動で再出力・削除しません。再起動後に出力先と保存領域を点検してください。',
   output_published_manifest_durability_uncertain: '出力済みですが保存履歴の永続性は未確認です。自動で再出力・削除しません。再起動後に出力先と保存領域を点検してください。',
   resume_position_required: '再開位置を確認できません。最後の確定画像の直後へ手動調整し、再プレビューしてください。',
-  save_dialog_failed: '保存先ダイアログを開くか選択結果を受け取る処理に失敗しました。元の保存先は変更していません。',
-  save_dialog_unavailable: 'この環境ではWindows保存先ダイアログを利用できません。保存先を手入力してください。',
+  save_dialog_failed: '保存先ダイアログを開くか選択結果を受け取る処理に失敗しました。元の保存先は変更していません。手入力も利用できます。',
+  save_dialog_unavailable: 'この環境では保存先ダイアログを利用できません。保存先を手入力してください。',
   book_identity_changed: '保存済み画像と現在の本の識別表示が異なります。この作業に別冊を追加せず、次の本は新しい作業で開いてください。',
   capture_in_progress: '取り込み・未確定画像の処理中です。「一時停止」してから保存してください。',
   empty_selection: '採用画像がありません。「画像を点検」で保存する画像を採用してください。',

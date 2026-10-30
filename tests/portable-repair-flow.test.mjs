@@ -13,7 +13,7 @@ import { Application } from '../app/application.mjs';
 import { Reader } from '../app/reader.mjs';
 import { createStoreAdapter } from '../app/stores/index.mjs';
 import { openControlWindow as openWindow } from '../app/control-window.mjs';
-import { chooseSaveDestination } from '../app/save-dialog.mjs';
+import { chooseSaveDestination, linuxSaveDestination, saveDialogAvailable } from '../app/save-dialog.mjs';
 import { withPublicDisclosures } from '../poc/browser/public-ui-controls.mjs';
 import { checkLanguageFlow } from './support/language-flow.mjs';
 import { checkCaptureResume } from './support/capture-resume-flow.mjs';
@@ -229,7 +229,59 @@ test('3ボタン公開導線・処理インジケーター: 開始直後のpaint
   await ui.screenshot({ path: path.join(evidence, 'anonymous-next-job.png') });
 });
 
-test(process.platform === 'linux' ? '保存先ドライバ: Linuxでは未対応を返し保存しない' : '保存先ドライバ: 従来型Windowsダイアログのファイル名欄で取消と非保存の選択ができる', async t => {
+// 明示指定時だけ実desktop試験を定義する。通常CIにGI/Zenity依存やskipを増やさない。
+if (process.platform === 'linux' && process.env.KTZ_NATIVE_DIALOG_TEST === '1') test('Linux実Zenity: 当方chooserの実選択・取消と非保存・明示出力', { timeout: 100_000 }, async () => {
+  const { checkNativeSaveDialog } = await import('./support/linux-save-dialog.mjs');
+  await checkNativeSaveDialog({ startApplication, openControlWindow,
+    capture: captureRepairSaveContext, save: saveRepairContextArchive, entries: storedPngEntries });
+});
+
+function contractDialog({ output = '', code = 0, diagnostic = '', hold = false, missing = false, ignoreTerm = false } = {}) {
+  const children = [];
+  const dialog = input => linuxSaveDestination(input, (executable, args, options) => {
+    assert.equal(executable, '/usr/bin/zenity');
+    assert.equal(options.shell, undefined);
+    assert.match(args[2], new RegExp(`^--title=KindleToZip ${input.format.toUpperCase()} [a-f0-9]{8}$`));
+    assert.deepEqual(args, ['--file-selection', '--save', args[2], `--filename=${input.destination}`,
+      `--file-filter=${input.format.toUpperCase()} | *.${input.format}`]);
+    const script = `${ignoreTerm ? "process.on('SIGTERM',()=>{});" : ''}
+      process.stdout.write(${JSON.stringify(output)}); process.stderr.write(${JSON.stringify(diagnostic)});
+      ${hold ? "process.stdout.write('ready\\n'); setInterval(()=>{},1000);" : `process.exitCode=${code};`}`;
+    const child = missing ? spawn('/nonexistent-ktz-contract/zenity', [], options) : spawn(process.execPath, ['-e', script], options);
+    children.push(child); return child;
+  });
+  return Object.assign(dialog, { children });
+}
+
+if (process.platform === 'linux') test('Linux保存先契約: 任意機能・元文字列・取消・異常・Abortと所有child回収', async t => {
+  assert.equal(saveDialogAvailable({ platform: 'linux', access: () => {} }), true);
+  assert.equal(saveDialogAvailable({ platform: 'linux', access: () => { throw new Error('missing'); } }), false);
+  assert.equal(saveDialogAvailable({ platform: 'darwin' }), false);
+  const destination = '/tmp/opencode/ anonymous-日本語-$(not-a-command).zip ';
+  for (const format of ['zip', 'cbz']) assert.equal(await contractDialog({ output: destination + '\n' })({ destination, format }), destination);
+  assert.equal(await contractDialog({ code: 1 })({ destination, format: 'zip' }), null);
+  for (const scenario of [
+    { code: 1, diagnostic: 'cannot open display' }, { code: 2 }, { code: 0 },
+    { output: 'relative.zip\n' }, { output: '/tmp/one\n/tmp/two\n' }, { output: '/tmp/bad\0.zip\n' },
+    { output: '/tmp/bad\r.zip\n' }, { output: destination }, { output: '/tmp/' + 'a'.repeat(33000) },
+  ]) await assert.rejects(contractDialog(scenario)({ destination, format: 'zip' }), { code: 'save_dialog_failed' });
+  await assert.rejects(contractDialog({ missing: true })({ destination, format: 'zip' }), { code: 'save_dialog_unavailable' });
+  for (const ignoreTerm of [false, true]) await t.test(`abort-${ignoreTerm}`, async () => {
+    const controller = new AbortController(), dialog = contractDialog({ hold: true, ignoreTerm });
+    const pending = dialog({ destination, format: 'zip', signal: controller.signal });
+    // Wait until the owned child has installed its signal handler, not an arbitrary delay.
+    // A ready marker stays inside this disposable child's stdout (not the dialog response).
+    await new Promise(resolve => dialog.children[0].stdout.once('data', resolve));
+    controller.abort(); assert.equal(await pending, null);
+    assert.ok(dialog.children.every(child => child.exitCode !== null || child.signalCode !== null));
+  });
+  const preaborted = new AbortController(); preaborted.abort();
+  const dialog = contractDialog({ hold: true });
+  assert.equal(await dialog({ destination, format: 'zip', signal: preaborted.signal }), null);
+  assert.equal(dialog.children.length, 0);
+});
+
+test(process.platform === 'linux' ? '保存先ドライバ: Linuxの任意実行可否と選択非保存の契約' : '保存先ドライバ: 従来型Windowsダイアログのファイル名欄で取消と非保存の選択ができる', async t => {
   const evidence = path.resolve('artifacts/indicator-review'); await mkdir(evidence, { recursive: true });
   const directory = await mkdtemp(path.join(evidence, 'legacy-dialog-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -238,8 +290,8 @@ test(process.platform === 'linux' ? '保存先ドライバ: Linuxでは未対応
   assert.equal(source.split(declaration).length, 2);
   if (process.platform === 'linux') {
     const destination = path.join(directory, 'manual.zip');
-    assert.throws(() => chooseSaveDestination({ destination, format: 'zip' }), { code: 'save_dialog_unavailable' });
-    await assert.rejects(stat(destination), { code: 'ENOENT' }, '未対応の選択だけでは保存しない');
+    assert.equal(await contractDialog({ output: destination + '\n' })({ destination, format: 'zip' }), destination);
+    await assert.rejects(stat(destination), { code: 'ENOENT' }, '選択だけでは保存しない');
     return;
   }
   // Exercise the platform's older common-dialog control IDs without changing
@@ -274,7 +326,7 @@ test(process.platform === 'linux' ? '保存先ドライバ: Linuxでは未対応
   });
 });
 
-test(process.platform === 'linux' ? '3ボタン公開導線・Linux手入力: ダイアログ無効・ZIP・再開後の所有名' : '3ボタン公開導線・保存先ダイアログ: 実Windows表示・書名初期値・選択・取消・ZIP・再開後の所有名', async t => {
+test(process.platform === 'linux' ? '3ボタン公開導線・Linux保存先: 選択・取消・失敗時手入力・ZIPCBZ・非上書き' : '3ボタン公開導線・保存先ダイアログ: 実Windows表示・書名初期値・選択・取消・ZIP・再開後の所有名', async t => {
   const evidence = path.resolve('artifacts/indicator-review'); await mkdir(evidence, { recursive: true });
   const directory = await mkdtemp(path.join(evidence, 'native-anonymous-'));
   const r = await startApplication({ dataDir: path.join(directory, 'data'), sampleFixture: 'layout' });
@@ -286,9 +338,24 @@ test(process.platform === 'linux' ? '3ボタン公開導線・Linux手入力: �
   await ui.locator('[data-stage-target="export"]').first().click();
   const initial = await ui.locator('#destination').inputValue();
   if (process.platform === 'linux') {
-    assert.equal(await ui.locator('#chooseDestination').isDisabled(), true);
-    assert.match(await ui.locator('#destinationDialogHelp').textContent(), /手入力/);
-    await assert.rejects(r.app.command('chooseDestination', { destination: initial, format: 'zip' }), { code: 'save_dialog_unavailable' });
+    assert.equal((await r.app.snapshot()).saveDialogAvailable, saveDialogAvailable());
+    r.app.saveDialog = contractDialog({ code: 1 });
+    const choose = async () => {
+      await ui.waitForFunction(() => !document.querySelector('#chooseDestination').disabled);
+      const response = ui.waitForResponse(response => response.url().endsWith('/api/command') && response.request().postDataJSON()?.action === 'chooseDestination');
+      await ui.locator('#chooseDestination').click();
+      const value = await (await response).json();
+      await ui.waitForFunction(() => document.querySelector('#operationStatus').dataset.status !== 'pending');
+      return value;
+    };
+    assert.equal((await choose()).chosenDestination, null);
+    assert.equal(await ui.locator('#destination').inputValue(), initial);
+    for (const failure of [{ missing: true }, { code: 1, diagnostic: 'cannot open display' }, { code: 2 }]) {
+      r.app.saveDialog = contractDialog(failure);
+      assert.match((await choose()).code, /^save_dialog_(unavailable|failed)$/);
+      assert.equal(await ui.locator('#destination').inputValue(), initial);
+      assert.match(await ui.locator('#message').textContent(), /手入力/);
+    }
     const chosen = path.join(directory, '本人が手入力した匿名名.zip');
     await assert.rejects(stat(chosen), { code: 'ENOENT' });
     await ui.locator('#destination').fill(chosen); await saveRepairContextArchive(ui, r.app, 1);
@@ -296,6 +363,23 @@ test(process.platform === 'linux' ? '3ボタン公開導線・Linux手入力: �
     assert.equal(storedPngEntries(archive).length, 1);
     await assert.rejects(r.app.command('export', { destination: chosen, format: 'zip' }), { code: 'output_exists' });
     assert.deepEqual(await readFile(chosen), archive);
+    const before = await stat(chosen);
+    r.app.saveDialog = contractDialog({ output: chosen + '\n' });
+    assert.equal((await choose()).chosenDestination, chosen, '既存出力の選択自体は非破壊');
+    await assert.rejects(r.app.command('export', { destination: chosen, format: 'zip' }), { code: 'output_exists' });
+    assert.equal((await stat(chosen)).ino, before.ino);
+    assert.deepEqual(await readFile(chosen), archive);
+    for (const [index, format] of ['zip', 'cbz'].entries()) {
+      await ui.locator('#format').selectOption(format);
+      const selected = path.join(directory, `本人が選んだ匿名名.${format}`);
+      r.app.saveDialog = contractDialog({ output: selected + '\n' });
+      assert.equal((await choose()).chosenDestination, selected);
+      await ui.waitForFunction(value => document.querySelector('#destination').value === value, selected);
+      assert.equal((await r.app.snapshot()).job.manifest.exports.length, index + 1, '選択だけでは保存しない');
+      await assert.rejects(stat(selected), { code: 'ENOENT' });
+      await saveRepairContextArchive(ui, r.app, index + 2);
+      assert.equal(storedPngEntries(await readFile(selected)).length, 1);
+    }
     await closeRepairSaveContext(ui, r.app);
     await ui.locator('#recoverPath').fill(captured.job.job_path); await ui.locator('#recover').click();
     const recovered = await wait(r.app, s => s.job && !s.busy);

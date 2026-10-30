@@ -1464,6 +1464,8 @@ test(process.platform === 'linux' ? '専用セッション既定: Linuxでは公
   control = await openControlWindow(r.url, { headless: true });
   const ui = control.page;
   await ui.locator('#create').click();
+  // click/既定チェック/恒常的なLinux無効表示はcreate応答の完了条件ではない。
+  await waitFor(r.app, snapshot => snapshot.job && !snapshot.busy);
   await ui.locator('[data-stage="browser"] details > summary').click();
   assert.equal(await ui.locator('#keep').isChecked(), true);
   if (process.platform === 'linux') {

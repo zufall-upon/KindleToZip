@@ -8,7 +8,7 @@ import { startFixture } from '../poc/browser/fixture-server.mjs';
 import { sessionId, readSessionPreferences, saveSessionPreference, forgetSessionPreference } from './session-preference.mjs';
 import { initialPresets, readPresets, savePresets } from './presets.mjs';
 import { bookFilename } from './export-name.mjs';
-import { chooseSaveDestination } from './save-dialog.mjs';
+import { chooseSaveDestination, saveDialogAvailable } from './save-dialog.mjs';
 import { kindleRegion, kindleRegions } from './stores/kindle.mjs';
 import { samePath, privateMetadata } from './private-path.mjs';
 
@@ -87,7 +87,7 @@ export class Application {
       preferredKindleSession: this.preferredKindleSession ?? null,
       kindleRegion: this.kindleRegion, kindleRegions,
       kindleSupported: process.platform !== 'linux',
-      saveDialogAvailable: process.platform === 'win32' || this.saveDialog !== chooseSaveDestination,
+      saveDialogAvailable: this.saveDialog !== chooseSaveDestination || saveDialogAvailable(),
       pathCaseSensitive: process.platform !== 'win32',
       storageUncertain: this.storageUncertain ?? null,
       sample: Boolean(this.fixture), config: this.reader?.sampleUrl ? sampleConfig : null,

@@ -13,9 +13,40 @@ import { mkdir, mkdtemp, rm, readdir, lstat } from 'node:fs/promises';
 import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
 import { existsSync } from 'node:fs';
+import { linuxStartupMessage } from '../app/startup-error.mjs';
+import { chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { PNG } from 'pngjs';
 const { chromium } = await import('playwright');
+
+if (process.platform === 'linux') test('Linux起動診断: 公開npm startの不在・権限・排他・画面失敗を誤成功にしない', { timeout: 60_000 }, async t => {
+  const project = fileURLToPath(new URL('../', import.meta.url));
+  const fixture = await mkdtemp(path.join(tmpdir(), 'ktz-start-errors-'));
+  t.after(() => rm(fixture, { recursive: true, force: true }));
+  const run = (extra = {}) => spawnSync('npm', ['--prefix', project, 'start'], { cwd: fixture, encoding: 'utf8', timeout: 15_000,
+    env: { ...process.env, KTZ_USER_DATA_DIR: path.join(fixture, 'data'), KTZ_TEMP_DIR: fixture, ...extra } });
+  const failed = (result, message) => {
+    assert.equal(result.status, 1, `${result.stdout} ${result.stderr}`);
+    assert.match(result.stderr, message);
+    assert.doesNotMatch(result.stdout, /MVPを起動しました|操作画面を.*開きました/);
+  };
+  failed(run({ KTZ_CONTROLLER_PATH: path.join(fixture, 'missing') }), /実行可能なRust controller/);
+  await assert.rejects(lstat(path.join(fixture, 'data')), { code: 'ENOENT' });
+  const unsafe = path.join(fixture, 'unsafe'); await mkdir(unsafe); await chmod(unsafe, 0o755);
+  failed(run({ KTZ_TEMP_DIR: unsafe }), /専用領域の権限・所有者・種類/);
+  assert.equal((await lstat(unsafe)).mode & 0o7777, 0o755, '既存の不正権限を修復しない');
+  const { startApplication } = await import('../app/server.mjs');
+  const primary = await startApplication({ dataDir: path.join(fixture, 'data') });
+  try {
+    failed(run(), /別の起動が使用中/);
+    assert.equal((await primary.app.snapshot()).state, 'Idle', '先行起動の排他と状態を維持');
+  } finally { await primary.close(); }
+  failed(run({ DISPLAY: '', WAYLAND_DISPLAY: '' }), /操作画面用Chromiumの起動または読込み/);
+  const wrapped = new Error('opaque', { cause: Object.assign(new Error(), { code: 'file_permissions_invalid' }) });
+  assert.match(linuxStartupMessage(wrapped, 'storage'), /権限・所有者・種類/);
+  assert.match(linuxStartupMessage(new Error('a long TMPDIR is not proof'), 'storage'), /原因は特定できていません/);
+  assert.deepEqual((await readdir(fixture)).sort(), ['data', 'unsafe'], '所有一時領域を回収し、保存領域は残す');
+});
 
 test('controller解決: 明示指定とOS既定を共用し、起動時に不在を拒否する', async () => {
   assert.match(controllerPath({ platform: 'win32', env: {} }), /ktz-g02-controller\.exe$/);

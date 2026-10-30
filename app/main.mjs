@@ -5,8 +5,9 @@ import { lstat, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { privateMetadata, samePath } from './private-path.mjs';
+import { linuxStartupMessage } from './startup-error.mjs';
 
-let running, controlWindow, ownedTemp;
+let running, controlWindow, ownedTemp, startupStage = 'temporary';
 try {
   if (process.platform === 'linux') {
     process.umask(0o077);
@@ -16,14 +17,15 @@ try {
     const base = process.env.KTZ_TEMP_DIR || tmpdir();
     if (process.env.KTZ_TEMP_DIR) {
       const info = await lstat(base);
-      if (info.isSymbolicLink() || !privateMetadata(info, true) || !samePath(await realpath(base), base)) throw new Error('unsafe_temp_directory');
+      if (info.isSymbolicLink() || !privateMetadata(info, true) || !samePath(await realpath(base), base)) throw Object.assign(new Error('unsafe_temp_directory'), { code: 'unsafe_temp_directory' });
     }
     ownedTemp = await mkdtemp(path.join(base, 'ktz-'));
     // Restrict only this process and its owned browser children, not the user's environment.
     for (const key of ['KTZ_TEMP_DIR', 'TMPDIR', 'TMP', 'TEMP', 'HOME', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME']) process.env[key] = ownedTemp;
   }
+  startupStage = 'storage';
   running = await startApplication({ sampleHeadless: process.platform === 'linux', ownsSignals: process.platform === 'linux' });
-  console.log('KindleToZip ローカルMVPを起動しました。終了は Ctrl+C。');
+  if (process.platform !== 'linux') console.log('KindleToZip ローカルMVPを起動しました。終了は Ctrl+C。');
   let closing = false, starting, controlStarting;
   const close = async () => {
     if (closing) return;
@@ -38,8 +40,10 @@ try {
   };
   process.on('SIGINT', close);
   process.on('SIGTERM', close);
+  startupStage = 'control';
   controlStarting = openControlWindow(running.url, { onClose: () => { void close(); }, handleSignals: process.platform !== 'linux' });
   controlWindow = await controlStarting;
+  if (process.platform === 'linux') console.log('KindleToZip ローカルMVPを起動しました。終了は Ctrl+C。');
   console.log('操作画面を拡張なしの専用ウィンドウで開きました。通常ブラウザは使用していません。');
   if (!closing && (process.argv.includes('--kindle') || process.argv.includes('--resume-kindle'))) {
     console.log('専用Kindleブラウザを開いています。まだ撮影・取得は開始しません。');
@@ -57,6 +61,8 @@ try {
   if (ownedTemp) await rm(ownedTemp, { recursive: true, force: true }).catch(() => {});
   if (error?.code === 'linux_kindle_unsupported') {
     console.error('LinuxではKindleの起動・取得は未対応です。自作試料のみ利用できます。');
+  } else if (process.platform === 'linux') {
+    console.error(linuxStartupMessage(error, startupStage));
   } else if (error?.code === 'controller_not_found') {
     console.error(error.message);
   } else if (process.env.KTZ_PORTABLE_ROOT) {
