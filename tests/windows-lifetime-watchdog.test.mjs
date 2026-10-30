@@ -117,6 +117,115 @@ test('Windows所有確認: 再parentされた既知子は保持し未確認の�
   await assert.rejects(tracker.scan(), { code: 'ancestry_unconfirmed' }); assert.deepEqual(stopped, [42]);
 });
 
+test('Windows所有履歴: activeとretiredの証拠を混同しない', async t => {
+  const a = '20260101000000.000001Z', b = '20260101000001.000001Z', c = '20260101000002.000001Z';
+  const root = { pid: 41, parentPid: 7, creationDate: a, name: 'cmd.exe' };
+  const child = { pid: 42, parentPid: 41, creationDate: b, name: 'chrome.exe' };
+  function model(initial = [root, child], stopResult = 'terminated') {
+    let rows = initial, queryError;
+    const stops = [], decisions = [];
+    const tracker = createWindowsOwnerTracker({ runnerPid: 41, supervisorPid: 7,
+      onDecision: item => decisions.push(item), backend: {
+        async query() { if (queryError) throw queryError; return rows; },
+        async stop(item) { stops.push(item); return stopResult; },
+      } });
+    return { tracker, stops, decisions, setRows(value) { rows = value; }, failQuery(value) { queryError = value; } };
+  }
+  await t.test('A 同PID同開始時刻を継続して確認する', async () => {
+    const m = model(); const first = await m.tracker.scan();
+    assert.deepEqual(await m.tracker.scan(), first);
+    assert.equal(await m.tracker.stop(first[1]), 'terminated'); assert.equal(m.stops.length, 1);
+  });
+  await t.test('B 消失を確認した子PIDの無関係な再利用に所有権を渡さない', async () => {
+    const m = model(); const [, old] = await m.tracker.scan();
+    m.setRows([root]); assert.equal((await m.tracker.scan()).length, 1);
+    m.setRows([root, { ...child, parentPid: 99, creationDate: c }]);
+    assert.deepEqual((await m.tracker.scan()).map(p => p.pid), [41]);
+    await assert.rejects(m.tracker.stop(old), { code: 'identity_unconfirmed' }); assert.equal(m.stops.length, 0);
+    assert.equal(m.tracker.history().length, 2);
+    assert.ok(m.decisions.some(d => d.decision === 'new_unowned' && d.absenceObserved && d.parentIdentityMatched === false));
+  });
+  await t.test('C 再利用された子PIDは現owned親からの新しい証拠だけで採用する', async () => {
+    const m = model(); const [, old] = await m.tracker.scan();
+    m.setRows([root]); await m.tracker.scan();
+    m.setRows([root, { ...child, creationDate: c }]);
+    const next = (await m.tracker.scan()).find(p => p.pid === 42);
+    assert.equal(next.creationDate, c); assert.equal(m.tracker.history().length, 3);
+    await assert.rejects(m.tracker.stop(old), { code: 'identity_unconfirmed' });
+    assert.equal(await m.tracker.stop(next), 'terminated'); assert.equal(m.stops[0].creationDate, c);
+    assert.ok(m.decisions.some(d => d.decision === 'new_owned' && d.absenceObserved && d.parentIdentityMatched === true));
+  });
+  await t.test('D 消失未観測の開始時刻変化は拒否し古いactiveからも停止しない', async () => {
+    const m = model(); const [, old] = await m.tracker.scan();
+    m.setRows([root, { ...child, creationDate: c }]);
+    await assert.rejects(m.tracker.scan(), { code: 'identity_changed' });
+    await assert.rejects(m.tracker.stop(old), { code: 'identity_unconfirmed' }); assert.equal(m.stops.length, 0);
+    assert.ok(m.decisions.some(d => d.kind === 'active_changed' && !d.absenceObserved && d.decision === 'reject'));
+  });
+  await t.test('E rootは消失確認後でも同PID別個体として採用しない', async () => {
+    const m = model([root]); const [old] = await m.tracker.scan();
+    m.setRows([]); assert.deepEqual(await m.tracker.scan(), []);
+    m.setRows([{ ...root, creationDate: c }]);
+    await assert.rejects(m.tracker.scan(), { code: 'identity_changed' });
+    await assert.rejects(m.tracker.stop(old), { code: 'identity_unconfirmed' }); assert.equal(m.stops.length, 0);
+    assert.equal(m.tracker.history().length, 1);
+  });
+  await t.test('F 親が終了した既知同個体の再parentは所有を維持する', async () => {
+    const m = model(); await m.tracker.scan();
+    m.setRows([{ ...child, parentPid: 99 }]);
+    const [owned] = await m.tracker.scan(); assert.equal(owned.pid, 42); assert.equal(owned.reparented, true);
+    assert.equal(await m.tracker.stop(owned), 'terminated'); assert.equal(m.stops[0].creationDate, b);
+  });
+  await t.test('G 終了した親の未知子は推測で採用も停止もしない', async () => {
+    const m = model([root]); const [old] = await m.tracker.scan();
+    m.setRows([child]); await assert.rejects(m.tracker.scan(), { code: 'ancestry_unconfirmed' });
+    await assert.rejects(m.tracker.stop(old), { code: 'identity_unconfirmed' }); assert.equal(m.stops.length, 0);
+  });
+  await t.test('H scan後stop直前のPID再利用は既存handle照合の拒否を伝播する', async () => {
+    const m = model([root, child], 'identity_mismatch'); const [, old] = await m.tracker.scan();
+    await assert.rejects(m.tracker.stop(old), { code: 'identity_changed' });
+    await assert.rejects(m.tracker.stop(old), { code: 'identity_unconfirmed' }); assert.equal(m.stops.length, 1);
+    assert.ok(m.decisions.some(d => d.decision === 'reject' && d.stopAttempted));
+  });
+  await t.test('CIM失敗は不在とせず以前のactiveによるstopを拒否する', async () => {
+    const m = model(); const [, old] = await m.tracker.scan();
+    m.failQuery(Object.assign(new Error('private-error-not-a-log'), { code: 'monitor_command_timeout' }));
+    await assert.rejects(m.tracker.scan(), { code: 'monitor_command_timeout' });
+    await assert.rejects(m.tracker.stop(old), { code: 'identity_unconfirmed' });
+    assert.equal(m.stops.length, 0); assert.equal(m.tracker.history().length, 2);
+    assert.equal(m.decisions.some(d => d.decision === 'retire'), false);
+  });
+  await t.test('不完全metadataは不在とせず以前のactiveによるstopを拒否する', async () => {
+    const m = model(); const [, old] = await m.tracker.scan();
+    m.setRows([root, { pid: 42 }]); await assert.rejects(m.tracker.scan(), { code: 'metadata_invalid' });
+    await assert.rejects(m.tracker.stop(old), { code: 'identity_unconfirmed' });
+    assert.equal(m.stops.length, 0); assert.equal(m.decisions.some(d => d.decision === 'retire'), false);
+  });
+});
+
+test('Windows所有判定: 公開ログは固定分類だけでPIDと開始時刻を出さない', async () => {
+  const directory = await sandbox(); let queries = 0;
+  const { result, output } = await fixture(directory, 'setTimeout(()=>process.exit(0),220)', {
+    backendFactory(child) {
+      const base = backendFor(child);
+      return { ...base, async query() {
+        const rows = await base.query(); queries++;
+        if (queries === 1) rows.push({ pid: 999998, parentPid: child.pid, creationDate: rows[0].creationDate, name: 'chrome.exe' });
+        else if (queries >= 3) rows.push({ pid: 999998, parentPid: 99, creationDate: '99990101000000.000001Z', name: 'private-unowned-name' });
+        return rows;
+      } };
+    },
+  });
+  assert.equal(result.outcome, 'passed'); assert.equal(result.cleanupOutcome, 'none-observed');
+  const metadata = output.split('\n').filter(line => line.startsWith('KTZ_OWNERSHIP:'));
+  assert.ok(metadata.some(line => line.includes('"decision":"new_unowned"')));
+  for (const line of metadata) {
+    assert.doesNotMatch(line, /999998|99990101|creationDate|private-unowned-name|"pid"/);
+    assert.deepEqual(Object.keys(JSON.parse(line.slice('KTZ_OWNERSHIP:'.length))).sort(),
+      ['role', 'kind', 'decision', 'absenceObserved', 'parentIdentityMatched', 'stopAttempted'].sort());
+  }
+});
+
 test('Windows監視: 所有子孫が終了不明なら成功や残存0にしない', async () => {
   const root = await sandbox(); let stopped = [];
   const { result } = await fixture(root, 'setInterval(()=>{},1000)', {

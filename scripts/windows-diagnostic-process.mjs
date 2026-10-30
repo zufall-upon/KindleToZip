@@ -116,57 +116,116 @@ const publicRecord = item => ({ pid: item.pid, parentPid: item.parentPid, creati
 // the same creation time, and only if its creation is no earlier than the
 // parent's. Known children stay known across reparenting, but a new child of an
 // absent/reused parent is never guessed into the tree.
-export function createWindowsOwnerTracker({ runnerPid, supervisorPid, backend, notBeforeMs = null }) {
+export function createWindowsOwnerTracker({ runnerPid, supervisorPid, backend, notBeforeMs = null, onDecision = () => {} }) {
   if (!validPid(runnerPid) || !validPid(supervisorPid)) throw failure('root_identity_invalid');
-  const known = new Map();
-  let latest = [], initialized = false;
+  const history = new Map(), lastByPid = new Map(), absences = new Set(), decisions = new Set();
+  const key = item => `${item.pid}:${item.creationDate}`;
+  const validBirth = value => typeof value === 'string' && birthPattern.test(value);
+  let active = new Map(), validScan = false, rootIdentity = null, rootRetired = false;
+  function decision(kind, action, previous, observed, parentIdentityMatched = 'unknown', stopAttempted = false) {
+    const record = { role: (previous ?? observed)?.pid === runnerPid ? 'root' : 'child', kind, decision: action,
+      pid: (previous ?? observed)?.pid ?? runnerPid,
+      previousCreationDate: validBirth(previous?.creationDate) ? previous.creationDate : 'unknown',
+      observedCreationDate: validBirth(observed?.creationDate) ? observed.creationDate : 'unknown',
+      absenceObserved: previous ? absences.has(key(previous)) : false, parentIdentityMatched, stopAttempted };
+    const id = JSON.stringify(record);
+    if (decisions.has(id)) return;
+    decisions.add(id);
+    try { onDecision(record); } catch { /* Observation cannot widen stop permissions. */ }
+  }
   async function scan(timeoutMs = 5000) {
+    // An unsuccessful or incomplete scan never authorizes a later stop based
+    // solely on the previous sample. Publish a new active set atomically.
+    validScan = false;
     const rows = await backend.query(timeoutMs);
-    if (!Array.isArray(rows)) throw failure('metadata_invalid');
+    if (!Array.isArray(rows)) { decision('metadata_invalid', 'reject'); throw failure('metadata_invalid'); }
     const current = new Map();
     for (const row of rows) {
-      if (!Number.isSafeInteger(row.pid) || row.pid < 0 || !Number.isSafeInteger(row.parentPid) || row.parentPid < 0 || current.has(row.pid)) throw failure('metadata_invalid');
+      if (!row || !Number.isSafeInteger(row.pid) || row.pid < 0 || !Number.isSafeInteger(row.parentPid) || row.parentPid < 0 || current.has(row.pid)) {
+        decision('metadata_invalid', 'reject'); throw failure('metadata_invalid');
+      }
       current.set(row.pid, row);
     }
-    if (!initialized) {
+    if (!rootIdentity) {
       const root = current.get(runnerPid);
-      if (!root || root.parentPid !== supervisorPid || !birthPattern.test(root.creationDate ?? '')) throw failure('root_identity_unconfirmed');
+      if (!root || root.parentPid !== supervisorPid || !validBirth(root.creationDate)) throw failure('root_identity_unconfirmed');
       if (notBeforeMs !== null) {
         const b = root.creationDate;
         const started = Date.parse(`${b.slice(0, 4)}-${b.slice(4, 6)}-${b.slice(6, 8)}T${b.slice(8, 10)}:${b.slice(10, 12)}:${b.slice(12, 14)}.${b.slice(15, 18)}Z`);
         if (!Number.isFinite(started) || started < notBeforeMs) throw failure('root_identity_unconfirmed');
       }
-      known.set(root.pid, { ...root, role: 'runner', reparented: false }); initialized = true;
+      // Pin the directly spawned individual, even if a later field in this
+      // first sample is invalid. Never initialize a replacement root by PID.
+      rootIdentity = { ...root, role: 'runner', reparented: false };
     }
-    for (const [pid, previous] of known) {
+    const rootNow = current.get(runnerPid);
+    if (rootNow && rootNow.creationDate !== rootIdentity.creationDate) {
+      decision('active_changed', 'reject', rootIdentity, rootNow); throw failure('identity_changed');
+    }
+    if (rootNow && rootRetired) {
+      decision('active_changed', 'reject', rootIdentity, rootNow); throw failure('root_identity_unconfirmed');
+    }
+    const next = new Map();
+    if (rootNow && !history.has(key(rootIdentity))) next.set(runnerPid, rootIdentity);
+    for (const [pid, previous] of active) {
       const currentRecord = current.get(pid);
-      if (currentRecord && currentRecord.creationDate !== previous.creationDate) throw failure('identity_changed');
-      if (currentRecord && currentRecord.parentPid !== previous.parentPid) previous.reparented = true;
+      if (!currentRecord) continue;
+      if (!validBirth(currentRecord.creationDate)) {
+        decision('metadata_invalid', 'reject', previous, currentRecord); throw failure('metadata_invalid');
+      }
+      if (currentRecord.creationDate !== previous.creationDate) {
+        // No valid absence has been seen for this active individual.
+        decision('active_changed', 'reject', previous, currentRecord); throw failure('identity_changed');
+      }
+      next.set(pid, { ...previous, parentPid: currentRecord.parentPid,
+        reparented: previous.reparented || currentRecord.parentPid !== previous.parentPid });
     }
     let changed;
     do {
       changed = false;
       for (const row of rows) {
-        if (known.has(row.pid) || !known.has(row.parentPid)) continue;
-        const parent = known.get(row.parentPid), liveParent = current.get(row.parentPid);
-        if (!liveParent || liveParent.creationDate !== parent.creationDate) throw failure('ancestry_unconfirmed');
-        if (!birthPattern.test(row.creationDate ?? '') || row.creationDate < parent.creationDate) throw failure('identity_unconfirmed');
-        known.set(row.pid, { ...row, role: role(row.name ?? '', false), reparented: false }); changed = true;
+        if (row.pid === runnerPid || next.has(row.pid) || !next.has(row.parentPid)) continue;
+        const parent = next.get(row.parentPid), liveParent = current.get(row.parentPid);
+        if (!liveParent || liveParent.creationDate !== parent.creationDate) {
+          decision('parent_changed', 'reject', parent, liveParent, false); throw failure('ancestry_unconfirmed');
+        }
+        if (!validBirth(row.creationDate) || row.creationDate < parent.creationDate) {
+          decision('metadata_invalid', 'reject', null, row, true); throw failure('identity_unconfirmed');
+        }
+        next.set(row.pid, { ...row, role: role(row.name ?? '', false), reparented: false }); changed = true;
       }
     } while (changed);
-    latest = [...known.values()].filter(item => current.has(item.pid)).map(item => {
-      const row = current.get(item.pid);
-      return { ...item, parentPid: row.parentPid };
-    });
-    return latest.map(publicRecord);
+    // Preserve known same-individual children across parent exit/reparenting,
+    // but never infer an unknown orphan's ownership from a historical PPID.
+    for (const row of rows) if (!next.has(row.pid) && (lastByPid.has(row.parentPid) || row.parentPid === runnerPid)
+      && !current.has(row.parentPid)) {
+      decision('parent_changed', 'reject', null, row, false); throw failure('ancestry_unconfirmed');
+    }
+    for (const item of active.values()) if (!next.has(item.pid)) {
+      absences.add(key(item)); decision('retired_pid_reused', 'retire', item, null);
+    }
+    for (const row of rows) {
+      const previous = history.get(lastByPid.get(row.pid));
+      if (previous && previous.creationDate !== row.creationDate && absences.has(key(previous))) {
+        decision('retired_pid_reused', next.has(row.pid) ? 'new_owned' : 'new_unowned', previous, row, next.has(row.parentPid));
+      }
+    }
+    for (const item of next.values()) { history.set(key(item), item); lastByPid.set(item.pid, key(item)); }
+    if (!rootNow) rootRetired = true;
+    active = next; validScan = true;
+    return [...active.values()].map(publicRecord);
   }
   async function stop(record, timeoutMs = 5000) {
-    const original = known.get(record.pid);
-    if (!original || record.creationDate !== original.creationDate) throw failure('identity_unconfirmed');
-    const answer = await backend.stop(original, timeoutMs);
-    if (answer === 'identity_mismatch') throw failure('identity_changed');
-    if (answer === 'unconfirmed') throw failure('termination_unconfirmed');
+    const original = active.get(record.pid);
+    if (!validScan || !original || record.creationDate !== original.creationDate) throw failure('identity_unconfirmed');
+    let answer;
+    try { answer = await backend.stop(original, timeoutMs); }
+    catch (error) { validScan = false; throw error; }
+    if (answer === 'identity_mismatch') {
+      validScan = false; decision('active_changed', 'reject', original, null, 'unknown', true); throw failure('identity_changed');
+    }
+    if (answer === 'unconfirmed') { validScan = false; throw failure('termination_unconfirmed'); }
     return answer;
   }
-  return { scan, stop, latest: () => latest.map(publicRecord), history: () => [...known.values()].map(publicRecord) };
+  return { scan, stop, latest: () => [...active.values()].map(publicRecord), history: () => [...history.values()].map(publicRecord) };
 }

@@ -213,7 +213,12 @@ export async function runWindowsDiagnostic({ command, args, cwd = root, env = pr
       throw failure('spawn_failed');
     }
     const backend = backendFactory ? backendFactory(child) : createWindowsBackend();
-    tracker = createWindowsOwnerTracker({ runnerPid: child.pid, supervisorPid: process.pid, backend, notBeforeMs: spawnedAfter });
+    tracker = createWindowsOwnerTracker({ runnerPid: child.pid, supervisorPid: process.pid, backend, notBeforeMs: spawnedAfter,
+      onDecision: ({ role, kind, decision, absenceObserved, parentIdentityMatched, stopAttempted }) => {
+        // Only fixed, non-secret decision metadata reaches the public CI log.
+        // Exact PID/dates are not needed to distinguish active from retired reuse.
+        output(`KTZ_OWNERSHIP:${JSON.stringify({ role, kind, decision, absenceObserved, parentIdentityMatched, stopAttempted })}\n`);
+      } });
     while (!childExit && !spawnError && !timeout && !collectionError) {
       await drain(); await scan();
       if (!childExit && !spawnError && !timeout && !collectionError) await pause(scanIntervalMs);
