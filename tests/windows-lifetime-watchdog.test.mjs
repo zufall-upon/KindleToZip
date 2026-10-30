@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -201,6 +201,119 @@ test('Windows所有履歴: activeとretiredの証拠を混同しない', async t
     await assert.rejects(m.tracker.stop(old), { code: 'identity_unconfirmed' });
     assert.equal(m.stops.length, 0); assert.equal(m.decisions.some(d => d.decision === 'retire'), false);
   });
+});
+
+test('Windows新子の開始時刻: 識別不能と現親の所有証拠なしを分ける', async t => {
+  const a = '20260101000000.000001Z', b = '20260101000001.000001Z';
+  const c = '20260101000002.000001Z', d = '20260101000003.000001Z';
+  const root = { pid: 41, parentPid: 7, creationDate: a, name: 'cmd.exe' };
+  const child = { pid: 42, parentPid: 41, creationDate: b, name: 'node.exe' };
+  function model() {
+    let rows = [root]; const decisions = [], stopped = [];
+    const tracker = createWindowsOwnerTracker({ runnerPid: 41, supervisorPid: 7,
+      onDecision: record => decisions.push(record), backend: {
+        query: async () => rows, stop: async record => { stopped.push(record); return 'terminated'; },
+      } });
+    return { tracker, decisions, stopped, setRows(value) { rows = value; } };
+  }
+  for (const [creationDate, kind] of [[null, 'child_birth_missing'], ['private-invalid-date', 'child_birth_invalid'],
+    ['20261301000000.000001Z', 'child_birth_invalid']]) {
+    await t.test(kind, async () => {
+      const m = model(); const [owned] = await m.tracker.scan(); m.setRows([root, { ...child, creationDate }]);
+      await assert.rejects(m.tracker.scan(), { code: 'identity_unconfirmed' });
+      await assert.rejects(m.tracker.stop(owned), { code: 'identity_unconfirmed' });
+      await assert.rejects(m.tracker.stop({ ...child, creationDate }), { code: 'identity_unconfirmed' });
+      assert.equal(m.stopped.length, 0); assert.equal(m.tracker.history().length, 1);
+      assert.ok(m.decisions.some(e => e.kind === kind && e.decision === 'reject' && !e.stopAttempted));
+      assert.equal(JSON.stringify(m.decisions).includes('private-invalid-date'), false);
+    });
+  }
+  await t.test('正常な子は現親の証拠で所有に追加する', async () => {
+    const m = model(); m.setRows([root, child]);
+    const [, owned] = await m.tracker.scan(); assert.equal(owned.creationDate, b);
+    assert.equal(await m.tracker.stop(owned), 'terminated'); assert.equal(m.stopped.length, 1);
+  });
+  await t.test('現親より古い正常個体は所有へ追加せず停止しない', async () => {
+    const m = model(), older = { ...child, creationDate: '20251231235959.000001Z' };
+    m.setRows([root, older]); assert.deepEqual((await m.tracker.scan()).map(e => e.pid), [41]);
+    await assert.rejects(m.tracker.stop(older), { code: 'identity_unconfirmed' }); assert.equal(m.stopped.length, 0);
+    assert.equal(m.tracker.history().length, 1);
+    assert.ok(m.decisions.some(e => e.kind === 'child_birth_before_parent' && e.decision === 'new_unowned' && !e.stopAttempted));
+    m.setRows([older]); assert.deepEqual(await m.tracker.scan(), []);
+    assert.deepEqual(await m.tracker.scan(), []);
+    await assert.rejects(m.tracker.stop(older), { code: 'identity_unconfirmed' });
+    // Exclusion follows the dated individual, never the PID alone.
+    for (const creationDate of [b, null]) {
+      m.setRows([{ ...older, creationDate }]);
+      await assert.rejects(m.tracker.scan(), { code: 'ancestry_unconfirmed' });
+    }
+    assert.equal(m.stopped.length, 0);
+  });
+  await t.test('過去owned親からの未知子かもしれない個体を残存なしにしない', async () => {
+    const m = model(); m.setRows([root, child]); await m.tracker.scan();
+    m.setRows([root]); await m.tracker.scan();
+    const replacement = { ...child, creationDate: d };
+    m.setRows([root, replacement]); await m.tracker.scan();
+    const unknown = { pid: 43, parentPid: 42, creationDate: c, name: 'chrome.exe' };
+    m.setRows([root, replacement, unknown]); await assert.rejects(m.tracker.scan(), { code: 'ancestry_unconfirmed' });
+    await assert.rejects(m.tracker.stop(unknown), { code: 'identity_unconfirmed' });
+    await assert.rejects(m.tracker.stop(replacement), { code: 'identity_unconfirmed' }); assert.equal(m.stopped.length, 0);
+    assert.equal(m.tracker.history().some(e => e.pid === 43), false);
+    assert.ok(m.decisions.some(e => e.kind === 'child_birth_before_parent' && e.decision === 'reject' && !e.stopAttempted));
+    m.setRows([root, unknown]); await assert.rejects(m.tracker.scan(), { code: 'ancestry_unconfirmed' });
+    await assert.rejects(m.tracker.stop(unknown), { code: 'identity_unconfirmed' }); assert.equal(m.stopped.length, 0);
+    // An unowned replacement at the parent PID is not evidence that a child
+    // born during the historical owned parent's lifetime is unrelated.
+    const other = model(); other.setRows([root, child]); await other.tracker.scan();
+    other.setRows([root]); await other.tracker.scan();
+    other.setRows([root, { ...replacement, parentPid: 99 }, unknown]);
+    await assert.rejects(other.tracker.scan(), { code: 'ancestry_unconfirmed' });
+    await assert.rejects(other.tracker.stop(unknown), { code: 'identity_unconfirmed' }); assert.equal(other.stopped.length, 0);
+  });
+});
+
+test('Windows新子の開始時刻: collectorも非対象と識別不能を区別する', async t => {
+  await t.test('現親より古い個体はrunner終了後も非採用で正常終了する', async () => {
+    const root = await sandbox(); let stops = 0;
+    try {
+      const { result, output } = await fixture(root, 'setTimeout(()=>process.exit(0),220)', {
+        backendFactory(child) {
+          const base = backendFor(child);
+          return { async query() { return [...await base.query(), {
+            pid: 999996, parentPid: child.pid, creationDate: '20000101000000.000001Z', name: 'private-older-name',
+          }]; }, async stop(record) { stops++; return base.stop(record); } };
+        },
+      });
+      assert.equal(result.outcome, 'passed'); assert.deepEqual(result.childExit, { code: 0, signal: null });
+      assert.equal(result.testOutcome, 'passed'); assert.equal(result.collectionOutcome, 'complete');
+      assert.equal(result.cleanupOutcome, 'none-observed'); assert.equal(result.collectionError, null);
+      assert.deepEqual(result.remainingProcesses, []); assert.deepEqual(result.forced, []);
+      assert.deepEqual(result.terminationAttempts, []); assert.equal(stops, 0);
+      assert.equal(result.observedProcesses.length, 1);
+      const metadata = output.split('\n').filter(line => line.startsWith('KTZ_OWNERSHIP:'));
+      assert.ok(metadata.some(line => line.includes('child_birth_before_parent') && line.includes('new_unowned')));
+      for (const line of metadata) assert.doesNotMatch(line, /999996|20000101|private-older-name|CreationDate|"pid"/);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  for (const [creationDate, kind] of [[null, 'child_birth_missing'], ['private-invalid-date', 'child_birth_invalid']]) {
+    await t.test(kind, async () => {
+      const root = await sandbox(); let childStops = 0;
+      const { result, output } = await fixture(root, 'setInterval(()=>{},1000)', {
+        backendFactory(child) {
+          const base = backendFor(child);
+          return { ...base, async query() { const rows = await base.query();
+            if (rows.length) rows.push({ pid: 999997, parentPid: child.pid, creationDate, name: 'private-child-name' }); return rows; },
+          async stop(record) { childStops++; return base.stop(record); } };
+        },
+      });
+      assert.equal(result.outcome, 'failed'); assert.equal(result.collectionError, 'identity_unconfirmed');
+      assert.equal(result.collectionOutcome, 'incomplete'); assert.equal(result.cleanupOutcome, 'unknown');
+      assert.equal(result.remainingState, 'unknown'); assert.equal(childStops, 0);
+      const metadata = output.split('\n').filter(line => line.startsWith('KTZ_OWNERSHIP:'));
+      assert.ok(metadata.some(line => line.includes(kind) && line.includes('"decision":"reject"')));
+      for (const line of metadata) assert.doesNotMatch(line, /999997|private-invalid-date|private-child-name|CreationDate|"pid"/);
+    });
+  }
 });
 
 test('Windows所有判定: 公開ログは固定分類だけでPIDと開始時刻を出さない', async () => {

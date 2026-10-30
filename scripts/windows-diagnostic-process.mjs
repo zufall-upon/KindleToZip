@@ -120,7 +120,12 @@ export function createWindowsOwnerTracker({ runnerPid, supervisorPid, backend, n
   if (!validPid(runnerPid) || !validPid(supervisorPid)) throw failure('root_identity_invalid');
   const history = new Map(), lastByPid = new Map(), absences = new Set(), decisions = new Set();
   const key = item => `${item.pid}:${item.creationDate}`;
-  const validBirth = value => typeof value === 'string' && birthPattern.test(value);
+  const validBirth = value => {
+    if (typeof value !== 'string' || !birthPattern.test(value)) return false;
+    const iso = `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}T${value.slice(8, 10)}:${value.slice(10, 12)}:${value.slice(12, 14)}.${value.slice(15, 18)}Z`;
+    const time = Date.parse(iso);
+    return Number.isFinite(time) && new Date(time).toISOString() === iso;
+  };
   let active = new Map(), validScan = false, rootIdentity = null, rootRetired = false;
   function decision(kind, action, previous, observed, parentIdentityMatched = 'unknown', stopAttempted = false) {
     const record = { role: (previous ?? observed)?.pid === runnerPid ? 'root' : 'child', kind, decision: action,
@@ -189,17 +194,42 @@ export function createWindowsOwnerTracker({ runnerPid, supervisorPid, backend, n
         if (!liveParent || liveParent.creationDate !== parent.creationDate) {
           decision('parent_changed', 'reject', parent, liveParent, false); throw failure('ancestry_unconfirmed');
         }
-        if (!validBirth(row.creationDate) || row.creationDate < parent.creationDate) {
-          decision('metadata_invalid', 'reject', null, row, true); throw failure('identity_unconfirmed');
+        if (row.creationDate === null || row.creationDate === undefined || row.creationDate === '') {
+          decision('child_birth_missing', 'reject', null, row, true); throw failure('identity_unconfirmed');
+        }
+        if (!validBirth(row.creationDate)) {
+          decision('child_birth_invalid', 'reject', null, row, true); throw failure('identity_unconfirmed');
+        }
+        if (row.creationDate < parent.creationDate) {
+          // A valid older individual cannot inherit ownership from this live
+          // parent. But an unobserved child of an earlier owned individual at
+          // the same PID could still be ours: retain uncertainty, not success.
+          const historicalParent = [...history.values()].find(item => item.pid === parent.pid
+            && item.creationDate !== parent.creationDate && item.creationDate <= row.creationDate);
+          decision('child_birth_before_parent', historicalParent ? 'reject' : 'new_unowned', null, row, true);
+          if (historicalParent) throw failure('ancestry_unconfirmed');
+          continue;
         }
         next.set(row.pid, { ...row, role: role(row.name ?? '', false), reparented: false }); changed = true;
       }
     } while (changed);
     // Preserve known same-individual children across parent exit/reparenting,
     // but never infer an unknown orphan's ownership from a historical PPID.
-    for (const row of rows) if (!next.has(row.pid) && (lastByPid.has(row.parentPid) || row.parentPid === runnerPid)
-      && !current.has(row.parentPid)) {
-      decision('parent_changed', 'reject', null, row, false); throw failure('ancestry_unconfirmed');
+    for (const row of rows) if (!next.has(row.pid) && (lastByPid.has(row.parentPid) || row.parentPid === runnerPid)) {
+      const liveParent = current.get(row.parentPid);
+      const ownedParents = [...history.values()].filter(item => item.pid === row.parentPid);
+      if (row.parentPid === runnerPid && !ownedParents.length) ownedParents.push(rootIdentity);
+      // A parent's exit cannot make a valid older individual its child. Check
+      // every owned generation, not a remembered exclusion for this PID.
+      const beforeAllOwnedParents = validBirth(row.creationDate) && ownedParents.length > 0
+        && ownedParents.every(item => row.creationDate < item.creationDate);
+      const possibleEarlierChild = liveParent && !next.has(row.parentPid) && ownedParents.some(item => item.creationDate !== liveParent.creationDate
+        && (!validBirth(row.creationDate) || !validBirth(liveParent.creationDate)
+          || (item.creationDate <= row.creationDate && row.creationDate < liveParent.creationDate)));
+      if ((!liveParent && !beforeAllOwnedParents) || possibleEarlierChild) {
+        decision('parent_changed', 'reject', null, row, false); throw failure('ancestry_unconfirmed');
+      }
+      if (!liveParent) decision('child_birth_before_parent', 'new_unowned', null, row, false);
     }
     for (const item of active.values()) if (!next.has(item.pid)) {
       absences.add(key(item)); decision('retired_pid_reused', 'retire', item, null);

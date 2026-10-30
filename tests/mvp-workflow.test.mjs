@@ -24,6 +24,7 @@ import { createLifetime } from './support/test-lifetime.mjs';
 import { observeControlWindow } from './support/control-lifetime.mjs';
 const trace = createLifetime();
 const test = trace.instrument(nodeTest);
+const observedTeardown = 'output_published_manifest_durability_uncertain';
 const { chromium } = await import('playwright');
 const root = fileURLToPath(new URL('../artifacts/mvp-tests/', import.meta.url));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -96,9 +97,17 @@ async function setup(t, { sampleFixture = 'reader', sampleHeadless } = {}) {
   const running = await lifetimeStep(t, 'application.start', () => startApplication({ dataDir: path.join(directory, 'data'), sampleFixture,
     ...(sampleHeadless === undefined ? {} : { sampleHeadless }) }));
   trace.trackStore(t, running.app.store);
+  const teardownStep = (boundary, operation) => t.name === observedTeardown
+    ? trace.step(t, `teardown.${boundary}`, operation) : operation();
+  if (trace.enabled && t.name === observedTeardown) {
+    const close = running.app.close;
+    running.app.close = function (...args) {
+      return trace.step(t, 'teardown.app.close', () => close.apply(this, args));
+    };
+  }
   t.after(async () => {
-    await lifetimeStep(t, 'running.close', () => running.close());
-    await lifetimeStep(t, 'fixture.remove', () => rm(directory, { recursive: true, force: true }));
+    await teardownStep('running.close', () => lifetimeStep(t, 'running.close', () => running.close()));
+    await teardownStep('fixture.remove', () => lifetimeStep(t, 'fixture.remove', () => rm(directory, { recursive: true, force: true })));
   });
   const request = async (action, input = {}) => {
     const response = await fetch(`${running.origin}/api/command`, { method: 'POST', headers: {
@@ -201,7 +210,8 @@ if (process.platform === 'linux') {
       ['output_path_changed', /出力先の経路が変化/],
     ]) await t.test(code, async sub => {
       const r = await setup(sub); await r.request('create');
-      const control = await openControlWindow(r.url, { headless: true }); sub.after(() => control.close());
+      const control = await openControlWindow(r.url, { headless: true });
+      sub.after(() => code === observedTeardown ? trace.step(sub, 'teardown.control.close', () => control.close()) : control.close());
       const destination = path.join(r.directory, 'known.zip');
       const call = r.app.store.call.bind(r.app.store);
       r.app.store.call = (kind, ...args) => {
