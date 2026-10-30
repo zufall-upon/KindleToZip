@@ -22,9 +22,9 @@ import { startFixture } from '../poc/browser/fixture-server.mjs';
 import { readSessionPreference, saveSessionPreference } from '../app/session-preference.mjs';
 import { createLifetime } from './support/test-lifetime.mjs';
 import { observeControlWindow } from './support/control-lifetime.mjs';
+import { createControlFirstCleanup } from './support/owned-control-cleanup.mjs';
 const trace = createLifetime();
 const test = trace.instrument(nodeTest);
-const observedTeardown = 'output_published_manifest_durability_uncertain';
 const { chromium } = await import('playwright');
 const root = fileURLToPath(new URL('../artifacts/mvp-tests/', import.meta.url));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -84,7 +84,7 @@ function readStoredEntries(bytes) {
   return entries;
 }
 
-async function setup(t, { sampleFixture = 'reader', sampleHeadless } = {}) {
+async function setup(t, { sampleFixture = 'reader', sampleHeadless, controlFirst } = {}) {
   if (lifetimeEnabled && lifetimeNames.has(t.name)) lifetimes.set(t, { pending: new Set(['running.close', 'fixture.remove']) });
   lifetime(t, 'test', 'begin');
   await mkdir(root, { recursive: true });
@@ -97,18 +97,23 @@ async function setup(t, { sampleFixture = 'reader', sampleHeadless } = {}) {
   const running = await lifetimeStep(t, 'application.start', () => startApplication({ dataDir: path.join(directory, 'data'), sampleFixture,
     ...(sampleHeadless === undefined ? {} : { sampleHeadless }) }));
   trace.trackStore(t, running.app.store);
-  const teardownStep = (boundary, operation) => t.name === observedTeardown
+  const teardownStep = (boundary, operation) => controlFirst
     ? trace.step(t, `teardown.${boundary}`, operation) : operation();
-  if (trace.enabled && t.name === observedTeardown) {
+  if (trace.enabled && controlFirst) {
     const close = running.app.close;
     running.app.close = function (...args) {
       return trace.step(t, 'teardown.app.close', () => close.apply(this, args));
     };
   }
-  t.after(async () => {
-    await teardownStep('running.close', () => lifetimeStep(t, 'running.close', () => running.close()));
-    await teardownStep('fixture.remove', () => lifetimeStep(t, 'fixture.remove', () => rm(directory, { recursive: true, force: true })));
-  });
+  const closeRunning = () => teardownStep('running.close', () => lifetimeStep(t, 'running.close', () => running.close()));
+  const removeFixture = () => teardownStep('fixture.remove', () => lifetimeStep(t, 'fixture.remove', () => rm(directory, { recursive: true, force: true })));
+  if (controlFirst) t.after(createControlFirstCleanup({
+    closeControl: () => {
+      const control = controlFirst.control();
+      return control ? teardownStep('control.close', () => control.close()) : undefined;
+    }, closeRunning, removeFixture, bodyFailure: controlFirst.bodyFailure, controlFailure: controlFirst.controlFailure,
+  }));
+  else t.after(async () => { await closeRunning(); await removeFixture(); });
   const request = async (action, input = {}) => {
     const response = await fetch(`${running.origin}/api/command`, { method: 'POST', headers: {
       Authorization: `Bearer ${running.token}`, 'Content-Type': 'application/json', Origin: running.origin,
@@ -209,27 +214,33 @@ if (process.platform === 'linux') {
       ['output_published_manifest_durability_uncertain', /出力済み.*保存履歴の永続性は未確認/],
       ['output_path_changed', /出力先の経路が変化/],
     ]) await t.test(code, async sub => {
-      const r = await setup(sub); await r.request('create');
-      const control = await openControlWindow(r.url, { headless: true });
-      sub.after(() => code === observedTeardown ? trace.step(sub, 'teardown.control.close', () => control.close()) : control.close());
-      const destination = path.join(r.directory, 'known.zip');
-      const call = r.app.store.call.bind(r.app.store);
-      r.app.store.call = (kind, ...args) => {
-        if (kind !== 'export') return call(kind, ...args);
-        const error = new AppError(code);
-        for (const listener of r.app.store.errorListeners) listener(error);
-        return Promise.reject(error);
-      };
-      await assert.rejects(r.app.command('export', { destination, format: 'zip' }), { code });
-      await control.page.waitForFunction(() => !document.querySelector('#storageUncertain').hidden);
-      const warning = await control.page.locator('#storageUncertain').textContent();
-      assert.match(warning, expected); assert.ok(warning.includes(destination)); assert.match(warning, /再起動/);
-      assert.deepEqual((await r.app.snapshot()).storageUncertain, { code, destination });
-      for (const action of ['start', 'export', 'savePreset', 'closeJob']) {
-        await assert.rejects(r.app.command(action, { destination, format: 'zip' }), { code: 'storage_reopen_required' });
-      }
-      await assert.rejects(lstat(destination), { code: 'ENOENT' });
-      assert.equal(await control.page.locator('#decisionButton').isDisabled(), true);
+      let control, controlFailure, bodyFailure;
+      const r = await setup(sub, { controlFirst: {
+        control: () => control, controlFailure: () => controlFailure, bodyFailure: () => bodyFailure,
+      } });
+      try {
+        await r.request('create');
+        try { control = await openControlWindow(r.url, { headless: true }); }
+        catch (error) { controlFailure = { error }; throw error; }
+        const destination = path.join(r.directory, 'known.zip');
+        const call = r.app.store.call.bind(r.app.store);
+        r.app.store.call = (kind, ...args) => {
+          if (kind !== 'export') return call(kind, ...args);
+          const error = new AppError(code);
+          for (const listener of r.app.store.errorListeners) listener(error);
+          return Promise.reject(error);
+        };
+        await assert.rejects(r.app.command('export', { destination, format: 'zip' }), { code });
+        await control.page.waitForFunction(() => !document.querySelector('#storageUncertain').hidden);
+        const warning = await control.page.locator('#storageUncertain').textContent();
+        assert.match(warning, expected); assert.ok(warning.includes(destination)); assert.match(warning, /再起動/);
+        assert.deepEqual((await r.app.snapshot()).storageUncertain, { code, destination });
+        for (const action of ['start', 'export', 'savePreset', 'closeJob']) {
+          await assert.rejects(r.app.command(action, { destination, format: 'zip' }), { code: 'storage_reopen_required' });
+        }
+        await assert.rejects(lstat(destination), { code: 'ENOENT' });
+        assert.equal(await control.page.locator('#decisionButton').isDisabled(), true);
+      } catch (error) { bodyFailure = { error }; throw error; }
     });
   });
 
