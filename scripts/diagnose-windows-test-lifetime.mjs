@@ -6,11 +6,22 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWindowsBackend, createWindowsOwnerTracker } from './windows-diagnostic-process.mjs';
+import { isDiagnosticErrorCode } from '../tests/support/test-lifetime.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const now = () => performance.now();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-const codeOf = error => /^[a-z_]{1,60}$/.test(error?.code ?? '') ? error.code : 'collection_failed';
+const collectionCodes = new Set(['event_read_timeout', 'event_file_invalid', 'invalid_lifetime_event',
+  'lifetime_event_limit', 'root_identity_unconfirmed', 'owned_processes_remain', 'spawn_unconfirmed',
+  'spawn_failed', 'streams_not_closed', 'incomplete_lifetime_event', 'tap_summary_unconfirmed',
+  'test_lifecycle_unconfirmed', 'monitor_spawn_failed', 'monitor_helper_unconfirmed',
+  'monitor_streams_timeout', 'monitor_command_failed', 'monitor_output_limit', 'monitor_command_timeout',
+  'system_root_unavailable', 'metadata_invalid', 'termination_invalid', 'root_identity_invalid',
+  'identity_invalid', 'identity_changed', 'identity_unconfirmed', 'ancestry_unconfirmed', 'termination_unconfirmed']);
+function codeOf(error) {
+  try { const code = Object.getOwnPropertyDescriptor(error, 'code')?.value; return collectionCodes.has(code) ? code : 'collection_failed'; }
+  catch { return 'collection_failed'; }
+}
 const failure = code => Object.assign(new Error(code), { code });
 const uiName = 'Kindle地域公開UI: 言語と独立して選択し実際の開始URLへ渡し開いた間は変更しない';
 const boundaryName = 'Kindle地域境界: 同じ明示リストをタブ・picker・取得前後に使い別地域と認証・別本で止まる';
@@ -33,11 +44,16 @@ export function commandForMode(mode, { executable = process.execPath, env = proc
   throw failure('expected_single_near_or_full');
 }
 
-function safeTestName(value) {
+function safeTestName(value, known) {
   if (typeof value !== 'string') throw failure('invalid_lifetime_event');
-  // Test names are useful, but the diagnostic must not echo URLs or paths.
-  return /(?:https?:|file:|[\\/]|\b(?:cookie|profile|payload)\b)/i.test(value) ? '[redacted]' : value.slice(0, 240);
+  // Only names fixed by the selected recipe may be printed.
+  return known.has(value) ? value : '[other]';
 }
+const boundaries = new Set(['test', 'test_body', 'owned_fixture', 'snapshot_listener', 'process_exit', 'ipc_snapshot',
+  'region.setup', 'region.control', 'region.options', 'region.options_assert', 'region.route', 'region.pendingPoll',
+  'region.intercept', 'region.fulfill', 'region.assertions', 'control.browser_launch', 'control.context_create',
+  'control.route_register', 'control.page_create', 'control.page_goto', 'control.browser_close', 'heartbeat']);
+const events = new Set(['begin', 'start', 'end', 'error', 'complete', 'called', 'created', 'captured', 'ready', 'unavailable', 'tick']);
 function bounded(promise, ms, code) {
   let timer;
   return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(failure(code)), ms); })])
@@ -62,13 +78,18 @@ export async function runWindowsDiagnostic({ command, args, cwd = root, env = pr
   let lastProgress = began, lastBoundary = null, offset = 0, eventRemainder = '';
   let childExit = null, spawnError = null, closeDone = false, collectionError = null, timeout = null;
   let warned = false, snapshot = null, tracker = null, pendingDrain = null, identityEstablished = false, tapFailure = false;
+  let tapResults = 0, tapDuplicateSummary = false, testOutcome = 'unknown';
+  const knownTests = new Set(['process', ...expectedTests]);
   const captured = [], unique = new Set(), tapSeen = new Set(), forced = [], terminationAttempts = [], tap = {};
   const emit = value => output(`KTZ_WATCHDOG:${JSON.stringify(value)}\n`);
   const mark = value => { lastProgress = now(); lastBoundary = value; };
   const spawnedAfter = Date.now() - 1000; // CIM is microsecond precision; allow clock conversion jitter.
   const child = spawn(command, args, { cwd, env: { ...env, KTZ_TEST_LIFETIME_DIAGNOSTICS: '1',
     KTZ_LIFETIME_EVENT_FILE: eventFile }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-  child.on('error', error => { spawnError = error.code || 'spawn_failed'; });
+  child.on('error', error => {
+    try { const code = Object.getOwnPropertyDescriptor(error, 'code')?.value; spawnError = isDiagnosticErrorCode(code) ? code : 'spawn_failed'; }
+    catch { spawnError = 'spawn_failed'; }
+  });
   child.on('exit', (code, signal) => { childExit = { code, signal }; });
   child.on('close', () => { closeDone = true; });
   const onOutput = () => {
@@ -79,6 +100,7 @@ export async function runWindowsDiagnostic({ command, args, cwd = root, env = pr
         const line = remainder.slice(0, end).replace(/\r$/, ''); remainder = remainder.slice(end + 1);
         const result = line.match(/^\s*(not )?ok (\d+)(?:\s*-.*)?$/);
         if (result) {
+          tapResults++;
           if (result[1]) tapFailure = true;
           const key = createHash('sha256').update(line).digest('hex');
           if (!tapSeen.has(key)) {
@@ -86,8 +108,12 @@ export async function runWindowsDiagnostic({ command, args, cwd = root, env = pr
             output(`KTZ_TAP:${JSON.stringify({ result: result[1] ? 'not ok' : 'ok', number: Number(result[2]) })}\n`);
           }
         }
-        const summary = line.match(/^#\s*(tests|pass|fail|cancelled|skipped)\s+(\d+)\s*$/);
-        if (summary) { tap[summary[1]] = Number(summary[2]); output(`KTZ_TAP:${JSON.stringify({ summary: summary[1], count: tap[summary[1]] })}\n`); }
+        const summary = line.match(/^#\s*(tests|suites|pass|fail|cancelled|skipped|todo)\s+(\d+)\s*$/);
+        if (summary) {
+          if (Object.hasOwn(tap, summary[1])) tapDuplicateSummary = true;
+          tap[summary[1]] = Number(summary[2]);
+          output(`KTZ_TAP:${JSON.stringify({ summary: summary[1], count: tap[summary[1]] })}\n`);
+        }
       }
       if (remainder.length > 128 * 1024) { remainder = ''; collectionError ||= 'stream_line_limit'; }
     };
@@ -106,12 +132,27 @@ export async function runWindowsDiagnostic({ command, args, cwd = root, env = pr
         try { event = JSON.parse(line.slice('KTZ_LIFETIME:'.length)); } catch { throw failure('invalid_lifetime_event'); }
         if (!Number.isSafeInteger(event.pid) || event.pid <= 0 || !Number.isFinite(event.monotonicMs)
           || !/^[A-Za-z_0-9.]{1,80}$/.test(event.boundary ?? '') || !/^[a-z_]{1,40}$/.test(event.event ?? '')) throw failure('invalid_lifetime_event');
-        const clean = { pid: event.pid, test: safeTestName(event.test), boundary: event.boundary,
-          event: event.event, monotonicMs: event.monotonicMs };
+        const clean = { pid: event.pid, test: safeTestName(event.test, knownTests),
+          boundary: boundaries.has(event.boundary) || /^after_hook\.[0-9]{1,6}$/.test(event.boundary) ? event.boundary : 'other',
+          event: events.has(event.event) ? event.event : 'other', monotonicMs: event.monotonicMs };
+        if (event.elapsedMs !== undefined) {
+          if (!Number.isFinite(event.elapsedMs) || event.elapsedMs < 0) throw failure('invalid_lifetime_event');
+          clean.elapsedMs = event.elapsedMs;
+        }
+        if (event.errorClass !== undefined || event.errorCode !== undefined) {
+          if (event.event !== 'error' || !['timeout', 'os', 'unknown'].includes(event.errorClass)
+            || !(event.errorCode === 'unknown' || isDiagnosticErrorCode(event.errorCode))
+            || (event.errorClass === 'os' && event.errorCode === 'unknown')
+            || (event.errorClass === 'unknown' && event.errorCode !== 'unknown')) throw failure('invalid_lifetime_event');
+          clean.errorClass = event.errorClass; clean.errorCode = event.errorCode;
+        }
         captured.push(clean); output(`KTZ_LIFETIME:${JSON.stringify(clean)}\n`);
         const meaningful = event.boundary === 'test' || event.boundary === 'test_body'
-          || event.boundary.startsWith('after_hook.') || event.boundary.startsWith('region.');
-        const key = `${event.pid}:${clean.test}:${event.boundary}:${event.event}`;
+          || event.boundary.startsWith('after_hook.') || event.boundary.startsWith('region.')
+          || clean.boundary.startsWith('control.');
+        // Keep different non-selected tests distinct for progress accounting,
+        // without printing their names in the diagnostic stream.
+        const key = `${event.pid}:${event.test}:${event.boundary}:${event.event}`;
         if (meaningful && !unique.has(key)) { unique.add(key); mark(clean); }
       }
       if (eventRemainder.length > 128 * 1024) throw failure('lifetime_event_limit');
@@ -190,16 +231,32 @@ export async function runWindowsDiagnostic({ command, args, cwd = root, env = pr
     if (remainingProcesses.length) throw failure('owned_processes_remain');
     remainingState = 'none-observed';
     if (eventRemainder.length) throw failure('incomplete_lifetime_event');
-    if (requireTap && (tapFailure || !(tap.tests > 0) || !(tap.pass > 0) || tap.fail !== 0 || tap.cancelled !== 0
-      || !Number.isSafeInteger(tap.skipped) || (full && tap.skipped !== 0))) throw failure('tap_summary_unconfirmed');
+    if (requireTap) {
+      const keys = ['tests', 'pass', 'fail', 'cancelled', 'skipped'];
+      const validCounts = keys.every(key => Number.isSafeInteger(tap[key]) && tap[key] >= 0)
+        && ['suites', 'todo'].every(key => tap[key] === undefined || Number.isSafeInteger(tap[key]) && tap[key] >= 0);
+      const failed = (tap.fail ?? 0) + (tap.cancelled ?? 0) > 0;
+      if (!validCounts || tapDuplicateSummary || !(tap.tests > 0) || (!failed && !(tap.pass > 0))
+        || tap.tests !== tap.pass + tap.fail + tap.cancelled + tap.skipped + (tap.todo ?? 0)
+        || tapResults !== tap.tests + (tap.suites ?? 0) || tapFailure !== failed
+        || (full && tap.skipped !== 0) || !childExit || childExit.signal || childExit.code !== (failed ? 1 : 0)) {
+        throw failure('tap_summary_unconfirmed');
+      }
+      testOutcome = failed ? 'failed' : 'passed';
+    } else if (childExit && !childExit.signal) testOutcome = childExit.code === 0 ? 'passed' : 'failed';
     for (const name of expectedTests) {
       const begin = captured.find(event => event.test === name && event.boundary === 'test' && event.event === 'begin');
-      if (!begin || !captured.some(event => event.pid === begin.pid && event.test === name && event.boundary === 'test_body' && event.event === 'complete')
+      const body = begin && captured.find(event => event.pid === begin.pid && event.test === name && event.boundary === 'test_body'
+        && (event.event === 'complete' || event.event === 'error'));
+      if (testOutcome === 'passed' && body?.event === 'error') {
+        testOutcome = 'unknown'; throw failure('test_lifecycle_unconfirmed');
+      }
+      if (!begin || !body
         || !captured.some(event => event.pid === begin.pid && event.test === name && event.boundary === 'test' && event.event === 'end')
         || !captured.some(event => event.pid === begin.pid && event.boundary === 'process_exit' && event.event === 'complete')) throw failure('test_lifecycle_unconfirmed');
     }
   } catch (error) {
-    collectionError ||= codeOf(error); remainingState = 'unknown';
+    collectionError ||= codeOf(error);
     remainingProcesses = tracker?.latest() ?? [];
     // A failed metadata query must not be converted into an empty tree. The
     // ChildProcess handle is nevertheless safe for the direct runner itself.
@@ -220,14 +277,16 @@ export async function runWindowsDiagnostic({ command, args, cwd = root, env = pr
       if (!childExit) child.unref();
       collectionError ||= 'streams_not_closed'; remainingState = 'unknown';
     }
-    try { await drain(); } catch (error) { collectionError ||= codeOf(error); remainingState = 'unknown'; }
+    try { await drain(); } catch (error) { collectionError ||= codeOf(error); }
   }
+  const collectionOutcome = collectionError || timeout || spawnError || !childExit ? 'incomplete' : 'complete';
+  const cleanupOutcome = remainingState;
   const outcome = timeout ? 'timeout' : spawnError || collectionError || !childExit || childExit.code !== 0
     || childExit.signal || forced.length || remainingState !== 'none-observed' ? 'failed' : 'passed';
-  const result = { outcome, timeout, childExit, spawnError, collectionError, forced, terminationAttempts, remainingState, remainingProcesses,
+  const result = { outcome, testOutcome, collectionOutcome, cleanupOutcome, timeout, childExit, spawnError, collectionError, forced, terminationAttempts, remainingState, remainingProcesses,
     observedProcesses: tracker?.history() ?? [], snapshot, events: captured, tap, eventDirectoryRetained: true,
     processCoverage: 'sampled-descendants-only', elapsedMs: Math.round(now() - began) };
-  emit({ event: 'result', outcome, timeout, childExit, spawnError, collectionError, forced: forced.length,
+  emit({ event: 'result', outcome, testOutcome, collectionOutcome, cleanupOutcome, timeout, childExit, spawnError, collectionError, forced: forced.length,
     terminationAttempts, remainingState, lastSampleCount: remainingProcesses.length,
     processCoverage: result.processCoverage, elapsedMs: result.elapsedMs });
   return result;

@@ -1,6 +1,27 @@
 // Test-only, opt-in tracing. The file channel is needed because node --test
 // can buffer a worker's stdout until the test has already finished.
 import { appendFileSync, readFileSync } from 'node:fs';
+import { isPromise } from 'node:util/types';
+
+// Only data descriptors are inspected: never invoke exception getters or read
+// message, stack, cause, paths, URLs, process settings, or command arguments.
+const diagnosticErrorCodes = new Set(['ENOENT', 'EACCES', 'EPERM', 'EADDRINUSE',
+  'EADDRNOTAVAIL', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EMFILE', 'ENFILE', 'ENOMEM']);
+export const isDiagnosticErrorCode = value => typeof value === 'string' && diagnosticErrorCodes.has(value);
+function dataProperty(object, key) {
+  try {
+    for (let i = 0; object != null && i < 8; i++, object = Object.getPrototypeOf(object)) {
+      const descriptor = Object.getOwnPropertyDescriptor(object, key);
+      if (descriptor) return 'value' in descriptor ? descriptor.value : undefined;
+    }
+  } catch { /* Hostile proxies and accessors are unclassified. */ }
+  return undefined;
+}
+export function classifyDiagnosticError(error) {
+  const name = dataProperty(error, 'name'), code = dataProperty(error, 'code');
+  const errorCode = isDiagnosticErrorCode(code) ? code : 'unknown';
+  return { errorClass: name === 'TimeoutError' ? 'timeout' : errorCode !== 'unknown' ? 'os' : 'unknown', errorCode };
+}
 
 export function createLifetime({ enabled = process.env.KTZ_TEST_LIFETIME_DIAGNOSTICS === '1',
   eventFile = process.env.KTZ_LIFETIME_EVENT_FILE } = {}) {
@@ -8,21 +29,34 @@ export function createLifetime({ enabled = process.env.KTZ_TEST_LIFETIME_DIAGNOS
   const cleanupStarted = new Set();
   function emit(t, boundary, event, extra = {}) {
     if (!enabled) return;
-    const record = { pid: process.pid, test: typeof t === 'string' ? t : t.name,
-      boundary, event, monotonicMs: performance.now(), ...extra };
-    const line = `KTZ_LIFETIME:${JSON.stringify(record)}\n`;
-    if (eventFile) appendFileSync(eventFile, line, { mode: 0o600 });
-    else process.stdout.write(line);
+    // Diagnostics must not replace the operation's result or exception even
+    // when the file, a test-name getter, serialization, or stdout fails.
+    try {
+      const record = { pid: process.pid, test: typeof t === 'string' ? t : t.name,
+        boundary, event, monotonicMs: performance.now(), ...extra };
+      const line = `KTZ_LIFETIME:${JSON.stringify(record)}\n`;
+      if (eventFile) appendFileSync(eventFile, line, { mode: 0o600 });
+      else process.stdout.write(line);
+    } catch { /* The supervisor will treat missing events as incomplete. */ }
   }
   function step(t, boundary, operation) {
     if (!enabled) return operation(); // Preserve the original promise, including rejection identity.
+    const began = performance.now();
     emit(t, boundary, 'start');
     try {
       const result = operation();
-      return Promise.resolve(result).then(value => { emit(t, boundary, 'end'); return value; }, error => {
-        emit(t, boundary, 'error'); throw error;
-      });
-    } catch (error) { emit(t, boundary, 'error'); throw error; }
+      if (!isPromise(result)) { emit(t, boundary, 'end', { elapsedMs: performance.now() - began }); return result; }
+      // Use the native Promise method, not an arbitrary then getter. If a
+      // hostile subclass prevents observation, leave its original promise.
+      try {
+        return Promise.prototype.then.call(result,
+          value => { emit(t, boundary, 'end', { elapsedMs: performance.now() - began }); return value; },
+          error => { emit(t, boundary, 'error', { elapsedMs: performance.now() - began, ...classifyDiagnosticError(error) }); throw error; });
+      } catch { return result; }
+    } catch (error) {
+      emit(t, boundary, 'error', { elapsedMs: performance.now() - began, ...classifyDiagnosticError(error) });
+      throw error;
+    }
   }
   function wrapRegistration(register, receiver) {
     return (...args) => {

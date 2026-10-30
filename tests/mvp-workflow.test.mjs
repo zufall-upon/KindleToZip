@@ -21,6 +21,7 @@ import { PNG } from 'pngjs';
 import { startFixture } from '../poc/browser/fixture-server.mjs';
 import { readSessionPreference, saveSessionPreference } from '../app/session-preference.mjs';
 import { createLifetime } from './support/test-lifetime.mjs';
+import { observeControlWindow } from './support/control-lifetime.mjs';
 const trace = createLifetime();
 const test = trace.instrument(nodeTest);
 const { chromium } = await import('playwright');
@@ -320,7 +321,9 @@ test('Kindle地域境界: 同じ明示リストをタブ・picker・取得前後
 
 test(process.platform === 'linux' ? 'Kindle地域公開UI: Linuxでは実Kindle起動を拒否する' : 'Kindle地域公開UI: 言語と独立して選択し実際の開始URLへ渡し開いた間は変更しない', async t => {
   const r = await trace.step(t, 'region.setup', () => setup(t));
-  const control = await trace.step(t, 'region.control', () => openControlWindow(r.url, { headless: true })); t.after(() => control.close());
+  const control = await trace.step(t, 'region.control', () => observeControlWindow(trace, t, chromium,
+    () => openControlWindow(r.url, { headless: true })));
+  t.after(() => trace.step(t, 'control.browser_close', () => control.close()));
   const ui = control.page;
   await trace.step(t, 'region.options', () => ui.waitForFunction(() => document.querySelector('#kindleRegion').options.length === 3));
   assert.deepEqual(await ui.locator('#kindleRegion option').evaluateAll(options => options.map(option => option.value)), ['jp', 'us', 'uk']);

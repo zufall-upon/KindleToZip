@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { boundedProcess, createWindowsBackend, createWindowsOwnerTracker } from '../scripts/windows-diagnostic-process.mjs';
 import { commandForMode, runWindowsDiagnostic } from '../scripts/diagnose-windows-test-lifetime.mjs';
 import { createLifetime } from './support/test-lifetime.mjs';
+import { observeControlWindow } from './support/control-lifetime.mjs';
 
 const tempBase = existsSync('/tmp/opencode') ? '/tmp/opencode' : tmpdir();
 const birthNow = () => {
@@ -61,7 +62,9 @@ test('Windows監視: 正常終了と元の失敗終了、専用event保持と既
   assert.equal(await readFile(path.join(inherited, 'keep'), 'utf8'), 'inherited');
   const directories = (await readdir(root)).filter(name => name.startsWith('ktz-windows-lifetime-'));
   assert.equal(directories.length, 2);
-  assert.match(await readFile(path.join(root, directories[0], 'events'), 'utf8'), /region\.pendingPoll/);
+  const eventFiles = await Promise.all(directories.map(name => readFile(path.join(root, name, 'events'), 'utf8')));
+  assert.equal(eventFiles.filter(text => /region\.pendingPoll/.test(text)).length, 1);
+  assert.equal(eventFiles.filter(text => text === '').length, 1);
 });
 
 test('Windows監視: heartbeatと重複TAPは非進捗、一度だけ警告・snapshotしidle失敗', async () => {
@@ -219,6 +222,8 @@ test('Windows監視: callerが選んだtestの本文・after・終了とTAPを�
     test('lifecycle fixture',async t=>{t.after(()=>{});await new Promise(r=>setTimeout(r,220));});`;
   const good = await fixture(root, source, { requireTap: true, expectedTests: ['lifecycle fixture'] });
   assert.equal(good.result.outcome, 'passed', JSON.stringify(good.result)); assert.equal(good.result.tap.pass, 1);
+  assert.equal(good.result.testOutcome, 'passed'); assert.equal(good.result.collectionOutcome, 'complete');
+  assert.equal(good.result.cleanupOutcome, 'none-observed');
   assert.ok(good.result.events.some(event => event.boundary === 'after_hook.1' && event.event === 'end'));
   assert.ok(good.result.events.some(event => event.boundary === 'process_exit' && event.event === 'complete'));
   const missing = await fixture(root, source, { requireTap: true, expectedTests: ['different fixture'] });
@@ -257,15 +262,252 @@ test('Windows診断: 設定の作成時捕捉と失敗・元promiseを保持', a
     const off = createLifetime(), p = Promise.resolve('same'), original = () => p;
     process.env.KTZ_TEST_LIFETIME_DIAGNOSTICS = '1';
     assert.equal(off.instrument(original), original); assert.equal(off.step({ name: 'fixture' }, 'x', original), p);
+    const fake = { launch: original }, descriptor = Object.getOwnPropertyDescriptor(fake, 'launch');
+    assert.equal(observeControlWindow(off, 'fixture', fake, () => fake.launch()), p);
+    assert.deepEqual(Object.getOwnPropertyDescriptor(fake, 'launch'), descriptor);
     const on = createLifetime({ eventFile: events });
     process.env.KTZ_TEST_LIFETIME_DIAGNOSTICS = '0';
+    assert.equal(await observeControlWindow(on, 'fixture', fake, () => fake.launch()), 'same');
+    assert.deepEqual(Object.getOwnPropertyDescriptor(fake, 'launch'), descriptor);
     const marker = new Error('same');
     await assert.rejects(on.step({ name: 'fixture' }, 'region.pendingPoll', () => Promise.reject(marker)), error => error === marker);
     const text = await readFile(events, 'utf8');
     assert.match(text, /"boundary":"region.pendingPoll","event":"start"/);
     assert.match(text, /"boundary":"region.pendingPoll","event":"error"/);
+    assert.match(text, /"boundary":"control.browser_launch","event":"end"/);
   } finally {
     if (before === undefined) delete process.env.KTZ_TEST_LIFETIME_DIAGNOSTICS;
     else process.env.KTZ_TEST_LIFETIME_DIAGNOSTICS = before;
   }
+});
+
+test('診断分類: 同期・非同期・getter・出力失敗でも元の結果と例外を維持し秘密を記録しない', async () => {
+  const root = await sandbox(), file = path.join(root, 'classification-events');
+  const trace = createLifetime({ enabled: true, eventFile: file });
+  const { errors: playwrightErrors } = await import('playwright');
+  const value = { retained: true }, timeout = new playwrightErrors.TimeoutError('private-path-token');
+  const os = Object.assign(new Error('private-url-token'), { code: 'EACCES' });
+  const unknownCode = Object.assign(new Error('private-message'), { name: 'private_name', code: 'private_token_profile' });
+  let getters = 0;
+  const unknown = Object.create(null);
+  for (const key of ['name', 'code', 'message', 'stack', 'cause']) Object.defineProperty(unknown, key, {
+    get() { getters++; throw new Error('getter must not run'); },
+  });
+  assert.equal(trace.step('fixture', 'region.control', () => value), value);
+  assert.throws(() => trace.step('fixture', 'region.control', () => { throw timeout; }), error => error === timeout);
+  await assert.rejects(trace.step('fixture', 'region.control', () => Promise.reject(os)), error => error === os);
+  await assert.rejects(trace.step('fixture', 'region.control', () => Promise.reject(unknownCode)), error => error === unknownCode);
+  await assert.rejects(trace.step('fixture', 'region.control', () => Promise.reject(unknown)), error => error === unknown);
+  const hostile = new Proxy({}, { getOwnPropertyDescriptor() { throw new Error('private'); }, getPrototypeOf() { throw new Error('private'); } });
+  assert.throws(() => trace.step('fixture', 'region.control', () => { throw hostile; }), error => error === hostile);
+  assert.equal(getters, 0);
+  const text = await readFile(file, 'utf8');
+  const errors = text.split('\n').filter(Boolean).map(line => JSON.parse(line.slice('KTZ_LIFETIME:'.length))).filter(item => item.event === 'error');
+  assert.deepEqual(errors.map(({ errorClass, errorCode }) => [errorClass, errorCode]), [
+    ['timeout', 'unknown'], ['os', 'EACCES'], ['unknown', 'unknown'], ['unknown', 'unknown'], ['unknown', 'unknown'],
+  ]);
+  assert.ok(errors.every(item => Number.isFinite(item.elapsedMs) && item.elapsedMs >= 0));
+  assert.doesNotMatch(text, /private|getter must not run|message|stack|cause/);
+  // Force a real event-channel error after creation; even the start event must
+  // not stop invocation. Restore the channel for the process exit listener.
+  await rename(file, `${file}.saved`); await mkdir(file);
+  try {
+    let called = false;
+    assert.equal(trace.step('fixture', 'region.control', () => { called = true; return value; }), value);
+    assert.equal(called, true);
+    assert.throws(() => trace.step('fixture', 'region.control', () => { throw timeout; }), error => error === timeout);
+    await assert.rejects(trace.step('fixture', 'region.control', () => Promise.reject(os)), error => error === os);
+  } finally { await rename(file, `${file}.directory`); await rename(`${file}.saved`, file); }
+});
+
+test('実public control caller: 操作境界と例外、呼出し設定、同時実行の分離とdescriptor復元', async () => {
+  const { chromium } = await import('playwright');
+  const { openControlWindow } = await import('../app/control-window.mjs');
+  const root = await sandbox(), file = path.join(root, 'control-events');
+  const trace = createLifetime({ enabled: true, eventFile: file });
+  const off = createLifetime({ enabled: false });
+  const url = `http://127.0.0.1:4321/#${'a'.repeat(64)}`;
+  const originalOwn = Object.getOwnPropertyDescriptor(chromium, 'launch');
+  const installFake = fn => Object.defineProperty(chromium, 'launch', { value: fn, configurable: true, writable: true });
+  const restoreChromium = () => originalOwn ? Object.defineProperty(chromium, 'launch', originalOwn) : delete chromium.launch;
+  const promise = Promise.resolve('unchanged');
+  assert.equal(observeControlWindow(off, 'fixture', chromium, () => promise), promise);
+  const phases = [
+    ['launch', 'control.browser_launch'], ['context', 'control.context_create'],
+    ['route', 'control.route_register'], ['page', 'control.page_create'], ['goto', 'control.page_goto'],
+  ];
+  function objects(failureAt, failure, closeFailure) {
+    const calls = [], descriptors = [];
+    const run = (kind, receiver, expected, args, answer) => {
+      assert.equal(receiver, expected); calls.push({ kind, args });
+      if (kind === failureAt) {
+        if (kind === 'context') throw failure; // Synchronous throw also preserves identity.
+        return Promise.reject(failure);
+      }
+      if (kind === 'close' && closeFailure) return Promise.reject(closeFailure);
+      return Promise.resolve(answer);
+    };
+    const page = {
+      goto(...args) { return run('goto', this, page, args); },
+      on(...args) { assert.equal(this, page); calls.push({ kind: 'on', args }); },
+      once(...args) { assert.equal(this, page); calls.push({ kind: 'once', args }); },
+    };
+    const context = {
+      route(...args) { return run('route', this, context, args); },
+      newPage(...args) { return run('page', this, context, args, page); },
+    };
+    const browser = {
+      newContext(...args) { return run('context', this, browser, args, context); },
+      close(...args) { return run('close', this, browser, args); },
+    };
+    for (const object of [browser, context, page]) descriptors.push([object, Object.getOwnPropertyDescriptors(object)]);
+    function launch(...args) { return run('launch', this, chromium, args, browser); }
+    return { calls, descriptors, launch, browser, context, page };
+  }
+  try {
+    for (const [failed, boundary] of phases) {
+      const marker = Object.assign(new Error('private-marker'), { code: 'ENOENT' });
+      const mock = objects(failed, marker); installFake(mock.launch);
+      const fakeDescriptor = Object.getOwnPropertyDescriptor(chromium, 'launch');
+      await assert.rejects(observeControlWindow(trace, 'fixture', chromium,
+        () => openControlWindow(url, { headless: true })), error => error === marker);
+      assert.deepEqual(Object.getOwnPropertyDescriptor(chromium, 'launch'), fakeDescriptor);
+      for (const [object, before] of mock.descriptors) assert.deepEqual(Object.getOwnPropertyDescriptors(object), before);
+      const kinds = mock.calls.map(call => call.kind);
+      assert.deepEqual(kinds.filter(kind => ['launch', 'context', 'route', 'page', 'goto'].includes(kind)),
+        phases.slice(0, phases.findIndex(([name]) => name === failed) + 1).map(([name]) => name));
+      assert.equal(kinds.includes('close'), failed !== 'launch');
+      const emitted = (await readFile(file, 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line.slice('KTZ_LIFETIME:'.length)));
+      assert.ok(emitted.some(event => event.boundary === boundary && event.event === 'error' && event.errorCode === 'ENOENT'));
+      if (failed !== 'launch') assert.ok(emitted.some(event => event.boundary === 'control.browser_close' && event.event === 'end'));
+      assert.deepEqual(mock.calls[0].args, [{ headless: true }]);
+      if (mock.calls.some(call => call.kind === 'context')) assert.deepEqual(mock.calls.find(call => call.kind === 'context').args,
+        [{ viewport: { width: 1100, height: 850 }, colorScheme: 'light', acceptDownloads: false, serviceWorkers: 'block' }]);
+      if (mock.calls.some(call => call.kind === 'route')) {
+        const [pattern, handler] = mock.calls.find(call => call.kind === 'route').args;
+        assert.equal(pattern, '**/*'); assert.equal(typeof handler, 'function');
+        let outcome;
+        handler({ request: () => ({ url: () => 'http://127.0.0.1:4321/allowed' }), continue: () => { outcome = 'continue'; } });
+        assert.equal(outcome, 'continue');
+        handler({ request: () => ({ url: () => 'https://other.invalid/' }), abort: code => { outcome = code; } });
+        assert.equal(outcome, 'blockedbyclient');
+      }
+      if (mock.calls.some(call => call.kind === 'goto')) assert.deepEqual(mock.calls.find(call => call.kind === 'goto').args,
+        [url, { waitUntil: 'domcontentloaded', timeout: 20_000 }]);
+    }
+    const marker = new Error('private close');
+    const mock = objects('goto', new Error('private navigation'), marker); installFake(mock.launch);
+    await assert.rejects(observeControlWindow(trace, 'fixture', chromium,
+      () => openControlWindow(url, { headless: true })), error => error === marker);
+    for (const [object, before] of mock.descriptors) assert.deepEqual(Object.getOwnPropertyDescriptors(object), before);
+
+    // The same observer in use does not intercept an unrelated async context.
+    const good = objects(), concurrent = objects(); let release, controlLaunches = 0;
+    const gate = new Promise(resolve => { release = resolve; });
+    const unrelatedPromise = Promise.resolve('unrelated');
+    installFake(function (options) {
+      assert.equal(this, chromium);
+      if (options.unrelated) return unrelatedPromise;
+      if (++controlLaunches === 1) return gate.then(() => Reflect.apply(good.launch, this, [options]));
+      return Reflect.apply(concurrent.launch, this, [options]);
+    });
+    const descriptor = Object.getOwnPropertyDescriptor(chromium, 'launch');
+    const controlPromise = observeControlWindow(trace, 'fixture', chromium, () => openControlWindow(url, { headless: true }));
+    const beforeOther = await readFile(file, 'utf8');
+    assert.equal(chromium.launch({ unrelated: true }), unrelatedPromise);
+    const otherControl = await observeControlWindow(trace, 'concurrent fixture', chromium,
+      () => openControlWindow(url, { headless: true }));
+    assert.equal(otherControl.browser, concurrent.browser);
+    for (const [object, before] of concurrent.descriptors) assert.deepEqual(Object.getOwnPropertyDescriptors(object), before);
+    await otherControl.close();
+    assert.equal(await readFile(file, 'utf8'), beforeOther);
+    release(); const control = await controlPromise;
+    assert.equal(control.browser, good.browser); assert.equal(control.context, good.context); assert.equal(control.page, good.page);
+    assert.deepEqual(Object.getOwnPropertyDescriptor(chromium, 'launch'), descriptor);
+    for (const [object, before] of good.descriptors) assert.deepEqual(Object.getOwnPropertyDescriptors(object), before);
+    await trace.step('fixture', 'control.browser_close', () => control.close());
+    const text = await readFile(file, 'utf8');
+    assert.match(text, /"boundary":"control.browser_close","event":"error"/);
+    assert.doesNotMatch(text, /private|127\.0\.0\.1|other\.invalid|aaaaaaa/);
+  } finally { restoreChromium(); }
+});
+
+test('Windows収集: 整合したTAP失敗は収集完了、欠落・矛盾・CIM不明は区別する', async () => {
+  const root = await sandbox(), helper = new URL('./support/test-lifetime.mjs', import.meta.url).href;
+  const observer = new URL('./support/control-lifetime.mjs', import.meta.url).href;
+  const product = new URL('../app/control-window.mjs', import.meta.url).href;
+  const failureSource = `import nodeTest from 'node:test'; import {chromium} from 'playwright';
+    import {createLifetime} from ${JSON.stringify(helper)}; import {observeControlWindow} from ${JSON.stringify(observer)};
+    import {openControlWindow} from ${JSON.stringify(product)};
+    const trace=createLifetime(),test=trace.instrument(nodeTest);
+    test('fixture fail',async t=>{t.after(()=>{});await new Promise(r=>setTimeout(r,220));
+      const before=Object.getOwnPropertyDescriptor(chromium,'launch');
+      Object.defineProperty(chromium,'launch',{configurable:true,writable:true,value:()=>Promise.reject(Object.assign(new Error('secret-message'),{code:'EACCES'}))});
+      try {await trace.step(t,'region.control',()=>observeControlWindow(trace,t,chromium,
+        ()=>openControlWindow('http://127.0.0.1:4321/#'+'a'.repeat(64),{headless:true})));}
+      finally {if(before)Object.defineProperty(chromium,'launch',before);else delete chromium.launch;}});`;
+  const bad = await fixture(root, failureSource, { requireTap: true, expectedTests: ['fixture fail'] });
+  assert.equal(bad.result.outcome, 'failed'); assert.equal(bad.result.testOutcome, 'failed');
+  assert.equal(bad.result.collectionOutcome, 'complete'); assert.equal(bad.result.collectionError, null);
+  assert.equal(bad.result.cleanupOutcome, 'none-observed'); assert.deepEqual(bad.result.childExit, { code: 1, signal: null });
+  assert.ok(bad.result.events.some(event => event.boundary === 'after_hook.1' && event.event === 'end'));
+  for (const boundary of ['region.control', 'control.browser_launch']) {
+    assert.ok(bad.result.events.some(event => event.boundary === boundary && event.event === 'error'
+      && event.errorClass === 'os' && event.errorCode === 'EACCES' && Number.isFinite(event.elapsedMs)));
+    assert.match(bad.output, new RegExp(`"boundary":"${boundary.replace('.', '\\.')}","event":"error"`));
+  }
+  assert.equal(bad.result.events.some(event => event.boundary === 'control.browser_close'), false);
+  assert.doesNotMatch(bad.output, /secret-message/);
+
+  const summary = `console.log('ok 1 - private');console.log('# tests 1\\n# pass 1\\n# fail 0\\n# cancelled 0\\n# skipped 0');`;
+  const exitMismatch = await fixture(root, `${summary}setTimeout(()=>process.exit(7),220)`, { requireTap: true });
+  assert.equal(exitMismatch.result.outcome, 'failed'); assert.equal(exitMismatch.result.testOutcome, 'unknown');
+  assert.equal(exitMismatch.result.collectionOutcome, 'incomplete'); assert.equal(exitMismatch.result.collectionError, 'tap_summary_unconfirmed');
+  assert.equal(exitMismatch.result.cleanupOutcome, 'none-observed');
+  const missing = await fixture(root, `console.log('ok 1 - private');console.log('# tests 1\\n# pass 1\\n# fail 0');setTimeout(()=>{},220)`, { requireTap: true });
+  assert.equal(missing.result.collectionOutcome, 'incomplete'); assert.equal(missing.result.collectionError, 'tap_summary_unconfirmed');
+  assert.equal(missing.result.cleanupOutcome, 'none-observed');
+  const missingResult = await fixture(root, `console.log('# tests 1\\n# pass 1\\n# fail 0\\n# cancelled 0\\n# skipped 0');setTimeout(()=>{},220)`, { requireTap: true });
+  assert.equal(missingResult.result.collectionOutcome, 'incomplete'); assert.equal(missingResult.result.collectionError, 'tap_summary_unconfirmed');
+  const bodyMismatchSource = `import {appendFileSync} from 'node:fs';
+    for(const [test,boundary,event] of [['fixture conflict','test','begin'],['fixture conflict','test_body','error'],
+      ['fixture conflict','test','end'],['process','process_exit','complete']])
+      appendFileSync(process.env.KTZ_LIFETIME_EVENT_FILE,'KTZ_LIFETIME:'+JSON.stringify({pid:process.pid,test,boundary,event,monotonicMs:performance.now()})+'\\n');
+    ${summary}setTimeout(()=>{},220)`;
+  const bodyMismatch = await fixture(root, bodyMismatchSource, { requireTap: true, expectedTests: ['fixture conflict'] });
+  assert.equal(bodyMismatch.result.testOutcome, 'unknown'); assert.equal(bodyMismatch.result.outcome, 'failed');
+  assert.equal(bodyMismatch.result.collectionError, 'test_lifecycle_unconfirmed');
+  assert.equal(bodyMismatch.result.collectionOutcome, 'incomplete');
+  const corrupt = await fixture(root, `import {appendFileSync} from 'node:fs';appendFileSync(process.env.KTZ_LIFETIME_EVENT_FILE,'corrupt-private\\n');setTimeout(()=>{},220)`);
+  assert.equal(corrupt.result.collectionOutcome, 'incomplete'); assert.equal(corrupt.result.collectionError, 'invalid_lifetime_event');
+  // Depending on when the corrupt line is noticed, the final ownership scan
+  // may or may not already have completed; never infer it from the error.
+  assert.ok(['unknown', 'none-observed'].includes(corrupt.result.cleanupOutcome));
+  assert.doesNotMatch(corrupt.output, /corrupt-private/);
+  const badCode = await fixture(root, `import {appendFileSync} from 'node:fs';
+    appendFileSync(process.env.KTZ_LIFETIME_EVENT_FILE,'KTZ_LIFETIME:'+JSON.stringify({pid:process.pid,test:'fixture',
+      boundary:'region.control',event:'error',monotonicMs:performance.now(),errorClass:'os',errorCode:'secret_profile',message:'secret_message'})+'\\n');
+    setTimeout(()=>{},220)`);
+  assert.equal(badCode.result.collectionError, 'invalid_lifetime_event'); assert.equal(badCode.result.collectionOutcome, 'incomplete');
+  assert.doesNotMatch(badCode.output, /secret_profile|secret_message/);
+  const unseen = await fixture(root, 'setInterval(()=>{},1000)', { backendFactory() {
+    return { async query() { throw Object.assign(new Error('private'), { code: 'monitor_command_timeout' }); } };
+  } });
+  assert.equal(unseen.result.collectionOutcome, 'incomplete'); assert.equal(unseen.result.cleanupOutcome, 'unknown');
+  assert.equal(unseen.result.remainingState, 'unknown'); assert.equal(unseen.result.remainingProcesses.length, 0);
+  assert.equal(unseen.result.outcome, 'failed');
+  let afterExitQueries = 0;
+  const finalUnknown = await fixture(root, 'setTimeout(()=>process.exit(0),220)', { backendFactory(child) {
+    const base = backendFor(child);
+    return { ...base, async query() {
+      if (child.exitCode !== null) {
+        if (++afterExitQueries === 1) return []; // Empty sample, not the final confirmation.
+        throw Object.assign(new Error('private'), { code: 'monitor_command_timeout' });
+      }
+      return base.query();
+    } };
+  } });
+  assert.ok(afterExitQueries >= 2); assert.equal(finalUnknown.result.collectionError, 'monitor_command_timeout');
+  assert.equal(finalUnknown.result.remainingProcesses.length, 0); assert.equal(finalUnknown.result.cleanupOutcome, 'unknown');
+  assert.equal(finalUnknown.result.collectionOutcome, 'incomplete'); assert.equal(finalUnknown.result.outcome, 'failed');
 });
