@@ -401,6 +401,47 @@ test('実public control caller: 操作境界と例外、呼出し設定、同時
       () => openControlWindow(url, { headless: true })), error => error === marker);
     for (const [object, before] of mock.descriptors) assert.deepEqual(Object.getOwnPropertyDescriptors(object), before);
 
+    // An explicit off call nested in an on scope must not inherit its token.
+    const quiet = objects(), resumed = objects(); let current = quiet;
+    installFake(function (...args) { return Reflect.apply(current.launch, this, args); });
+    const nestedDescriptor = Object.getOwnPropertyDescriptor(chromium, 'launch');
+    const beforeNested = await readFile(file, 'utf8');
+    await observeControlWindow(trace, 'enabled outer', chromium, async () => {
+      const control = await observeControlWindow(off, 'disabled public caller', chromium,
+        () => openControlWindow(url, { headless: true }));
+      assert.equal(control.browser, quiet.browser);
+      assert.equal((await readFile(file, 'utf8')).length, beforeNested.length);
+      for (const [object, before] of quiet.descriptors) assert.deepEqual(Object.getOwnPropertyDescriptors(object), before);
+      await control.close();
+      assert.equal((await readFile(file, 'utf8')).length, beforeNested.length);
+      current = resumed;
+      const observed = await openControlWindow(url, { headless: true });
+      assert.equal(observed.browser, resumed.browser);
+      await observed.close();
+    });
+    assert.deepEqual(Object.getOwnPropertyDescriptor(chromium, 'launch'), nestedDescriptor);
+    for (const [object, before] of resumed.descriptors) assert.deepEqual(Object.getOwnPropertyDescriptors(object), before);
+    const nestedEvents = (await readFile(file, 'utf8')).slice(beforeNested.length).trim().split('\n')
+      .map(line => JSON.parse(line.slice('KTZ_LIFETIME:'.length)));
+    assert.ok(nestedEvents.every(event => event.test === 'enabled outer'));
+    for (const boundary of [...phases.map(([, boundary]) => boundary), 'control.browser_close']) {
+      assert.ok(nestedEvents.some(event => event.boundary === boundary && event.event === 'start'));
+      assert.ok(nestedEvents.some(event => event.boundary === boundary && event.event === 'end'));
+    }
+
+    const launchOptions = { headless: true }, offPromise = Promise.resolve('unchanged');
+    installFake(function (...args) {
+      assert.equal(this, chromium); assert.deepEqual(args, [launchOptions]); return offPromise;
+    });
+    const beforeOff = await readFile(file, 'utf8');
+    await observeControlWindow(trace, 'enabled outer', chromium, () => {
+      const result = observeControlWindow(off, 'disabled promise', chromium, () => chromium.launch(launchOptions));
+      assert.equal(result, offPromise);
+      assert.throws(() => observeControlWindow(off, 'disabled throw', chromium, () => { throw marker; }), error => error === marker);
+      return result;
+    });
+    assert.equal(await readFile(file, 'utf8'), beforeOff);
+
     // The same observer in use does not intercept an unrelated async context.
     const good = objects(), concurrent = objects(); let release, controlLaunches = 0;
     const gate = new Promise(resolve => { release = resolve; });

@@ -8,7 +8,9 @@ const scope = new AsyncLocalStorage();
 const activeChromium = new WeakSet();
 
 export function observeControlWindow(trace, test, chromium, operation) {
-  if (!trace.enabled) return operation();
+  // Off must also leave an enclosing observer's async scope. Otherwise its
+  // shared wrappers would observe this disabled call and change its promise.
+  if (!trace.enabled) return activeChromium.has(chromium) ? scope.run({}, operation) : operation();
   const token = {};
   // A nested/concurrent observer cannot take over an existing patch. Its own
   // context also cannot accidentally be attributed to the first observer.
