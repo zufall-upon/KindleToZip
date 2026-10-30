@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import fs from 'node:fs';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runDiagnostic } from '../scripts/diagnose-test-lifetime.mjs';
@@ -93,6 +95,47 @@ test('所有確認: 継承runtimeとinode変更fixtureを削除しない', async
   await writeFile(path.join(fixture, 'keep'), 'replacement');
   await assert.rejects(removeOwnedFixtures(root, new Set(), new Map([['workflow-Ab12Cd', { dev: String(original.dev), ino: String(original.ino) }]]), () => assert.fail()), { code: 'fixture_identity_changed' });
   assert.equal(await readFile(path.join(fixture, 'keep'), 'utf8'), 'replacement');
+});
+
+test('所有確認: runtime照合中の消失だけを無視し置換と他のIO失敗は拒否する', async t => {
+  const root = await sandbox(t);
+  await t.test('lstat後の正常消失', async sub => {
+    const cleanup = await createRuntimeCleanup({ bases: [root] });
+    const runtime = await mkdtemp(path.join(root, 'ktz-test-'));
+    const originalRealpath = fs.promises.realpath;
+    sub.mock.method(fs.promises, 'realpath', async (...args) => {
+      if (args[0] === runtime) await rm(runtime, { recursive: true });
+      return originalRealpath(...args);
+    });
+    syncBuiltinESMExports();
+    sub.after(() => { sub.mock.restoreAll(); syncBuiltinESMExports(); });
+    assert.equal(await cleanup.observe(runtime), false);
+    assert.deepEqual(cleanup.paths(), []);
+    await cleanup.cleanup(() => assert.fail('removed runtime registered'));
+  });
+  await t.test('他のIO失敗', async sub => {
+    const cleanup = await createRuntimeCleanup({ bases: [root] });
+    const runtime = await mkdtemp(path.join(root, 'ktz-test-'));
+    const originalRealpath = fs.promises.realpath;
+    sub.mock.method(fs.promises, 'realpath', async (...args) => {
+      if (args[0] === runtime) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      return originalRealpath(...args);
+    });
+    syncBuiltinESMExports();
+    sub.after(() => { sub.mock.restoreAll(); syncBuiltinESMExports(); });
+    await assert.rejects(cleanup.observe(runtime), { code: 'EACCES' });
+    assert.deepEqual(cleanup.paths(), []);
+  });
+  await t.test('登録後のinode置換', async () => {
+    const cleanup = await createRuntimeCleanup({ bases: [root] });
+    const runtime = await mkdtemp(path.join(root, 'ktz-test-'));
+    assert.equal(await cleanup.observe(runtime), true);
+    await rename(runtime, path.join(root, 'original-runtime'));
+    await mkdir(runtime, { mode: 0o700 }); await writeFile(path.join(runtime, 'keep'), 'replacement');
+    await assert.rejects(cleanup.observe(runtime), { code: 'runtime_identity_changed' });
+    await assert.rejects(cleanup.cleanup(() => assert.fail('replacement removed')), { code: 'runtime_identity_changed' });
+    assert.equal(await readFile(path.join(runtime, 'keep'), 'utf8'), 'replacement');
+  });
 });
 
 test('所有確認: 別TMPDIR内に作成された所有runtimeのみtimeout後に回収する', async t => {

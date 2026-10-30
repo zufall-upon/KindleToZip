@@ -28,7 +28,16 @@ export async function createRuntimeCleanup({ bases = ['/tmp/opencode', '/tmp'], 
       if (!file || !bases.includes(path.dirname(file)) || !runtimeName.test(path.basename(file)) || protectedPaths.has(file)) return false;
       const info = await missing(file);
       if (!info) return false;
-      if (!privateDirectory(info) || await realpath(file) !== file) fail('runtime_ownership_unconfirmed');
+      if (!privateDirectory(info)) fail('runtime_ownership_unconfirmed');
+      let resolved;
+      try { resolved = await realpath(file); }
+      catch (error) {
+        // A worker's normal exit hook may remove its runtime after lstat.
+        // Disappearance needs no cleanup; all other identity/IO failures remain fatal.
+        if (error.code === 'ENOENT') return false;
+        throw error;
+      }
+      if (resolved !== file) fail('runtime_ownership_unconfirmed');
       const previous = runtimes.get(file);
       if (previous && (previous.dev !== info.dev || previous.ino !== info.ino)) fail('runtime_identity_changed');
       runtimes.set(file, { dev: info.dev, ino: info.ino }); return true;
