@@ -23,6 +23,7 @@ import { readSessionPreference, saveSessionPreference } from '../app/session-pre
 import { createLifetime } from './support/test-lifetime.mjs';
 import { observeControlWindow } from './support/control-lifetime.mjs';
 import { createControlFirstCleanup } from './support/owned-control-cleanup.mjs';
+import { createJpegCleanupObservation } from './support/jpeg-cleanup-observation.mjs';
 const trace = createLifetime();
 const test = trace.instrument(nodeTest);
 const { chromium } = await import('playwright');
@@ -97,6 +98,8 @@ async function setup(t, { sampleFixture = 'reader', sampleHeadless, controlFirst
   const running = await lifetimeStep(t, 'application.start', () => startApplication({ dataDir: path.join(directory, 'data'), sampleFixture,
     ...(sampleHeadless === undefined ? {} : { sampleHeadless }) }));
   trace.trackStore(t, running.app.store);
+  const jpegObservation = controlFirst?.jpegObservation;
+  jpegObservation?.attach(running);
   const teardownStep = (boundary, operation) => controlFirst
     ? trace.step(t, `teardown.${boundary}`, operation) : operation();
   if (trace.enabled && controlFirst) {
@@ -105,12 +108,18 @@ async function setup(t, { sampleFixture = 'reader', sampleHeadless, controlFirst
       return trace.step(t, 'teardown.app.close', () => close.apply(this, args));
     };
   }
-  const closeRunning = () => teardownStep('running.close', () => lifetimeStep(t, 'running.close', () => running.close()));
-  const removeFixture = () => teardownStep('fixture.remove', () => lifetimeStep(t, 'fixture.remove', () => rm(directory, { recursive: true, force: true })));
+  const closeRunning = () => teardownStep('running.close', () => lifetimeStep(t, 'running.close', () =>
+    jpegObservation ? jpegObservation.closeRunning(running) : running.close()));
+  const removeFixture = () => teardownStep('fixture.remove', () => lifetimeStep(t, 'fixture.remove', () => {
+    const remove = () => rm(directory, { recursive: true, force: true });
+    return jpegObservation ? jpegObservation.removeFixture({ running, control: controlFirst.control(),
+      controlAttempted: controlFirst.controlAttempted(), remove }) : remove();
+  }));
   if (controlFirst) t.after(createControlFirstCleanup({
     closeControl: () => {
       const control = controlFirst.control();
-      return control ? teardownStep('control.close', () => control.close()) : undefined;
+      return control ? teardownStep('control.close', () => jpegObservation
+        ? jpegObservation.step('control.close', () => control.close()) : control.close()) : undefined;
     }, closeRunning, removeFixture, bodyFailure: controlFirst.bodyFailure, controlFailure: controlFirst.controlFailure,
   }));
   else t.after(async () => { await closeRunning(); await removeFixture(); });
@@ -2228,9 +2237,80 @@ test('自動余白: 公開点検で原本と比較し取消・適用・原寸復
   });
 });
 
+test('JPEG cleanup観測: 出力設定と注入した失敗を保持する', async t => {
+  await t.test('出力先は観測の生成時に取得し、内容は境界とeventだけ', async () => {
+    await mkdir(root, { recursive: true });
+    const directory = await mkdtemp(path.join(root, 'jpeg-observation-'));
+    const eventFile = path.join(directory, 'events.jsonl');
+    const previous = process.env.KTZ_JPEG_CLEANUP_EVENTS;
+    try {
+      delete process.env.KTZ_JPEG_CLEANUP_EVENTS;
+      const disabled = createJpegCleanupObservation();
+      process.env.KTZ_JPEG_CLEANUP_EVENTS = eventFile;
+      const enabled = createJpegCleanupObservation();
+      disabled.bodyError();
+      await assert.rejects(lstat(eventFile), { code: 'ENOENT' });
+      delete process.env.KTZ_JPEG_CLEANUP_EVENTS;
+      enabled.bodyComplete();
+      assert.deepEqual((await readFile(eventFile, 'utf8')).trim().split('\n').map(JSON.parse),
+        [{ boundary: 'body', event: 'complete' }]);
+      if (process.platform !== 'win32') assert.equal((await stat(eventFile)).mode & 0o077, 0);
+    } finally {
+      if (previous === undefined) delete process.env.KTZ_JPEG_CLEANUP_EVENTS;
+      else process.env.KTZ_JPEG_CLEANUP_EVENTS = previous;
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+  await t.test('注入したcontrolとstoreの失敗もHTTP終了と元errorを保持', async () => {
+    const server = http.createServer();
+    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+    const originalHttpClose = http.Server.prototype.close;
+    const body = new Error('body'), control = new Error('control'), store = new Error('store');
+    const observation = createJpegCleanupObservation({ eventFile: null });
+    const app = { store: { async close() { throw store; } }, closeBrowser() {},
+      async close() { await this.store.close(); } };
+    const running = { app, origin: `http://127.0.0.1:${server.address().port}`,
+      async close() {
+        let failure;
+        try { await app.close(); } catch (error) { failure = error; }
+        await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+        if (failure) throw failure;
+      } };
+    observation.attach(running);
+    let removed = false;
+    const cleanup = createControlFirstCleanup({
+      closeControl: () => observation.step('control.close', () => { throw control; }),
+      closeRunning: () => observation.closeRunning(running),
+      removeFixture: () => { removed = true; }, bodyFailure: () => ({ error: body }),
+    });
+    try {
+      await assert.rejects(cleanup(), error => error instanceof AggregateError && error.cause === body
+        && error.errors[0] === body && error.errors[1] === control && error.errors[2] === store);
+      assert.equal(removed, false);
+      assert.equal(server.listening, false);
+      assert.equal(http.Server.prototype.close, originalHttpClose);
+      assert.deepEqual(observation.events(), [
+        ['control.close', 'start'], ['control.close', 'error'], ['running.close', 'start'],
+        ['app.close', 'start'], ['store.close', 'start'], ['store.close', 'error'], ['app.close', 'error'],
+        ['http.close', 'start'], ['http.close', 'end'], ['running.close', 'error'],
+      ].map(([boundary, event]) => ({ boundary, event })));
+    } finally {
+      if (server.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+});
+
 test('JPEG画像軽量化: 公開設定で実取得し画質・原本・クロップとZIP/CBZを再読する', { timeout: 60_000 }, async t => {
-  const r = await setup(t);
-  const control = await openControlWindow(r.url, { headless: true }); t.after(() => control.close());
+  let control, controlFailure, bodyFailure, controlAttempted = false;
+  const jpegObservation = createJpegCleanupObservation();
+  const r = await setup(t, { controlFirst: {
+    control: () => control, controlFailure: () => controlFailure, bodyFailure: () => bodyFailure,
+    controlAttempted: () => controlAttempted, jpegObservation,
+  } });
+  try {
+  controlAttempted = true;
+  try { control = await openControlWindow(r.url, { headless: true }); }
+  catch (error) { controlFailure = { error }; throw error; }
   const ui = control.page;
   await openSampleThroughPublicUi(ui);
   await ui.locator('#pageOutputMode').selectOption('split_spread');
@@ -2334,6 +2414,8 @@ test('JPEG画像軽量化: 公開設定で実取得し画質・原本・クロ�
   assert.deepEqual(reopened.job.issues, []);
   assert.deepEqual(await r.app.image(item.capture_id, true), original);
   assert.deepEqual(await r.app.image(item.capture_id, false, 'right'), originalRight);
+  jpegObservation.bodyComplete();
+  } catch (error) { jpegObservation.bodyError(); bodyFailure = { error }; throw error; }
 });
 
 test('MVP単ページ: 片側表紙を保持し点検で左右順を明示修正して復帰する', { timeout: 40_000 }, async t => {
