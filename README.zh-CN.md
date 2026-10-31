@@ -70,7 +70,7 @@ v0.1.6 新增 **Kindle 使用地区** 选择，可选 **日本、美国、英国
 
 **从源代码：** 需要 **Windows x64、Git、Node.js 22+ 和 PowerShell 7**。[入门指南](docs/getting-started.zh-CN.md)会安装隔离的 Rust 工具链与浏览器，再通过 `npm start` 启动。建议先体验自制样本，无需 Amazon 登录或真实书籍。
 
-**Ubuntu 实验性源码版：** `linux-port` **仅用于自制样本**，不支持真实 Kindle、常规 Wayland 阅读，也不提供 Linux 下载包。请复用现有隔离环境，参见 [Ubuntu 源码说明](docs/getting-started.zh-CN.md#ubuntu-source)。控制窗口有界面，样本阅读器为 headless。已安装的 `/usr/bin/zenity` 可作为可选保存位置选择器；仍可手动输入，选择路径不会开始保存或获取。桌面／portal 行为需要按环境验证，这不代表已发布 Linux 版本。
+**Ubuntu 实验性源码版：** `linux-port` **仅用于自制样本**，不支持真实 Kindle、常规 Wayland 阅读，也不提供 Linux 下载包。请复用现有隔离环境，参见 [Ubuntu 源码说明](docs/getting-started.zh-CN.md#ubuntu-source)。控制窗口有界面，样本阅读器默认 headless。显式运行 `npm start -- --sample-headed` 仅为应用生成的标准自制样本打开专用 Wayland 窗口，不授权其他网站或已有配置文件。目标内检查不保证其他应用、物理输入不受干扰，也不保证整个操作系统画面不被遮挡。已安装的 `/usr/bin/zenity` 可作为可选保存位置选择器；仍可手动输入，选择路径不会开始保存或获取。桌面／portal 行为需要按环境验证，这不代表已发布 Linux 版本。
 
 在 Ubuntu 26.04 中，已通过本人操作，使用已安装的 Zenity 验证匿名 ZIP/CBZ 保存位置选择与取消，并收到显示正常的本人目视报告。原生对话框图像未提供，也未独立检查。这些检查确认仅选择位置不会导出文件；ZIP/CBZ 输出与内容核对是另行进行的集成检查，不代表原生选择器导出或真实 Kindle 已验收。
 

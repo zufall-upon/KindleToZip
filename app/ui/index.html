@@ -62,6 +62,8 @@
     <button id="openKindle">選択地域のKindle Webを開く（個別操作）</button>
     <label>テスト画像 <select id="sampleFixture"><option value="">標準の自作試料</option><option value="image-review">匿名図形：片側表紙とボタン重なり</option><option value="kindle-chrome-dynamic">Kindle風：位置変化・操作バーの一時非表示</option><option value="kindle-chrome-hidden">Kindle風：初回から識別・位置・操作バー非表示（自動復帰なし）</option><option value="kindle-chrome-recoverable">Kindle風：初期非表示から上端DOMイベント列で復帰</option><option value="kindle-chrome-tabs">Kindle風：読書タブとライブラリの再プレビュー切分け</option><option value="kindle-chrome-ambiguous">匿名見開き：136位置で次へ候補が増える</option></select></label>
     <button id="openSample">選択した自作試料を開く</button>
+    <p id="ownedSampleNotice" role="status" hidden>有頭モードはアプリが生成する標準の自作試料だけです。対象内の入力と保存を確認しますが、他アプリ・物理入力・OS画面全体の非干渉や遮蔽は保証しません。実Kindleには使えません。</p>
+    <button id="openOwnedSample" hidden>標準の自作試料を専用有頭ブラウザで開く</button>
     <label><input type="checkbox" id="keep" checked> ログイン状態を次回も保存する（既定ON。OFFで新しい一時領域を使用）</label>
     <label>既存の専用セッション<select id="session"><option value="">前回の専用領域を再利用（なければ新規）</option><option value="new">新しい専用領域</option></select></label>
     <button id="closeBrowser">専用ブラウザを閉じる</button>

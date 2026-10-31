@@ -17,7 +17,7 @@
 
 `linux-port` 仅用于自制样本。真实 Kindle、常规 Wayland 阅读与 Linux 分发仍未支持／未验证。先检查容量和挂载，复用现有 Node 22、Rust 1.99.1 控制器和固定 Playwright/Chromium 环境；不要在 Ubuntu 执行下方 Windows 安装器。命令与限制见 [Ubuntu 开发路径](development.md#experimental-ubuntu-source-development)（英语）。
 
-控制窗口有界面，样本阅读器为 headless。Linux 可选用可执行的 `/usr/bin/zenity` 选择 ZIP/CBZ 保存位置；选择或取消不会保存、获取，导出需要另外明确操作且不覆盖文件。缺失或失败时仍可手动输入，不会自动安装。桌面／portal 行为需要按环境验证。
+控制窗口有界面，样本阅读器默认 headless。在 Wayland 会话中显式运行 `npm start -- --sample-headed`，创建作业后可通过辅助浏览器操作中的专用有头按钮打开应用生成的标准自制样本。依次选择标签页、预览、确认并单独开始。使用新临时配置文件，不接受任意 URL、其他样本或已保存配置文件。检查仅限自有浏览器目标和保存数据，不证明整个系统画面不被遮挡，也不保证不干扰其他应用或物理输入。真实 Kindle 仍不支持。Linux 可选用可执行的 `/usr/bin/zenity` 选择 ZIP/CBZ 保存位置；选择或取消不会保存、获取，导出需要另外明确操作且不覆盖文件。缺失或失败时仍可手动输入，不会自动安装。桌面／portal 行为需要按环境验证。
 
 在 Ubuntu 26.04 中，已通过本人操作，使用已安装的 Zenity 验证匿名 ZIP/CBZ 保存位置选择与取消，并收到显示正常的本人目视报告。原生对话框图像未提供，也未独立检查。这些检查确认仅选择位置不会导出文件；ZIP/CBZ 输出与内容核对是另行进行的集成检查，不代表原生选择器导出或真实 Kindle 已验收。
 

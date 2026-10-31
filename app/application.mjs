@@ -11,17 +11,19 @@ import { bookFilename } from './export-name.mjs';
 import { chooseSaveDestination, saveDialogAvailable } from './save-dialog.mjs';
 import { kindleRegion, kindleRegions } from './stores/kindle.mjs';
 import { samePath, privateMetadata } from './private-path.mjs';
+import { startOwnedSample } from './owned-sample.mjs';
 
 const defaultData = process.env.KTZ_USER_DATA_DIR || fileURLToPath(new URL('../artifacts/mvp-data/', import.meta.url));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 export class Application {
-  constructor({ dataDir = defaultData, sampleHeadless = true, sampleFixture = 'reader', saveDialog = chooseSaveDestination, ownsSignals = false } = {}) {
+  constructor({ dataDir = defaultData, sampleHeadless = true, ownedSampleHeaded = false, sampleFixture = 'reader', saveDialog = chooseSaveDestination, ownsSignals = false } = {}) {
     this.saveDialog = saveDialog;
     this.kindleRegion = 'jp';
     if (!['reader', 'image-review', 'layout', 'kindle-chrome', 'kindle-chrome-dynamic', 'kindle-chrome-hidden', 'kindle-chrome-recoverable', 'kindle-chrome-tabs', 'kindle-chrome-ambiguous'].includes(sampleFixture)) throw new AppError('invalid_sample_fixture');
     this.dataDir = path.resolve(dataDir);
     this.sampleHeadless = process.platform === 'linux' ? true : sampleHeadless;
+    Object.defineProperty(this, 'ownedSampleHeaded', { value: process.platform === 'linux' && ownedSampleHeaded === true });
     this.ownsSignals = ownsSignals;
     this.sampleFixture = sampleFixture;
     this.store = new StoreClient();
@@ -87,6 +89,7 @@ export class Application {
       preferredKindleSession: this.preferredKindleSession ?? null,
       kindleRegion: this.kindleRegion, kindleRegions,
       kindleSupported: process.platform !== 'linux',
+      ownedSampleHeaded: this.ownedSampleHeaded,
       saveDialogAvailable: this.saveDialog !== chooseSaveDestination || saveDialogAvailable(),
       pathCaseSensitive: process.platform !== 'win32',
       storageUncertain: this.storageUncertain ?? null,
@@ -305,8 +308,10 @@ export class Application {
           break;
         }
         case 'openBrowser': {
-          if (input.mode !== 'sample' && input.mode !== 'kindle') throw new AppError('invalid_browser_mode');
+          if (!['sample', 'kindle', 'sample-headed'].includes(input.mode)) throw new AppError('invalid_browser_mode');
           if (process.platform === 'linux' && input.mode === 'kindle') throw new AppError('linux_kindle_unsupported');
+          const ownedHeaded = input.mode === 'sample-headed';
+          if (ownedHeaded && (!this.ownedSampleHeaded || input.keep || input.session || input.sampleFixture)) throw new AppError('invalid_browser_mode');
           if (this.reader || !this.job) throw new AppError('browser_or_job_state');
           // Dispose only a previously confirmed-safe failed attempt before
           // assigning a new profile. An unknown attempt is never overwritten.
@@ -349,14 +354,16 @@ export class Application {
             this.savedTemporarySessions = new Set(preferences.savedTemporarySessions);
           }
           try {
-            if (input.mode === 'sample') this.fixture = await startFixture({ fixture: sampleFixture });
+            if (ownedHeaded) this.fixture = await startOwnedSample();
+            else if (input.mode === 'sample') this.fixture = await startFixture({ fixture: sampleFixture });
             this.advanceProgress(progress, 2, '設定・試料準備完了。ブラウザの起動と画面応答待ち');
             this.reader = await Reader.open({ profile, sampleUrl: this.fixture?.url, regionId: this.kindleRegion,
+              ownedFixture: ownedHeaded ? this.fixture : undefined,
               lifecycle: this.readerLifecycle,
               preconfiguredSample: ['reader', 'image-review'].includes(sampleFixture), headless: input.mode === 'sample' && this.sampleHeadless,
               handleSignals: !this.ownsSignals,
               onChange: () => this.invalidate('browser_target_changed'),
-              readGuard: input.mode === 'sample' && this.sampleHeadless ? null : async () => {
+              readGuard: ownedHeaded || input.mode === 'sample' && this.sampleHeadless ? null : async () => {
                 const { snapshot } = await this.store.call('snapshot');
                 if (!snapshot.cursor_valid || snapshot.foreground === 0) throw new AppError('window_not_available');
               } });

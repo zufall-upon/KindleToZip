@@ -1,5 +1,7 @@
 // Japanese is the canonical UI copy; parameters, paths and user labels stay intact.
 export const messages = [
+  ['有頭モードはアプリが生成する標準の自作試料だけです。対象内の入力と保存を確認しますが、他アプリ・物理入力・OS画面全体の非干渉や遮蔽は保証しません。実Kindleには使えません。', 'Headed mode is only for the standard self-authored fixture created by the app. It checks target-local input and saving, but does not guarantee non-interference with other apps or physical input, or OS-wide visibility. It cannot be used for real Kindle.', '有头模式仅适用于应用生成的标准自制样本。它检查目标内输入和保存，但不保证不干扰其他应用或物理输入，也不保证整个操作系统画面不被遮挡。不能用于真实 Kindle。'],
+  ['標準の自作試料を専用有頭ブラウザで開く', 'Open the standard self-authored fixture in a dedicated headed browser', '在专用有头浏览器中打开标准自制样本'],
   ['Linuxでは実Kindleの起動・取得は未対応です。補助操作から自作試料を開いてください。', 'On Linux, launching or capturing from real Kindle is not supported. Open a self-authored fixture in the auxiliary controls.', 'Linux 尚不支持启动或获取真实 Kindle。请在辅助操作中打开自制样本。'],
   ['保存操作は適用済みの可能性があり、永続性を確認できません。取得・保存を停止しています。アプリを再起動し、保存領域を点検してください。', 'The storage operation may have been applied, but its durability is unknown. Capture and saving are stopped. Restart the app and inspect storage.', '存储操作可能已应用，但持久性未知。获取和保存已停止。请重启应用并检查存储区域。'],
   ['保存状態の確認が必要です。取得・保存は停止しています。アプリを再起動し、保存領域を点検してください。再起動だけで整合性が保証されるわけではありません。', 'Storage needs inspection. Capture and saving are stopped. Restart the app and inspect storage; restarting alone does not guarantee consistency.', '需要检查存储状态。获取和保存已停止。请重启应用并检查存储区域；仅重启不能保证一致性。'],

@@ -1061,6 +1061,9 @@ async function draw(s, generation) {
   $('kindleRegion').disabled = s.browserOpen || s.readerReleasePending || s.busy || pendingActions > 0;
   $('kindleStartUrl').textContent = s.kindleRegions?.find(region => region.id === s.kindleRegion)?.startUrl ?? '';
   $('openSample').disabled = !s.job || s.browserOpen || s.readerReleasePending || Boolean(s.storageUncertain);
+  $('ownedSampleNotice').hidden = !s.ownedSampleHeaded;
+  $('openOwnedSample').hidden = !s.ownedSampleHeaded;
+  $('openOwnedSample').disabled = !s.job || s.browserOpen || s.readerReleasePending || Boolean(s.storageUncertain);
   $('closeBrowser').disabled = !s.browserOpen;
   mappingStatus();
   const sessionKey = JSON.stringify([s.sessions, s.browserOpen, s.readerReleasePending]);
@@ -1137,6 +1140,7 @@ click('openSample', () => {
   return command('openBrowser', { mode: 'sample', keep: Boolean(session), session: session || undefined,
     sampleFixture: $('sampleFixture').value || undefined });
 });
+click('openOwnedSample', () => command('openBrowser', { mode: 'sample-headed' }));
 click('closeBrowser', () => command('closeBrowser'));
 $('readerTab').addEventListener('change', () => { supersedeInteraction(); mappingStatus(); });
 function applyCaptureSettings(settings) {

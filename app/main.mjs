@@ -72,7 +72,8 @@ try {
   }
   startupStage = 'storage';
   applicationState = 'ownership_unknown';
-  running = await startApplication({ sampleHeadless: process.platform === 'linux', ownsSignals: process.platform === 'linux' });
+  running = await startApplication({ sampleHeadless: process.platform === 'linux',
+    ownedSampleHeaded: process.platform === 'linux' && process.argv.includes('--sample-headed'), ownsSignals: process.platform === 'linux' });
   if (process.platform !== 'linux') console.log('KindleToZip ローカルMVPを起動しました。終了は Ctrl+C。');
   let closing = false;
   const close = async () => {
