@@ -191,24 +191,41 @@ export async function configureReaderNetwork(context, sampleUrl) {
 // The live adapter uses only visible official UI chosen by the user. Unknown
 // layouts are rejected, not replaced by hidden APIs or image extraction.
 export class Reader {
-  static async open({ profile, sampleUrl, regionId = 'jp', preconfiguredSample = true, headless = false, onChange, readGuard, handleSignals = true }) {
+  static async open({ profile, sampleUrl, regionId = 'jp', preconfiguredSample = true, headless = false, onChange, readGuard, handleSignals = true, lifecycle = { profile, state: 'not_started' } }) {
     const adapter = createStoreAdapter({ regionId, sampleUrl });
-    const context = await chromium.launchPersistentContext(profile, { ...readerContextOptions({ sampleUrl, headless }),
-      ...(handleSignals ? {} : { handleSIGINT: false, handleSIGTERM: false }) });
+    const options = { ...readerContextOptions({ sampleUrl, headless }),
+      ...(handleSignals ? {} : { handleSIGINT: false, handleSIGTERM: false }) };
+    // The record belongs to this particular profile/launch, not to an error
+    // message or a later Reader. Rejection after launch begins proves nothing
+    // about resources Playwright may have created before returning a context.
+    lifecycle.state = 'starting';
+    let context;
+    try { context = await chromium.launchPersistentContext(profile, options); }
+    catch (error) { lifecycle.state = 'close_unconfirmed'; lifecycle.failure = error; throw error; }
+    lifecycle.state = 'active';
     try {
       await configureReaderNetwork(context, sampleUrl);
       const page = context.pages()[0] ?? await context.newPage();
       page.setDefaultTimeout(1800);
-      const reader = new Reader(context, page, sampleUrl, onChange, preconfiguredSample, adapter);
+      const reader = new Reader(context, page, sampleUrl, onChange, preconfiguredSample, adapter, lifecycle);
       reader.readGuard = readGuard;
       await page.goto(adapter.startUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
       return reader;
-    } catch (error) { await context.close(); throw error; }
+    } catch (error) {
+      try { await context.close(); lifecycle.state = 'closed_confirmed'; }
+      catch (closeError) {
+        lifecycle.state = 'close_unconfirmed';
+        lifecycle.failure = new AggregateError([error, closeError], 'reader_initialization_and_close_failed', { cause: error });
+        throw lifecycle.failure;
+      }
+      throw error;
+    }
   }
 
-  constructor(context, page, sampleUrl, onChange, preconfiguredSample = true, adapter = createStoreAdapter({ sampleUrl })) {
+  constructor(context, page, sampleUrl, onChange, preconfiguredSample = true, adapter = createStoreAdapter({ sampleUrl }), lifecycle = { state: 'active' }) {
     Object.assign(this, { context, page, sampleUrl, onChange });
     Object.defineProperty(this, 'adapter', { value: adapter, enumerable: true });
+    Object.defineProperty(this, 'lifecycle', { value: lifecycle });
     this.id = randomUUID();
     this.mappingRevision = 0;
     this.tabRevision = 0;
@@ -1042,11 +1059,25 @@ export class Reader {
     await onDispatchState({ stage: 'advance_confirmed', status: 'sent' });
   }
 
-  async close() {
-    this.closed = true;
-    await this.scaleSession?.detach().catch(() => {});
-    await this.clearReaderCandidate();
-    await this.clearPickedMarkers();
-    await this.context.close();
+  close() {
+    return this.closePromise ??= (async () => {
+      if (this.lifecycle.state === 'close_unconfirmed') throw this.lifecycle.failure ?? new Error('reader_close_unconfirmed');
+      this.closed = true;
+      try {
+        await this.scaleSession?.detach().catch(() => {});
+        await this.clearReaderCandidate();
+        await this.clearPickedMarkers();
+        await this.context.close();
+        // Another caller may already have observed this same attempt as
+        // unconfirmed while the close was in flight. A late resolve must not
+        // erase that earlier failure from the owning Application.
+        if (this.lifecycle.state === 'close_unconfirmed') throw this.lifecycle.failure ?? new Error('reader_close_unconfirmed');
+        this.lifecycle.state = 'closed_confirmed';
+      } catch (error) {
+        this.lifecycle.state = 'close_unconfirmed';
+        this.lifecycle.failure ??= error;
+        throw error;
+      }
+    })();
   }
 }

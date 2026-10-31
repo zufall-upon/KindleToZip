@@ -308,8 +308,16 @@ export class Application {
           if (input.mode !== 'sample' && input.mode !== 'kindle') throw new AppError('invalid_browser_mode');
           if (process.platform === 'linux' && input.mode === 'kindle') throw new AppError('linux_kindle_unsupported');
           if (this.reader || !this.job) throw new AppError('browser_or_job_state');
+          // Dispose only a previously confirmed-safe failed attempt before
+          // assigning a new profile. An unknown attempt is never overwritten.
+          if (this.readerLifecycle?.state === 'close_unconfirmed') throw new AppError('reader_release_incomplete');
           const sampleFixture = input.sampleFixture ?? this.sampleFixture;
           if (input.mode === 'sample' && !['reader', 'image-review', 'layout', 'kindle-chrome', 'kindle-chrome-dynamic', 'kindle-chrome-hidden', 'kindle-chrome-recoverable', 'kindle-chrome-tabs', 'kindle-chrome-ambiguous'].includes(sampleFixture)) throw new AppError('invalid_sample_fixture');
+          if (this.profile || this.fixture) {
+            const retainProfile = typeof input.session === 'string' && sessionId.test(input.session)
+              && this.profile && path.basename(this.profile) === input.session;
+            await this.closeBrowser({ retainProfile });
+          }
           const keep = input.keep === true || input.mode === 'kindle' && input.keep !== false;
           let selected = input.session;
           if (!selected && input.mode === 'kindle' && keep) {
@@ -331,6 +339,7 @@ export class Application {
             await this.store.call('create_session_directory', { path: profile });
           }
           this.profile = profile;
+          this.readerLifecycle = { profile, state: 'not_started' };
           this.advanceProgress(progress, 1, '専用領域を確認。設定の保存待ち');
           this.profilePersistent = keep || path.basename(profile).startsWith('saved-') || this.savedTemporarySessions.has(path.basename(profile));
           if (this.profilePersistent && (input.mode === 'kindle' || keep && path.basename(profile).startsWith('temporary-'))) {
@@ -343,6 +352,7 @@ export class Application {
             if (input.mode === 'sample') this.fixture = await startFixture({ fixture: sampleFixture });
             this.advanceProgress(progress, 2, '設定・試料準備完了。ブラウザの起動と画面応答待ち');
             this.reader = await Reader.open({ profile, sampleUrl: this.fixture?.url, regionId: this.kindleRegion,
+              lifecycle: this.readerLifecycle,
               preconfiguredSample: ['reader', 'image-review'].includes(sampleFixture), headless: input.mode === 'sample' && this.sampleHeadless,
               handleSignals: !this.ownsSignals,
               onChange: () => this.invalidate('browser_target_changed'),
@@ -356,7 +366,12 @@ export class Application {
             this.reader.jpegQuality = this.job.manifest.capture_settings.jpeg_quality;
             this.state = this.job.manifest.images.length ? 'ResumeCheck' : 'AuthPending';
             this.reason = null;
-          } catch { throw new AppError('browser_open_failed'); }
+          } catch (error) {
+            if (this.readerLifecycle.state === 'close_unconfirmed') this.readerReleasePending = true;
+            const failure = new AppError('browser_open_failed');
+            failure.cause = error;
+            throw failure;
+          }
           break;
         }
         case 'closeBrowser': await this.closeBrowser(); break;
@@ -853,22 +868,45 @@ export class Application {
     return png;
   }
 
-  async closeBrowser() {
+  async closeBrowser({ retainProfile = false } = {}) {
     this.invalidate(null);
-    if (this.reader) {
+    const errors = [];
+    const lifecycle = this.readerLifecycle;
+    const unconfirmed = error => {
+      if (lifecycle) { lifecycle.state = 'close_unconfirmed'; lifecycle.failure ??= error; }
+      this.readerReleasePending = true;
+      const failure = new AppError('reader_close_failed');
+      failure.cause = lifecycle?.failure ?? error;
+      errors.push(failure);
+    };
+    if (lifecycle?.state === 'close_unconfirmed' || lifecycle?.state === 'starting'
+      || lifecycle?.state === 'active' && !this.reader) {
+      unconfirmed(lifecycle.failure);
+    } else if (this.reader) {
       const reader = this.reader;
-      try { await reader.close(); }
-      catch { this.readerReleasePending = true; throw new AppError('reader_close_failed'); }
-      if (this.reader === reader) this.reader = null;
-      this.readerReleasePending = false;
+      try {
+        if (lifecycle && reader.lifecycle !== lifecycle) throw new Error('reader_identity_changed');
+        await reader.close();
+        if (this.reader !== reader || this.readerLifecycle !== lifecycle) throw new Error('reader_identity_changed');
+        if (lifecycle && lifecycle.state !== 'closed_confirmed') throw new Error('reader_close_unconfirmed');
+        this.reader = null;
+      } catch (error) { unconfirmed(error); }
     }
-    if (this.fixture) { await this.fixture.close(); this.fixture = null; }
-    if (this.profile && !this.profilePersistent && path.basename(this.profile).startsWith('temporary-')) {
+    // The fixture is independent of the browser/profile. Its normal close is
+    // still attempted, but cannot turn an unknown browser into a success.
+    if (this.fixture) {
+      try { await this.fixture.close(); this.fixture = null; }
+      catch (error) { errors.push(error); }
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length) throw new AggregateError(errors, 'browser_cleanup_failed', { cause: errors[0] });
+    if (this.profile && !retainProfile && !this.profilePersistent && path.basename(this.profile).startsWith('temporary-')) {
       await this.ensureOwnedDirectory(this.profile);
       await rm(this.profile, { recursive: true });
     }
     this.profile = null;
     this.profilePersistent = false;
+    this.readerLifecycle = null;
     this.readerReleasePending = false;
     this.state = this.job ? 'ResumeCheck' : 'Idle';
   }
@@ -882,11 +920,14 @@ export class Application {
       // UI commands can still own a browser that Reader.open has not returned
       // yet. Settle those commands before deleting its profile or closing Rust.
       this.destinationDialog?.abort();
-      await this.reader?.cancelPick();
+      const errors = [];
+      try { await this.reader?.cancelPick(); } catch (error) { errors.push(error); }
       await Promise.allSettled([...this.commands]);
-      await this.loop;
-      try { await this.closeBrowser(); }
-      finally { await this.store.close(); }
+      try { await this.loop; } catch (error) { errors.push(error); }
+      try { await this.closeBrowser(); } catch (error) { errors.push(error); }
+      try { await this.store.close(); } catch (error) { errors.push(error); }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length) throw new AggregateError(errors, 'application_cleanup_failed', { cause: errors[0] });
     })();
     return this.closePromise;
   }

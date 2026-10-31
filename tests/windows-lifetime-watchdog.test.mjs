@@ -617,10 +617,13 @@ test('実public control caller: 操作境界と例外、呼出し設定、同時
       if (mock.calls.some(call => call.kind === 'goto')) assert.deepEqual(mock.calls.find(call => call.kind === 'goto').args,
         [url, { waitUntil: 'domcontentloaded', timeout: 20_000 }]);
     }
-    const marker = new Error('private close');
-    const mock = objects('goto', new Error('private navigation'), marker); installFake(mock.launch);
+    const marker = new Error('private close'), navigation = new Error('private navigation');
+    const mock = objects('goto', navigation, marker); installFake(mock.launch);
     await assert.rejects(observeControlWindow(trace, 'fixture', chromium,
-      () => openControlWindow(url, { headless: true })), error => error === marker);
+      () => openControlWindow(url, { headless: true })), error => {
+      assert.ok(error instanceof AggregateError); assert.equal(error.cause, navigation);
+      assert.deepEqual(error.errors, [navigation, marker]); return true;
+    });
     for (const [object, before] of mock.descriptors) assert.deepEqual(Object.getOwnPropertyDescriptors(object), before);
 
     // An explicit off call nested in an on scope must not inherit its token.

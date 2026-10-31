@@ -6,7 +6,7 @@ const { chromium } = await import('playwright');
 // The control UI never uses the user's default browser/profile/extensions.
 // Its temporary browser contains only this loopback UI, not Kindle login state.
 // Explicit startup may open it; acquisition never activates an OS window.
-export async function openControlWindow(url, { headless = false, onClose, handleSignals = true } = {}) {
+export async function openControlWindow(url, { headless = false, onClose, handleSignals = true, lifecycle } = {}) {
   const target = new URL(url);
   if (target.protocol !== 'http:' || target.hostname !== '127.0.0.1' || target.pathname !== '/'
     || target.search || target.username || target.password || !/^#[a-f0-9]{64}$/.test(target.hash)) throw new Error('invalid_control_url');
@@ -23,6 +23,9 @@ export async function openControlWindow(url, { headless = false, onClose, handle
     HOME: tempDirectory, USERPROFILE: tempDirectory,
     XDG_CACHE_HOME: tempDirectory, XDG_CONFIG_HOME: tempDirectory, XDG_DATA_HOME: tempDirectory,
   } : undefined;
+  // A rejected launch can still have partially created resources. Only a
+  // failure before this point proves that no browser was started.
+  if (lifecycle) lifecycle.state = 'ownership_unknown';
   const browser = await chromium.launch({ headless, ...(browserEnvironment ? { env: browserEnvironment } : {}),
     ...(handleSignals ? {} : { handleSIGINT: false, handleSIGTERM: false }) });
   try {
@@ -38,7 +41,11 @@ export async function openControlWindow(url, { headless = false, onClose, handle
     let closing = false, closePromise;
     const close = () => {
       closing = true;
-      return closePromise ??= browser.close();
+      if (!closePromise) {
+        try { closePromise = browser.close(); }
+        catch (error) { closePromise = Promise.reject(error); }
+      }
+      return closePromise;
     };
     page.once('close', () => {
       if (!closing) {
@@ -47,5 +54,14 @@ export async function openControlWindow(url, { headless = false, onClose, handle
       }
     });
     return { browser, context, page, close };
-  } catch (error) { await browser.close(); throw error; }
+  } catch (error) {
+    try {
+      await browser.close();
+      if (lifecycle) lifecycle.state = 'closed_confirmed';
+    } catch (closeError) {
+      if (lifecycle) lifecycle.state = 'close_failed';
+      throw new AggregateError([error, closeError], 'control_initialization_and_close_failed', { cause: error });
+    }
+    throw error;
+  }
 }

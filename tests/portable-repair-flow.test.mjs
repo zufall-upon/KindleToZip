@@ -1467,16 +1467,25 @@ test('点検画像待機分離: 遅い原本サムネイル中も公開ZIP保存
   assert.equal((await r.app.snapshot()).job.manifest.images.length, 1);
 });
 
-test('ブラウザ終了だけの失敗: 原本点検/ZIPを続け、終了再入口で次へ進める', async t => {
+test('ブラウザ終了だけの失敗: 原本点検/ZIPを続け、再終了で終了不明を消さない', async t => {
   await mkdir('artifacts/mvp-tests', { recursive: true });
   const directory = await mkdtemp(path.resolve('artifacts/mvp-tests/reader-close-recovery-'));
   const r = await startApplication({ dataDir: path.join(directory, 'data'), sampleFixture: 'layout' });
   const control = await openControlWindow(r.url, { headless: true });
-  t.after(async () => { await control.close(); await r.close(); await rm(directory, { recursive: true, force: true }); });
+  let reader;
+  t.after(async () => {
+    await control.close();
+    // This injection throws before the real close is attempted. Only the test
+    // owns this real context and explicitly confirms its close for teardown;
+    // that separate action must not rewrite the application's failure result.
+    await reader?.context.close();
+    await assert.rejects(r.close(), /reader_close_failed/);
+    await rm(directory, { recursive: true, force: true });
+  });
   const ui = control.page;
   const captured = await captureRepairSaveContext(ui, r.app);
   const original = await r.app.image(1, true);
-  const reader = r.app.reader;
+  reader = r.app.reader;
   const close = reader.close.bind(reader);
   let failOnce = true;
   reader.close = async () => { if (failOnce) { failOnce = false; throw new Error('fixture_reader_close_failed'); } return close(); };
@@ -1493,10 +1502,15 @@ test('ブラウザ終了だけの失敗: 原本点検/ZIPを続け、終了再�
   assert.equal(storedPngEntries(zipBytes).length, 1);
   assert.deepEqual(await r.app.image(1, true), original);
 
+  const retry = ui.waitForResponse(response => response.url().endsWith('/api/command')
+    && response.request().postDataJSON()?.action === 'finishBook');
   await ui.locator('#finishBookButton').click();
-  const closed = await wait(r.app, snapshot => !snapshot.job && !snapshot.browserOpen && !snapshot.busy);
-  assert.equal(closed.state, 'Idle', 'the safe-close entry point remains available for retry');
-  assert.equal(closed.readerReleasePending, false);
+  const retryResponse = await retry;
+  assert.equal(retryResponse.status(), 400);
+  assert.equal((await retryResponse.json()).code, 'reader_close_failed');
+  const stillPending = await wait(r.app, snapshot => snapshot.readerReleasePending && !snapshot.busy);
+  assert.equal(stillPending.job.job_path, captured.job.job_path, '再終了では未確認のbrowserを正常化せずジョブを保持');
+  assert.equal(stillPending.browserOpen, true);
   assert.deepEqual(await readFile(zipPath), zipBytes, 'the existing verified archive remains unchanged after retry');
   assert.deepEqual(await readFile(path.join(captured.job.job_path, 'originals/000001.png')), original, 'the confirmed original remains unchanged');
 });

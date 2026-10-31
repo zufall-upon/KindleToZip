@@ -9,7 +9,7 @@ import { RustGuard, guardExecutable } from '../poc/browser/rust-guard.mjs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdir, mkdtemp, rm, readdir, lstat } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, readdir, lstat, readFile, writeFile } from 'node:fs/promises';
 import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
 import { existsSync } from 'node:fs';
@@ -22,7 +22,11 @@ const { chromium } = await import('playwright');
 if (process.platform === 'linux') test('Linux起動診断: 公開npm startの不在・権限・排他・画面失敗を誤成功にしない', { timeout: 60_000 }, async t => {
   const project = fileURLToPath(new URL('../', import.meta.url));
   const fixture = await mkdtemp(path.join(tmpdir(), 'ktz-start-errors-'));
-  t.after(() => rm(fixture, { recursive: true, force: true }));
+  // A real launch rejection does not prove its partial process has exited.
+  // Keep this fixture if the product deliberately retained an unknown runtime.
+  t.after(async () => {
+    if (!(await readdir(fixture)).some(name => name.startsWith('ktz-'))) await rm(fixture, { recursive: true, force: true });
+  });
   const run = (extra = {}) => spawnSync('npm', ['--prefix', project, 'start'], { cwd: fixture, encoding: 'utf8', timeout: 15_000,
     env: { ...process.env, KTZ_USER_DATA_DIR: path.join(fixture, 'data'), KTZ_TEMP_DIR: fixture, ...extra } });
   const failed = (result, message) => {
@@ -45,7 +49,109 @@ if (process.platform === 'linux') test('Linux起動診断: 公開npm startの不
   const wrapped = new Error('opaque', { cause: Object.assign(new Error(), { code: 'file_permissions_invalid' }) });
   assert.match(linuxStartupMessage(wrapped, 'storage'), /権限・所有者・種類/);
   assert.match(linuxStartupMessage(new Error('a long TMPDIR is not proof'), 'storage'), /原因は特定できていません/);
-  assert.deepEqual((await readdir(fixture)).sort(), ['data', 'unsafe'], '所有一時領域を回収し、保存領域は残す');
+  const entries = await readdir(fixture);
+  assert.deepEqual(entries.filter(name => !name.startsWith('ktz-')).sort(), ['data', 'unsafe'], '保存領域と既存親内容を保持');
+  assert.equal(entries.filter(name => name.startsWith('ktz-')).length, 3, 'Application取得失敗2件とlaunch拒否の終了不明を保持');
+});
+
+if (process.platform === 'linux') test('Linux公開npm start: 所有終了と一時領域identityを確認してから削除', { timeout: 60_000 }, async t => {
+  const project = fileURLToPath(new URL('../', import.meta.url));
+  const hook = new URL('./support/startup-cleanup-hook.mjs', import.meta.url).href;
+  const root = await mkdtemp(path.join(existsSync('/tmp/opencode') ? '/tmp/opencode' : tmpdir(), 'ktz-startup-regression-'));
+  // All Chromium launches are synthetic. Remove test files only after the
+  // child and its real controller are observed to have closed.
+  let cleanupSafe = true;
+  t.after(() => cleanupSafe ? rm(root, { recursive: true, force: true }) : undefined);
+  for (const [mode, expectedExit, ownedCount] of [
+    ['normal', 0, 0], ['init-close-ok', 1, 0], ['init-close-fail', 1, 1],
+    ['control-close-fail', 1, 1], ['app-close-fail', 1, 1],
+    ['launch-reject', 1, 1], ['app-start-fail', 1, 1], ['replace-identity', 1, 2],
+  ]) await t.test(mode, async () => {
+    const fixture = path.join(root, mode), temp = path.join(fixture, 'temp'), data = path.join(fixture, 'data');
+    await mkdir(fixture, { mode: 0o700 }); await mkdir(temp, { mode: 0o700 }); await mkdir(data, { mode: 0o700 });
+    const parentMarker = path.join(temp, 'parent-marker'), storeMarker = path.join(data, 'store-marker');
+    await writeFile(parentMarker, 'parent original', { mode: 0o600 });
+    await writeFile(storeMarker, 'store original', { mode: 0o600 });
+    const parentBefore = await lstat(temp, { bigint: true }), storeBefore = await lstat(storeMarker, { bigint: true });
+    const log = path.join(fixture, 'events.jsonl');
+    cleanupSafe = false;
+    const child = spawnSync('npm', ['--prefix', project, 'start'], { cwd: fixture, encoding: 'utf8', timeout: 15_000,
+      env: { ...process.env, KTZ_USER_DATA_DIR: data, KTZ_TEMP_DIR: temp, KTZ_CLEANUP_TEST_MODE: mode,
+        KTZ_CLEANUP_TEST_LOG: log, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${hook}` } });
+    assert.equal(child.error, undefined); assert.equal(child.signal, null);
+    assert.equal(child.status, expectedExit, `${mode}: ${child.stdout} ${child.stderr}`);
+    assert.doesNotMatch(child.stdout + child.stderr, /PRIVATE_PATH_TOKEN_SECRET/);
+    assert.doesNotMatch(child.stdout + child.stderr, /ktz-startup-regression-/);
+    const events = (await readFile(log, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    const names = events.map(event => event.event);
+    assert.ok(names.includes('application.close.end'), '実controllerを含むApplication closeを試行し完了');
+    cleanupSafe = true;
+    if (mode !== 'app-start-fail') assert.equal(events.find(event => event.event === 'launch').exists, true);
+    if (!['app-start-fail', 'launch-reject'].includes(mode)) {
+      assert.equal(names.filter(name => name === 'control.close').length, 1);
+      assert.ok(names.indexOf('control.close') < names.indexOf('application.close.start'));
+    }
+    if (ownedCount) assert.match(child.stderr, /安全確認ができなかったため専用一時領域を保持/);
+    else assert.doesNotMatch(child.stderr, /専用一時領域を保持/);
+    const entries = await readdir(temp);
+    assert.equal(entries.filter(name => name.startsWith('ktz-')).length, ownedCount);
+    assert.equal(await readFile(parentMarker, 'utf8'), 'parent original');
+    assert.equal(await readFile(storeMarker, 'utf8'), 'store original');
+    const parentAfter = await lstat(temp, { bigint: true }), storeAfter = await lstat(storeMarker, { bigint: true });
+    for (const field of ['dev', 'ino', 'uid', 'gid', 'mode']) {
+      assert.equal(parentAfter[field], parentBefore[field], `parent ${field}`);
+      assert.equal(storeAfter[field], storeBefore[field], `store ${field}`);
+    }
+    if (mode === 'replace-identity') {
+      const replacement = entries.find(name => name.startsWith('ktz-') && !name.endsWith('-original'));
+      assert.equal(await readFile(path.join(temp, replacement, 'replacement'), 'utf8'), 'do not delete');
+    }
+  });
+});
+
+if (process.platform === 'linux') test('Linux公開npm start: Reader部分生成の終了不明をHTTPから終了コードと所有tempまで伝える', { timeout: 60_000 }, async t => {
+  const project = fileURLToPath(new URL('../', import.meta.url));
+  const hook = new URL('./support/reader-startup-cleanup-hook.mjs', import.meta.url).href;
+  const root = await mkdtemp(path.join(existsSync('/tmp/opencode') ? '/tmp/opencode' : tmpdir(), 'ktz-startup-reader-'));
+  // The hooks start no Chromium. Remove fixtures only after the real controller
+  // has closed and the child exited; otherwise keep the evidence.
+  let cleanupSafe = true;
+  t.after(() => cleanupSafe ? rm(root, { recursive: true, force: true }) : undefined);
+  for (const mode of ['close-ok', 'close-reject', 'launch-reject']) await t.test(mode, async () => {
+    const fixture = path.join(root, mode), temp = path.join(fixture, 'temp'), data = path.join(fixture, 'data');
+    await mkdir(fixture, { mode: 0o700 }); await mkdir(temp, { mode: 0o700 }); await mkdir(data, { mode: 0o700 });
+    const original = path.join(data, 'original-marker'), marker = path.join(temp, 'parent-marker');
+    await writeFile(original, 'do not overwrite', { mode: 0o600 });
+    await writeFile(marker, 'parent intact', { mode: 0o600 });
+    const before = await lstat(original, { bigint: true }), log = path.join(fixture, 'events.jsonl');
+    cleanupSafe = false;
+    const child = spawnSync('npm', ['--prefix', project, 'start'], { cwd: fixture, encoding: 'utf8', timeout: 15_000,
+      env: { ...process.env, KTZ_USER_DATA_DIR: data, KTZ_TEMP_DIR: temp, KTZ_READER_TEST_MODE: mode,
+        KTZ_READER_TEST_LOG: log, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${hook}` } });
+    assert.equal(child.error, undefined); assert.equal(child.signal, null);
+    assert.equal(child.status, mode === 'close-ok' ? 0 : 1, `${mode}: ${child.stdout} ${child.stderr}`);
+    assert.doesNotMatch(child.stdout + child.stderr, /PRIVATE_PATH_TOKEN_SECRET|ktz-startup-reader-/);
+    const events = (await readFile(log, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    const commands = events.find(event => event.event === 'commands');
+    assert.deepEqual(commands, { event: 'commands', createStatus: 200, openStatus: 400,
+      openCode: 'browser_open_failed', profileExists: true, readerReturned: false });
+    const close = events.find(event => event.event.startsWith('application.close.'));
+    assert.equal(close.event, mode === 'close-ok' ? 'application.close.resolved' : 'application.close.rejected');
+    assert.equal(close.storeClosed, true);
+    assert.equal(close.profileExists, mode !== 'close-ok');
+    assert.equal(events.filter(event => event.event === 'reader.close').length, mode === 'launch-reject' ? 0 : 1);
+    assert.equal(events.find(event => event.event === 'exit').ownedExists, mode !== 'close-ok');
+    assert.equal((await readdir(temp)).filter(name => name.startsWith('ktz-')).length, mode === 'close-ok' ? 0 : 1);
+    if (mode !== 'close-ok') assert.match(child.stderr, /安全確認ができなかったため専用一時領域を保持/);
+    assert.equal(await readFile(original, 'utf8'), 'do not overwrite');
+    assert.equal(await readFile(marker, 'utf8'), 'parent intact');
+    const after = await lstat(original, { bigint: true });
+    for (const field of ['dev', 'ino', 'uid', 'gid', 'mode']) assert.equal(after[field], before[field]);
+    const lock = new StoreClient();
+    try { await lock.call('lock_data_directory', { path: data }); }
+    finally { await lock.close(); }
+    cleanupSafe = true;
+  });
 });
 
 test('controller解決: 明示指定とOS既定を共用し、起動時に不在を拒否する', async () => {
