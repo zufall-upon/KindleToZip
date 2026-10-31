@@ -8,19 +8,23 @@ import { startFixture } from '../poc/browser/fixture-server.mjs';
 import { sessionId, readSessionPreferences, saveSessionPreference, forgetSessionPreference } from './session-preference.mjs';
 import { initialPresets, readPresets, savePresets } from './presets.mjs';
 import { bookFilename } from './export-name.mjs';
-import { chooseSaveDestination } from './save-dialog.mjs';
+import { chooseSaveDestination, saveDialogAvailable } from './save-dialog.mjs';
 import { kindleRegion, kindleRegions } from './stores/kindle.mjs';
+import { samePath, privateMetadata } from './private-path.mjs';
+import { startOwnedSample } from './owned-sample.mjs';
 
 const defaultData = process.env.KTZ_USER_DATA_DIR || fileURLToPath(new URL('../artifacts/mvp-data/', import.meta.url));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 export class Application {
-  constructor({ dataDir = defaultData, sampleHeadless = true, sampleFixture = 'reader', saveDialog = chooseSaveDestination } = {}) {
+  constructor({ dataDir = defaultData, sampleHeadless = true, ownedSampleHeaded = false, sampleFixture = 'reader', saveDialog = chooseSaveDestination, ownsSignals = false } = {}) {
     this.saveDialog = saveDialog;
     this.kindleRegion = 'jp';
     if (!['reader', 'image-review', 'layout', 'kindle-chrome', 'kindle-chrome-dynamic', 'kindle-chrome-hidden', 'kindle-chrome-recoverable', 'kindle-chrome-tabs', 'kindle-chrome-ambiguous'].includes(sampleFixture)) throw new AppError('invalid_sample_fixture');
     this.dataDir = path.resolve(dataDir);
-    this.sampleHeadless = sampleHeadless;
+    this.sampleHeadless = process.platform === 'linux' ? true : sampleHeadless;
+    Object.defineProperty(this, 'ownedSampleHeaded', { value: process.platform === 'linux' && ownedSampleHeaded === true });
+    this.ownsSignals = ownsSignals;
     this.sampleFixture = sampleFixture;
     this.store = new StoreClient();
     this.state = 'Idle';
@@ -29,6 +33,15 @@ export class Application {
     this.bookGeneration = 0;
     this.commands = new Set();
     this.store.listeners.add(() => this.invalidate('store_disconnected'));
+    this.store.errorListeners.add(error => this.observeStorageError(error));
+  }
+
+  observeStorageError(error) {
+    if (!['storage_durability_uncertain', 'storage_reopen_required', 'output_path_changed', 'output_published_durability_uncertain',
+      'output_published_manifest_update_failed', 'output_published_manifest_durability_uncertain'].includes(error.code)) return;
+    if (!this.storageUncertain) this.storageUncertain = { code: error.code, destination: this.pendingExportDestination ?? null };
+    this.invalidate(error.code);
+    if (this.job) this.state = 'NeedsAttention';
   }
 
   async init() {
@@ -75,6 +88,11 @@ export class Application {
       sessions: entries.filter(e => e.isDirectory() && sessionId.test(e.name)).map(e => ({ id: e.name, saved: e.name.startsWith('saved-') || this.savedTemporarySessions.has(e.name) })),
       preferredKindleSession: this.preferredKindleSession ?? null,
       kindleRegion: this.kindleRegion, kindleRegions,
+      kindleSupported: process.platform !== 'linux',
+      ownedSampleHeaded: this.ownedSampleHeaded,
+      saveDialogAvailable: this.saveDialog !== chooseSaveDestination || saveDialogAvailable(),
+      pathCaseSensitive: process.platform !== 'win32',
+      storageUncertain: this.storageUncertain ?? null,
       sample: Boolean(this.fixture), config: this.reader?.sampleUrl ? sampleConfig : null,
       pickerStage: this.reader?.pickStage ?? null,
       browserId: this.reader?.id ?? null,
@@ -175,6 +193,9 @@ export class Application {
   }
 
   async dispatchCommand(action, input) {
+    // Rust freezes the job after uncertain durability. Also prevent Node-owned
+    // settings/session mutations and new browser or capture operations.
+    if (this.storageUncertain && action !== 'closeBrowser') throw new AppError('storage_reopen_required');
     if (['cancelBack', 'finishBook', 'closeJob'].includes(action)) this.destinationDialog?.abort();
     if (action === 'chooseDestination') return this.chooseDestination(input);
     // Cancellation is observed locally before any queued Rust request.
@@ -287,10 +308,21 @@ export class Application {
           break;
         }
         case 'openBrowser': {
+          if (!['sample', 'kindle', 'sample-headed'].includes(input.mode)) throw new AppError('invalid_browser_mode');
+          if (process.platform === 'linux' && input.mode === 'kindle') throw new AppError('linux_kindle_unsupported');
+          const ownedHeaded = input.mode === 'sample-headed';
+          if (ownedHeaded && (!this.ownedSampleHeaded || input.keep || input.session || input.sampleFixture)) throw new AppError('invalid_browser_mode');
           if (this.reader || !this.job) throw new AppError('browser_or_job_state');
-          if (input.mode !== 'sample' && input.mode !== 'kindle') throw new AppError('invalid_browser_mode');
+          // Dispose only a previously confirmed-safe failed attempt before
+          // assigning a new profile. An unknown attempt is never overwritten.
+          if (this.readerLifecycle?.state === 'close_unconfirmed') throw new AppError('reader_release_incomplete');
           const sampleFixture = input.sampleFixture ?? this.sampleFixture;
           if (input.mode === 'sample' && !['reader', 'image-review', 'layout', 'kindle-chrome', 'kindle-chrome-dynamic', 'kindle-chrome-hidden', 'kindle-chrome-recoverable', 'kindle-chrome-tabs', 'kindle-chrome-ambiguous'].includes(sampleFixture)) throw new AppError('invalid_sample_fixture');
+          if (this.profile || this.fixture) {
+            const retainProfile = typeof input.session === 'string' && sessionId.test(input.session)
+              && this.profile && path.basename(this.profile) === input.session;
+            await this.closeBrowser({ retainProfile });
+          }
           const keep = input.keep === true || input.mode === 'kindle' && input.keep !== false;
           let selected = input.session;
           if (!selected && input.mode === 'kindle' && keep) {
@@ -312,6 +344,7 @@ export class Application {
             await this.store.call('create_session_directory', { path: profile });
           }
           this.profile = profile;
+          this.readerLifecycle = { profile, state: 'not_started' };
           this.advanceProgress(progress, 1, '専用領域を確認。設定の保存待ち');
           this.profilePersistent = keep || path.basename(profile).startsWith('saved-') || this.savedTemporarySessions.has(path.basename(profile));
           if (this.profilePersistent && (input.mode === 'kindle' || keep && path.basename(profile).startsWith('temporary-'))) {
@@ -321,12 +354,16 @@ export class Application {
             this.savedTemporarySessions = new Set(preferences.savedTemporarySessions);
           }
           try {
-            if (input.mode === 'sample') this.fixture = await startFixture({ fixture: sampleFixture });
+            if (ownedHeaded) this.fixture = await startOwnedSample();
+            else if (input.mode === 'sample') this.fixture = await startFixture({ fixture: sampleFixture });
             this.advanceProgress(progress, 2, '設定・試料準備完了。ブラウザの起動と画面応答待ち');
             this.reader = await Reader.open({ profile, sampleUrl: this.fixture?.url, regionId: this.kindleRegion,
+              ownedFixture: ownedHeaded ? this.fixture : undefined,
+              lifecycle: this.readerLifecycle,
               preconfiguredSample: ['reader', 'image-review'].includes(sampleFixture), headless: input.mode === 'sample' && this.sampleHeadless,
+              handleSignals: !this.ownsSignals,
               onChange: () => this.invalidate('browser_target_changed'),
-              readGuard: input.mode === 'sample' && this.sampleHeadless ? null : async () => {
+              readGuard: ownedHeaded || input.mode === 'sample' && this.sampleHeadless ? null : async () => {
                 const { snapshot } = await this.store.call('snapshot');
                 if (!snapshot.cursor_valid || snapshot.foreground === 0) throw new AppError('window_not_available');
               } });
@@ -336,7 +373,12 @@ export class Application {
             this.reader.jpegQuality = this.job.manifest.capture_settings.jpeg_quality;
             this.state = this.job.manifest.images.length ? 'ResumeCheck' : 'AuthPending';
             this.reason = null;
-          } catch { throw new AppError('browser_open_failed'); }
+          } catch (error) {
+            if (this.readerLifecycle.state === 'close_unconfirmed') this.readerReleasePending = true;
+            const failure = new AppError('browser_open_failed');
+            failure.cause = error;
+            throw failure;
+          }
           break;
         }
         case 'closeBrowser': await this.closeBrowser(); break;
@@ -548,15 +590,18 @@ export class Application {
         case 'export': {
           if (!this.job) throw new AppError('job_required');
           const destination = path.resolve(input.destination);
-          if (typeof input.rangeConfirmed === 'boolean') await this.store.call('confirm_range', { confirmed: input.rangeConfirmed });
-          progress.detail = '対象全体の原本照合・保存対象数の確認待ち（総量未確定）';
-          lastExport = { ...(await this.store.call('export', { destination, format: input.format ?? 'zip' }, update => {
-            if (this.progress !== progress || progress.status !== 'pending') return;
-            progress.total = update.total;
-            progress.done = update.done;
-            progress.unit = '保存作業（全画像の書込み＋再読検証＋全体検証＋確定）';
-            progress.detail = { write: '画像をZIPへ書込み中', verify: 'ZIP内の画像を再読検証中', publish: '全体検証済み。非上書き公開・保存履歴の確定待ち' }[update.stage];
-          })).export, destination };
+          this.pendingExportDestination = destination;
+          try {
+            if (typeof input.rangeConfirmed === 'boolean') await this.store.call('confirm_range', { confirmed: input.rangeConfirmed });
+            progress.detail = '対象全体の原本照合・保存対象数の確認待ち（総量未確定）';
+            lastExport = { ...(await this.store.call('export', { destination, format: input.format ?? 'zip' }, update => {
+              if (this.progress !== progress || progress.status !== 'pending') return;
+              progress.total = update.total;
+              progress.done = update.done;
+              progress.unit = '保存作業（全画像の書込み＋再読検証＋全体検証＋確定）';
+              progress.detail = { write: '画像をZIPへ書込み中', verify: 'ZIP内の画像を再読検証中', publish: '全体検証済み。非上書き公開・保存履歴の確定待ち' }[update.stage];
+            })).export, destination };
+          } finally { this.pendingExportDestination = null; }
           break;
         }
         default: throw new AppError('unknown_action');
@@ -685,14 +730,14 @@ export class Application {
         this.invalidate(code);
       }
     } finally {
-      if (pendingCaptureId && ownsJob()) {
+      if (pendingCaptureId && ownsJob() && !this.storageUncertain) {
         await this.store.call('capture_abort').catch(() => { this.reason = 'pending_preserved_for_inspection'; });
         pendingCaptureId = null;
         this.pending = false;
       }
       if (ownsJob()) {
         const info = await this.store.call('job_info').catch(() => null);
-        if (info?.snapshot.manifest.state === 'capturing') await this.store.call('capture_pause').catch(() => {});
+        if (!this.storageUncertain && info?.snapshot.manifest.state === 'capturing') await this.store.call('capture_pause').catch(() => {});
         const progress = await this.store.call('job_progress').catch(() => null);
         if (progress?.manifest && ownsJob()) job.manifest = progress.manifest;
         if (failure && ownsJob()) {
@@ -807,7 +852,7 @@ export class Application {
 
   async ensureOwnedDirectory(directory) {
     const info = await lstat(directory);
-    if (!info.isDirectory() || info.isSymbolicLink() || path.resolve(await realpath(directory)).toLowerCase() !== path.resolve(directory).toLowerCase()) throw new AppError('unsafe_directory');
+    if (!info.isDirectory() || info.isSymbolicLink() || !privateMetadata(info, true) || !samePath(await realpath(directory), directory)) throw new AppError('unsafe_directory');
   }
 
   async image(id, original = false, side = null) {
@@ -823,29 +868,52 @@ export class Application {
     } else item = original || !image.crop ? image : image.crop;
     const filename = path.join(this.job.job_path, item.path);
     const info = await lstat(filename);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > 32 * 1024 * 1024
-      || path.resolve(await realpath(filename)).toLowerCase() !== path.resolve(filename).toLowerCase()) throw new AppError('unsafe_image');
+    if (!info.isFile() || info.isSymbolicLink() || !privateMetadata(info) || info.size > 32 * 1024 * 1024
+      || !samePath(await realpath(filename), filename)) throw new AppError('unsafe_image');
     const png = await readFile(filename);
     if (createHash('sha256').update(png).digest('hex') !== item.sha256) throw new AppError('image_integrity_failed');
     return png;
   }
 
-  async closeBrowser() {
+  async closeBrowser({ retainProfile = false } = {}) {
     this.invalidate(null);
-    if (this.reader) {
+    const errors = [];
+    const lifecycle = this.readerLifecycle;
+    const unconfirmed = error => {
+      if (lifecycle) { lifecycle.state = 'close_unconfirmed'; lifecycle.failure ??= error; }
+      this.readerReleasePending = true;
+      const failure = new AppError('reader_close_failed');
+      failure.cause = lifecycle?.failure ?? error;
+      errors.push(failure);
+    };
+    if (lifecycle?.state === 'close_unconfirmed' || lifecycle?.state === 'starting'
+      || lifecycle?.state === 'active' && !this.reader) {
+      unconfirmed(lifecycle.failure);
+    } else if (this.reader) {
       const reader = this.reader;
-      try { await reader.close(); }
-      catch { this.readerReleasePending = true; throw new AppError('reader_close_failed'); }
-      if (this.reader === reader) this.reader = null;
-      this.readerReleasePending = false;
+      try {
+        if (lifecycle && reader.lifecycle !== lifecycle) throw new Error('reader_identity_changed');
+        await reader.close();
+        if (this.reader !== reader || this.readerLifecycle !== lifecycle) throw new Error('reader_identity_changed');
+        if (lifecycle && lifecycle.state !== 'closed_confirmed') throw new Error('reader_close_unconfirmed');
+        this.reader = null;
+      } catch (error) { unconfirmed(error); }
     }
-    if (this.fixture) { await this.fixture.close(); this.fixture = null; }
-    if (this.profile && !this.profilePersistent && path.basename(this.profile).startsWith('temporary-')) {
+    // The fixture is independent of the browser/profile. Its normal close is
+    // still attempted, but cannot turn an unknown browser into a success.
+    if (this.fixture) {
+      try { await this.fixture.close(); this.fixture = null; }
+      catch (error) { errors.push(error); }
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length) throw new AggregateError(errors, 'browser_cleanup_failed', { cause: errors[0] });
+    if (this.profile && !retainProfile && !this.profilePersistent && path.basename(this.profile).startsWith('temporary-')) {
       await this.ensureOwnedDirectory(this.profile);
       await rm(this.profile, { recursive: true });
     }
     this.profile = null;
     this.profilePersistent = false;
+    this.readerLifecycle = null;
     this.readerReleasePending = false;
     this.state = this.job ? 'ResumeCheck' : 'Idle';
   }
@@ -859,11 +927,14 @@ export class Application {
       // UI commands can still own a browser that Reader.open has not returned
       // yet. Settle those commands before deleting its profile or closing Rust.
       this.destinationDialog?.abort();
-      await this.reader?.cancelPick();
+      const errors = [];
+      try { await this.reader?.cancelPick(); } catch (error) { errors.push(error); }
       await Promise.allSettled([...this.commands]);
-      await this.loop;
-      try { await this.closeBrowser(); }
-      finally { await this.store.close(); }
+      try { await this.loop; } catch (error) { errors.push(error); }
+      try { await this.closeBrowser(); } catch (error) { errors.push(error); }
+      try { await this.store.close(); } catch (error) { errors.push(error); }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length) throw new AggregateError(errors, 'application_cleanup_failed', { cause: errors[0] });
     })();
     return this.closePromise;
   }

@@ -76,8 +76,18 @@ export async function startApplication(options = {}) {
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   } catch (e) { await app.close(); throw e; }
   origin = `http://127.0.0.1:${server.address().port}`;
+  let closePromise;
   return {
     app, origin, token, url: `${origin}/#${token}`,
-    async close() { await app.close(); await new Promise(resolve => server.close(resolve)); },
+    close() {
+      return closePromise ??= (async () => {
+        const errors = [];
+        try { await app.close(); } catch (error) { errors.push(error); }
+        try { await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+        catch (error) { errors.push(error); }
+        if (errors.length === 1) throw errors[0];
+        if (errors.length) throw new AggregateError(errors, 'server_cleanup_failed', { cause: errors[0] });
+      })();
+    },
   };
 }

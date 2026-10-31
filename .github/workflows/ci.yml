@@ -42,7 +42,50 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Rust and IPC tests
         run: ./scripts/test-rust.ps1
+      - name: Windows lifetime supervisor safety regressions
+        run: node --test tests/windows-lifetime-watchdog.test.mjs
+      - name: Bounded Windows region UI diagnostic
+        run: node scripts/diagnose-windows-test-lifetime.mjs single
+      - name: Bounded Windows adjacent region diagnostics
+        run: node scripts/diagnose-windows-test-lifetime.mjs near
       - name: Public source UI regressions
-        run: npm test
+        run: node scripts/diagnose-windows-test-lifetime.mjs full
       - name: Deployment regressions
         run: npm run test:distribution
+
+  ubuntu-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/artifacts/rust-target
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/artifacts/browsers
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - name: Install locked dependencies on the disposable runner
+        run: |
+          npm ci --ignore-scripts --no-fund --no-audit
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup default 1.99.1
+          npx playwright install-deps chromium
+          sudo apt-get install -y xvfb
+          node scripts/install-browser.mjs
+          node scripts/install-browser.mjs --headed
+      - name: Rust controller tests and build
+        run: |
+          cargo test --manifest-path poc/controller/Cargo.toml --lib --locked
+          cargo test --manifest-path poc/controller/Cargo.toml --bin ktz-g02-controller --locked
+          cargo build --manifest-path poc/controller/Cargo.toml --locked
+      - name: Node IPC and local store
+        run: npm run test:store
+      - name: Lifetime supervisor safety regressions
+        run: node --test tests/lifetime-watchdog.test.mjs
+      - name: Bounded region lifetime diagnostic on Xvfb
+        run: node scripts/diagnose-test-lifetime.mjs single
+      - name: Headless fixtures and public GUI lifecycle on Xvfb
+        run: node scripts/diagnose-test-lifetime.mjs full

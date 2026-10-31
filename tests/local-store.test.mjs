@@ -9,6 +9,7 @@ import { PNG } from 'pngjs';
 import { guardExecutable } from '../poc/browser/rust-guard.mjs';
 
 const root = fileURLToPath(new URL('../artifacts/mvp-tests/', import.meta.url));
+if (process.platform === 'linux') process.umask(0o077);
 
 function png(width, height, pixel) {
   const image = new PNG({ width, height });

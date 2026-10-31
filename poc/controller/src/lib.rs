@@ -2,6 +2,9 @@
 //! Local persistence does not depend on account or entitlement state.
 
 mod archive;
+mod mutation;
+#[cfg(target_os = "linux")]
+mod linux_fs;
 pub mod png_image;
 pub mod store;
 

@@ -1,13 +1,13 @@
 import './chromium-test-log-sink.mjs';
-import test from 'node:test';
+import nodeTest from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, symlink, lstat, writeFile, link as hardlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, lstat, stat, chmod, writeFile, link as hardlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startApplication } from '../app/server.mjs';
-import { StoreClient } from '../app/store-client.mjs';
+import { StoreClient, AppError } from '../app/store-client.mjs';
 import { Reader, sampleConfig } from '../app/reader.mjs';
 import { createStoreAdapter } from '../app/stores/index.mjs';
 import { kindleRegions } from '../app/stores/kindle.mjs';
@@ -20,15 +20,109 @@ async function openControlWindow(...args) {
 import { PNG } from 'pngjs';
 import { startFixture } from '../poc/browser/fixture-server.mjs';
 import { readSessionPreference, saveSessionPreference } from '../app/session-preference.mjs';
+import { createLifetime } from './support/test-lifetime.mjs';
+import { observeControlWindow } from './support/control-lifetime.mjs';
+import { createControlFirstCleanup } from './support/owned-control-cleanup.mjs';
+import { createJpegCleanupObservation } from './support/jpeg-cleanup-observation.mjs';
+const trace = createLifetime();
+const test = trace.instrument(nodeTest);
 const { chromium } = await import('playwright');
 const root = fileURLToPath(new URL('../artifacts/mvp-tests/', import.meta.url));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-async function setup(t, { sampleFixture = 'reader' } = {}) {
+// 明示opt-inの試験寿命診断。URL・画像・profile・例外messageは記録しない。
+const lifetimeNames = new Set([
+  'MVP親領域選択候補失効: クリックしたDOMノードの置換後は古い候補を広げない',
+  'MVP親領域選択画面遷移: 対象フレームの再読込で保存候補を破棄する',
+  'MVP次へ表示: 本人指定した公式ボタンをページ内hoverで表示し、隠れたままなら送らない',
+]);
+const lifetimeEnabled = process.env.KTZ_TEST_LIFETIME_DIAGNOSTICS === '1';
+const lifetimes = new WeakMap();
+function lifetime(t, boundary, event, extra = {}) {
+  if (!lifetimeEnabled || !lifetimeNames.has(t.name)) return;
+  console.log(`KTZ_LIFETIME:${JSON.stringify({ pid: process.pid, test: t.name, boundary, event, monotonicMs: performance.now(), ...extra })}`);
+}
+function lifetimeStep(t, boundary, operation) {
+  if (!lifetimeEnabled || !lifetimeNames.has(t.name)) return operation();
+  return (async () => {
+    lifetime(t, boundary, 'start');
+    try {
+      const value = await operation();
+      lifetime(t, boundary, 'end');
+      const state = lifetimes.get(t);
+      if (state?.pending.delete(boundary) && !state.pending.size) lifetime(t, 'teardown', 'complete');
+      return value;
+    } catch (error) {
+      lifetime(t, boundary, 'error', { code: /^[A-Za-z0-9_]+$/.test(error?.code ?? '') ? error.code : 'operation_failed' });
+      throw error;
+    }
+  })();
+}
+function lifetimeBrowserCleanup(t, browser) {
+  lifetimes.get(t)?.pending.add('browser.close');
+  t.after(() => lifetimeStep(t, 'browser.close', () => browser.close()));
+}
+if (lifetimeEnabled) process.once('exit', code => console.log(`KTZ_LIFETIME:${JSON.stringify({ pid: process.pid,
+  test: 'process', boundary: 'process_exit', event: 'complete', exitCode: code, monotonicMs: performance.now() })}`));
+
+// Match the existing local-store archive oracle against the public UI outputs.
+function readStoredEntries(bytes) {
+  const end = bytes.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  assert.notEqual(end, -1);
+  const count = bytes.readUInt16LE(end + 10);
+  let offset = bytes.readUInt32LE(end + 16);
+  const entries = [];
+  for (let i = 0; i < count; i++) {
+    assert.equal(bytes.readUInt32LE(offset), 0x02014b50);
+    const size = bytes.readUInt32LE(offset + 24), nameLength = bytes.readUInt16LE(offset + 28);
+    const extraLength = bytes.readUInt16LE(offset + 30), commentLength = bytes.readUInt16LE(offset + 32);
+    const local = bytes.readUInt32LE(offset + 42);
+    assert.equal(bytes.readUInt32LE(local), 0x04034b50);
+    const data = local + 30 + bytes.readUInt16LE(local + 26) + bytes.readUInt16LE(local + 28);
+    entries.push({ name: bytes.subarray(offset + 46, offset + 46 + nameLength).toString('ascii'), bytes: bytes.subarray(data, data + size) });
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+async function setup(t, { sampleFixture = 'reader', sampleHeadless, controlFirst } = {}) {
+  if (lifetimeEnabled && lifetimeNames.has(t.name)) lifetimes.set(t, { pending: new Set(['running.close', 'fixture.remove']) });
+  lifetime(t, 'test', 'begin');
   await mkdir(root, { recursive: true });
   const directory = await mkdtemp(path.join(root, 'workflow-'));
-  const running = await startApplication({ dataDir: path.join(directory, 'data'), sampleFixture });
-  t.after(async () => { await running.close(); await rm(directory, { recursive: true, force: true }); });
+  lifetime(t, 'fixture', 'created', { fixture: path.basename(directory) });
+  if (trace.enabled) {
+    const info = await lstat(directory, { bigint: true });
+    trace.emit(t, 'owned_fixture', 'created', { fixture: path.basename(directory), dev: String(info.dev), ino: String(info.ino) });
+  }
+  const running = await lifetimeStep(t, 'application.start', () => startApplication({ dataDir: path.join(directory, 'data'), sampleFixture,
+    ...(sampleHeadless === undefined ? {} : { sampleHeadless }) }));
+  trace.trackStore(t, running.app.store);
+  const jpegObservation = controlFirst?.jpegObservation;
+  jpegObservation?.attach(running);
+  const teardownStep = (boundary, operation) => controlFirst
+    ? trace.step(t, `teardown.${boundary}`, operation) : operation();
+  if (trace.enabled && controlFirst) {
+    const close = running.app.close;
+    running.app.close = function (...args) {
+      return trace.step(t, 'teardown.app.close', () => close.apply(this, args));
+    };
+  }
+  const closeRunning = () => teardownStep('running.close', () => lifetimeStep(t, 'running.close', () =>
+    jpegObservation ? jpegObservation.closeRunning(running) : running.close()));
+  const removeFixture = () => teardownStep('fixture.remove', () => lifetimeStep(t, 'fixture.remove', () => {
+    const remove = () => rm(directory, { recursive: true, force: true });
+    return jpegObservation ? jpegObservation.removeFixture({ running, control: controlFirst.control(),
+      controlAttempted: controlFirst.controlAttempted(), remove }) : remove();
+  }));
+  if (controlFirst) t.after(createControlFirstCleanup({
+    closeControl: () => {
+      const control = controlFirst.control();
+      return control ? teardownStep('control.close', () => jpegObservation
+        ? jpegObservation.step('control.close', () => control.close()) : control.close()) : undefined;
+    }, closeRunning, removeFixture, bodyFailure: controlFirst.bodyFailure, controlFailure: controlFirst.controlFailure,
+  }));
+  else t.after(async () => { await closeRunning(); await removeFixture(); });
   const request = async (action, input = {}) => {
     const response = await fetch(`${running.origin}/api/command`, { method: 'POST', headers: {
       Authorization: `Bearer ${running.token}`, 'Content-Type': 'application/json', Origin: running.origin,
@@ -40,11 +134,11 @@ async function setup(t, { sampleFixture = 'reader' } = {}) {
   return { ...running, directory, request };
 }
 
-async function waitFor(app, predicate, timeout = 25_000) {
+async function waitFor(app, predicate, timeout = 25_000, diagnostic) {
   const deadline = Date.now() + timeout;
   let snapshot;
   do {
-    snapshot = await app.snapshot();
+    snapshot = diagnostic ? await lifetimeStep(diagnostic.t, `${diagnostic.phase}.snapshot`, () => app.snapshot()) : await app.snapshot();
     if (predicate(snapshot)) return snapshot;
     await sleep(100);
   } while (Date.now() < deadline);
@@ -87,6 +181,102 @@ async function imagePixel(ui, bytes, x, y) {
     const context = canvas.getContext('2d'); context.drawImage(bitmap, 0, 0); bitmap.close();
     return [...context.getImageData(x, y, 1, 1).data].slice(0, 3);
   }, { base64: bytes.toString('base64'), x, y });
+}
+
+if (process.platform === 'linux') {
+  test('Linux自作試料: 呼出側のheaded指定でも試料はheadlessに固定する', async t => {
+    const r = await setup(t, { sampleHeadless: false });
+    const launch = chromium.launchPersistentContext.bind(chromium);
+    let observed;
+    chromium.launchPersistentContext = (directory, options) => { observed = options.headless; return launch(directory, options); };
+    try {
+      await r.request('create'); await r.request('openBrowser', { mode: 'sample' });
+      assert.equal(observed, true);
+      assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
+    } finally { chromium.launchPersistentContext = launch; }
+  });
+  test('Linux設定領域: 不正な既存modeとhardlinkを変更せず起動拒否する', async t => {
+    await t.test('mode', async sub => {
+      const r = await setup(sub); await r.close();
+      const file = path.join(r.app.dataDir, 'reader-presets.json');
+      await writeFile(file, '{"version":1}', { mode: 0o600 }); await chmod(file, 0o644);
+      const before = await lstat(file), content = await readFile(file);
+      await assert.rejects(startApplication({ dataDir: r.app.dataDir }), { code: 'unsafe_presets' });
+      const after = await lstat(file);
+      assert.equal(after.mode & 0o7777, 0o644); assert.equal(after.ino, before.ino); assert.deepEqual(await readFile(file), content);
+    });
+    await t.test('hardlink', async sub => {
+      const r = await setup(sub); await r.close();
+      const file = path.join(r.app.dataDir, 'kindle-session.json');
+      await writeFile(file, '{}', { mode: 0o600 }); await hardlink(file, path.join(r.app.dataDir, 'linked-fixture'));
+      const before = await lstat(file), content = await readFile(file);
+      await assert.rejects(startApplication({ dataDir: r.app.dataDir }), { code: 'unsafe_session_preferences' });
+      const after = await lstat(file);
+      assert.equal(after.nlink, 2); assert.equal(after.ino, before.ino); assert.deepEqual(await readFile(file), content);
+    });
+  });
+
+  test('Linux公開UI: 保存同期不明と公開済み未記録を区別し再出力せず安全停止する', async t => {
+    for (const [code, expected] of [
+      ['output_published_durability_uncertain', /公開済みの可能性.*永続性は未確認/],
+      ['output_published_manifest_update_failed', /出力済み.*保存履歴の記録に失敗/],
+      ['output_published_manifest_durability_uncertain', /出力済み.*保存履歴の永続性は未確認/],
+      ['output_path_changed', /出力先の経路が変化/],
+    ]) await t.test(code, async sub => {
+      let control, controlFailure, bodyFailure;
+      const r = await setup(sub, { controlFirst: {
+        control: () => control, controlFailure: () => controlFailure, bodyFailure: () => bodyFailure,
+      } });
+      try {
+        await r.request('create');
+        try { control = await openControlWindow(r.url, { headless: true }); }
+        catch (error) { controlFailure = { error }; throw error; }
+        const destination = path.join(r.directory, 'known.zip');
+        const call = r.app.store.call.bind(r.app.store);
+        r.app.store.call = (kind, ...args) => {
+          if (kind !== 'export') return call(kind, ...args);
+          const error = new AppError(code);
+          for (const listener of r.app.store.errorListeners) listener(error);
+          return Promise.reject(error);
+        };
+        await assert.rejects(r.app.command('export', { destination, format: 'zip' }), { code });
+        await control.page.waitForFunction(() => !document.querySelector('#storageUncertain').hidden);
+        const warning = await control.page.locator('#storageUncertain').textContent();
+        assert.match(warning, expected); assert.ok(warning.includes(destination)); assert.match(warning, /再起動/);
+        assert.deepEqual((await r.app.snapshot()).storageUncertain, { code, destination });
+        for (const action of ['start', 'export', 'savePreset', 'closeJob']) {
+          await assert.rejects(r.app.command(action, { destination, format: 'zip' }), { code: 'storage_reopen_required' });
+        }
+        await assert.rejects(lstat(destination), { code: 'ENOENT' });
+        assert.equal(await control.page.locator('#decisionButton').isDisabled(), true);
+      } catch (error) { bodyFailure = { error }; throw error; }
+    });
+  });
+
+  test('Linux公開取得: controller切断時に未確定画像もページ送りも進めない', async t => {
+    const r = await setup(t);
+    await r.request('create'); await r.request('openBrowser', { mode: 'sample' });
+    await r.request('preview', { config: sampleConfig }); await r.request('approve', { confirmed: true });
+    const jobPath = (await r.app.snapshot()).job.job_path;
+    const call = r.app.store.call.bind(r.app.store);
+    let entered, release;
+    const atCommit = new Promise(resolve => { entered = resolve; });
+    const gate = new Promise(resolve => { release = resolve; });
+    r.app.store.call = async (kind, ...args) => {
+      if (kind === 'capture_commit') { entered(); await gate; }
+      return call(kind, ...args);
+    };
+    await r.request('start', { confirmed: true });
+    await atCommit;
+    r.app.store.child.kill(); await r.app.store.exited; release();
+    await r.app.loop;
+    const state = await r.app.snapshot();
+    assert.equal(state.state, 'NeedsAttention');
+    assert.equal(state.job.manifest.images.length, 0);
+    assert.deepEqual(await readdir(path.join(jobPath, 'originals')), []);
+    assert.equal(await r.app.reader.page.locator('#position').innerText(), '1 / 12');
+    await assert.rejects(r.app.command('start', { confirmed: true }), /explicit_start_required/);
+  });
 }
 
 // All HTTPS-looking pages below are local, self-authored responses. Never fall
@@ -159,26 +349,29 @@ test('Kindle地域境界: 同じ明示リストをタブ・picker・取得前後
   });
 });
 
-test('Kindle地域公開UI: 言語と独立して選択し実際の開始URLへ渡し開いた間は変更しない', async t => {
-  const r = await setup(t);
-  const control = await openControlWindow(r.url, { headless: true }); t.after(() => control.close());
+test(process.platform === 'linux' ? 'Kindle地域公開UI: Linuxでは実Kindle起動を拒否する' : 'Kindle地域公開UI: 言語と独立して選択し実際の開始URLへ渡し開いた間は変更しない', async t => {
+  const r = await trace.step(t, 'region.setup', () => setup(t));
+  const control = await trace.step(t, 'region.control', () => observeControlWindow(trace, t, chromium,
+    () => openControlWindow(r.url, { headless: true })));
+  t.after(() => trace.step(t, 'control.browser_close', () => control.close()));
   const ui = control.page;
-  await ui.waitForFunction(() => document.querySelector('#kindleRegion').options.length === 3);
+  await trace.step(t, 'region.options', () => ui.waitForFunction(() => document.querySelector('#kindleRegion').options.length === 3));
   assert.deepEqual(await ui.locator('#kindleRegion option').evaluateAll(options => options.map(option => option.value)), ['jp', 'us', 'uk']);
+  trace.emit(t, 'region.options_assert', 'complete');
   // A poll already in flight may finish during run()'s initial paint. The
   // selected region belongs to the change event, not that older snapshot.
   let holdPoll;
   const pendingPoll = new Promise(resolve => { holdPoll = resolve; });
-  const interceptPoll = route => holdPoll(route);
-  await ui.route('**/api/state', interceptPoll);
-  const oldPoll = await pendingPoll;
+  const interceptPoll = route => { trace.emit(t, 'region.intercept', 'called'); return holdPoll(route); };
+  await trace.step(t, 'region.route', () => ui.route('**/api/state', interceptPoll));
+  const oldPoll = await trace.step(t, 'region.pendingPoll', () => pendingPoll);
   const oldSnapshot = await r.app.snapshot();
   await ui.evaluate(() => {
     const select = document.querySelector('#kindleRegion');
     select.value = 'us';
     select.dispatchEvent(new Event('change', { bubbles: true }));
   });
-  await oldPoll.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(oldSnapshot) });
+  await trace.step(t, 'region.fulfill', () => oldPoll.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(oldSnapshot) }));
   await ui.unroute('**/api/state', interceptPoll);
   await ui.waitForFunction(() => !document.querySelector('#kindleRegion').disabled);
   assert.equal(r.app.kindleRegion, 'us', 'a prior polling response must not replace the user-selected region');
@@ -190,6 +383,48 @@ test('Kindle地域公開UI: 言語と独立して選択し実際の開始URLへ�
     assert.equal(await ui.locator('#kindleStartUrl').textContent(), 'https://read.amazon.com/');
   }
   await assert.rejects(r.app.command('setKindleRegion', { id: 'cn' }), /invalid_kindle_region/);
+  if (process.platform === 'linux') {
+    await ui.locator('#create').click();
+    await waitFor(r.app, s => Boolean(s.job) && !s.busy);
+    await ui.waitForFunction(() => document.querySelector('#kindleUnsupported').hidden === false);
+    assert.equal(await ui.locator('#openKindle').isDisabled(), true);
+    const before = (await r.app.snapshot()).sessions;
+    const response = await fetch(`${r.origin}/api/command`, { method: 'POST', headers: {
+      Authorization: `Bearer ${r.token}`, 'Content-Type': 'application/json', Origin: r.origin,
+    }, body: JSON.stringify({ action: 'openBrowser', input: { mode: 'kindle' } }) });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).code, 'linux_kindle_unsupported');
+    await assert.rejects(r.app.command('openBrowser', { mode: 'kindle' }), { code: 'linux_kindle_unsupported' });
+    assert.deepEqual((await r.app.snapshot()).sessions, before);
+    assert.equal(r.app.reader, undefined);
+    // The unsupported entrypoint cannot be followed by a successful preview,
+    // acquisition or a new archive from this still-empty job. This does not
+    // revoke review/export of originals saved by a legitimate earlier workflow.
+    const unchanged = (await r.app.snapshot()).job.manifest;
+    const rejected = async (action, input, code) => {
+      const denied = await fetch(`${r.origin}/api/command`, { method: 'POST', headers: {
+        Authorization: `Bearer ${r.token}`, 'Content-Type': 'application/json', Origin: r.origin,
+      }, body: JSON.stringify({ action, input }) });
+      assert.equal(denied.status, 400);
+      assert.equal((await denied.json()).code, code);
+    };
+    await rejected('preview', { config: sampleConfig }, 'open_browser_first');
+    await rejected('approve', { confirmed: true }, 'preview_confirmation_required');
+    await rejected('start', { confirmed: true }, 'explicit_start_required');
+    for (const format of ['zip', 'cbz']) {
+      const destination = path.join(r.directory, `unsupported-reader.${format}`);
+      await rejected('export', { destination, format }, 'empty_selection');
+      await assert.rejects(lstat(destination), { code: 'ENOENT' });
+    }
+    const deniedState = await r.app.snapshot();
+    assert.equal(deniedState.previewReady, false); assert.equal(deniedState.previewApproved, false);
+    assert.deepEqual(deniedState.job.manifest.images, unchanged.images);
+    assert.deepEqual(deniedState.job.manifest.exports, unchanged.exports);
+    assert.deepEqual(deniedState.sessions, before);
+    assert.equal(r.app.reader, undefined, '読書pageが存在せずページ送りも開始しない');
+    trace.emit(t, 'region.assertions', 'complete');
+    return;
+  }
   const launch = chromium.launchPersistentContext.bind(chromium);
   chromium.launchPersistentContext = async (profile, options) => {
     const context = await launch(profile, { ...options, headless: true, serviceWorkers: 'block' });
@@ -212,6 +447,7 @@ test('Kindle地域公開UI: 言語と独立して選択し実際の開始URLへ�
     await waitFor(r.app, s => s.kindleRegion === 'uk' && !s.busy);
     assert.equal((await r.app.snapshot()).previewApproved, false);
     assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
+    trace.emit(t, 'region.assertions', 'complete');
   } finally { chromium.launchPersistentContext = launch; }
 });
 
@@ -629,7 +865,7 @@ test('MVP親領域選択失敗回復: 遮蔽された可視クリック候補を
 test('MVP親領域選択候補失効: クリックしたDOMノードの置換後は古い候補を広げない', async t => {
   const r = await setup(t);
   await r.request('create'); await r.request('openBrowser', { mode: 'sample' });
-  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
+  const browser = await lifetimeStep(t, 'browser.launch', () => chromium.launch({ headless: true })); lifetimeBrowserCleanup(t, browser);
   const ui = withPublicDisclosures(await browser.newPage()); await ui.goto(r.url);
   await selectVisibleReaderTab(ui); await openManualOptions(ui);
   const page = r.app.reader.page;
@@ -639,11 +875,11 @@ test('MVP親領域選択候補失効: クリックしたDOMノードの置換後
     cover.style.cssText = `position:fixed;left:${rect.x + rect.width * .1}px;top:${rect.y + rect.height * .1}px;width:5px;height:5px;background:transparent;z-index:10000`;
     document.body.append(cover);
   });
-  await ui.locator('#pickReader').click();
-  await waitFor(r.app, snapshot => snapshot.pickingField === 'reader' && snapshot.pickerStage === 'waiting_click');
+  await lifetimeStep(t, 'picker.open', () => ui.locator('#pickReader').click());
+  await lifetimeStep(t, 'picker.wait', () => waitFor(r.app, snapshot => snapshot.pickingField === 'reader' && snapshot.pickerStage === 'waiting_click', undefined, { t, phase: 'picker' }));
   const box = await page.locator('#sheet').boundingBox();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await waitFor(r.app, snapshot => snapshot.readerCandidateAvailable);
+  await lifetimeStep(t, 'picker.click', () => page.mouse.click(box.x + box.width / 2, box.y + box.height / 2));
+  await lifetimeStep(t, 'candidate.wait', () => waitFor(r.app, snapshot => snapshot.readerCandidateAvailable, undefined, { t, phase: 'candidate' }));
   assert.equal((await r.app.snapshot()).readerCandidateAvailable, true);
   await page.locator('#sheet').evaluate(canvas => canvas.replaceWith(canvas.cloneNode(true)));
   await ui.locator('#expandReader').click();
@@ -653,14 +889,17 @@ test('MVP親領域選択候補失効: クリックしたDOMノードの置換後
   assert.equal(await ui.locator('#expandReader').isDisabled(), true);
   assert.equal(await ui.locator('#preview').isDisabled(), true);
   assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
+  lifetime(t, 'test_body', 'complete');
 });
 
 test('MVP親領域選択画面遷移: 対象フレームの再読込で保存候補を破棄する', async t => {
   const r = await setup(t);
-  await r.request('create'); await r.request('openBrowser', { mode: 'sample' });
-  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
-  const ui = withPublicDisclosures(await browser.newPage()); await ui.goto(r.url);
-  await selectVisibleReaderTab(ui); await openManualOptions(ui);
+  await lifetimeStep(t, 'job.create', () => r.request('create'));
+  await lifetimeStep(t, 'reader.open', () => r.request('openBrowser', { mode: 'sample' }));
+  const browser = await lifetimeStep(t, 'browser.launch', () => chromium.launch({ headless: true })); lifetimeBrowserCleanup(t, browser);
+  const ui = withPublicDisclosures(await browser.newPage()); await lifetimeStep(t, 'control.load', () => ui.goto(r.url));
+  await lifetimeStep(t, 'reader.select', () => selectVisibleReaderTab(ui));
+  await lifetimeStep(t, 'manual.open', () => openManualOptions(ui));
   const page = r.app.reader.page;
   await page.locator('#sheet').evaluate(canvas => {
     const rect = canvas.getBoundingClientRect();
@@ -668,18 +907,19 @@ test('MVP親領域選択画面遷移: 対象フレームの再読込で保存候
     cover.style.cssText = `position:fixed;left:${rect.x + rect.width * .1}px;top:${rect.y + rect.height * .1}px;width:5px;height:5px;background:transparent;z-index:10000`;
     document.body.append(cover);
   });
-  await ui.locator('#pickReader').click();
-  await waitFor(r.app, snapshot => snapshot.pickingField === 'reader' && snapshot.pickerStage === 'waiting_click');
+  await lifetimeStep(t, 'picker.open', () => ui.locator('#pickReader').click());
+  await lifetimeStep(t, 'picker.wait', () => waitFor(r.app, snapshot => snapshot.pickingField === 'reader' && snapshot.pickerStage === 'waiting_click', undefined, { t, phase: 'picker' }));
   const box = await page.locator('#sheet').boundingBox();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await waitFor(r.app, snapshot => snapshot.readerCandidateAvailable);
-  await page.reload();
-  await page.locator('#sheet').waitFor({ state: 'visible' });
-  await waitFor(r.app, snapshot => !snapshot.readerCandidateAvailable && snapshot.pickingField === null);
-  await ui.waitForFunction(() => document.querySelector('#expandReader').disabled);
+  await lifetimeStep(t, 'picker.click', () => page.mouse.click(box.x + box.width / 2, box.y + box.height / 2));
+  await lifetimeStep(t, 'candidate.wait', () => waitFor(r.app, snapshot => snapshot.readerCandidateAvailable, undefined, { t, phase: 'candidate' }));
+  await lifetimeStep(t, 'page.reload', () => page.reload());
+  await lifetimeStep(t, 'dom.visible', () => page.locator('#sheet').waitFor({ state: 'visible' }));
+  await lifetimeStep(t, 'candidate.invalidate', () => waitFor(r.app, snapshot => !snapshot.readerCandidateAvailable && snapshot.pickingField === null, undefined, { t, phase: 'invalidate' }));
+  await lifetimeStep(t, 'invalidate.ui', () => ui.waitForFunction(() => document.querySelector('#expandReader').disabled));
   assert.equal(await ui.locator('#expandReader').isDisabled(), true);
   assert.equal(await ui.locator('#reader').inputValue(), '');
   assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
+  lifetime(t, 'test_body', 'complete');
 });
 
 test('MVP次へ表示: 本人指定した公式ボタンをページ内hoverで表示し、隠れたままなら送らない', async t => {
@@ -705,6 +945,7 @@ test('MVP次へ表示: 本人指定した公式ボタンをページ内hoverで�
   });
   assert.equal(await page.locator('#position').innerText(), '1 / 12');
   assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
+  lifetime(t, 'test_body', 'complete');
 });
 
 test('MVP読書タブ: 本棚を残して公開UIで対象を選び、4項目指定と承認破棄・取得中の固定を保つ', async t => {
@@ -1055,11 +1296,13 @@ test('公開MVP画面: 試料プレビュー・明示開始・一時停止/復�
   await page.locator('#previewImage').waitFor({ state: 'visible' });
   assert.equal(await r.app.reader.page.locator('#position').innerText(), '1 / 12');
   assert.equal((await r.app.snapshot()).job.manifest.images.length, 0, 'プレビューはディスクの作業画像を作らない');
+  assert.deepEqual(await readdir(path.join((await r.app.snapshot()).job.job_path, 'originals')), []);
   await assert.rejects(r.app.command('start', { confirmed: true }), /explicit_start_required/);
   await page.locator('#previewConfirmed').check();
   await page.locator('#approve').click();
   await page.waitForFunction(() => !document.querySelector('#start').disabled);
   assert.equal((await r.app.snapshot()).job.manifest.images.length, 0, '承認だけでは取得しない');
+  assert.deepEqual(await readdir(path.join((await r.app.snapshot()).job.job_path, 'originals')), []);
   await page.locator('#start').click();
   await waitFor(r.app, s => s.job.manifest.images.length >= 2);
   await page.waitForFunction(() => document.querySelector('#state').textContent === '取得中');
@@ -1116,6 +1359,18 @@ test('公開MVP画面: 試料プレビュー・明示開始・一時停止/復�
   const output = await readFile(destination);
   assert.equal(output.readUInt32LE(0), 0x04034b50);
   const info = await r.app.snapshot();
+  const expectedImages = [await r.app.image(2), await r.app.image(1)];
+  const verifyEntries = archive => {
+    const entries = readStoredEntries(archive);
+    assert.deepEqual(entries.map(entry => entry.name), ['000001.png', '000002.png']);
+    assert.equal(entries.length, expectedImages.length);
+    entries.forEach((entry, index) => {
+      assert.deepEqual(entry.bytes, expectedImages[index], `image ${index + 1} bytes/order`);
+      assert.equal(createHash('sha256').update(entry.bytes).digest('hex'), createHash('sha256').update(expectedImages[index]).digest('hex'));
+      assert.ok(PNG.sync.read(entry.bytes).width > 0);
+    });
+  };
+  verifyEntries(output);
   assert.equal(info.job.manifest.exports[0].entry_count, 2);
   assert.equal(info.job.manifest.exports[0].range_confirmed, false);
   assert.equal(info.job.manifest.exports[0].sha256, createHash('sha256').update(output).digest('hex'));
@@ -1125,10 +1380,13 @@ test('公開MVP画面: 試料プレビュー・明示開始・一時停止/復�
   await page.locator('#export').click();
   const zipInfo = await waitFor(r.app, s => s.job.manifest.exports.length === 2 && !s.busy);
   const zipOutput = await readFile(zipDestination);
+  verifyEntries(zipOutput);
   assert.equal(zipOutput.readUInt32LE(0), 0x04034b50);
   assert.equal(zipInfo.job.manifest.exports[1].entry_count, 2);
   assert.equal(zipInfo.job.manifest.exports[1].sha256, createHash('sha256').update(zipOutput).digest('hex'));
+  const existing = await stat(destination);
   await assert.rejects(r.app.command('export', { destination, format: 'cbz', warningsAccepted: true }), /output_exists/);
+  assert.equal((await stat(destination)).ino, existing.ino);
   assert.deepEqual(await readFile(destination), output);
   assert.deepEqual(await readFile(path.join(jobPath, 'originals', '000001.png')), original);
   assert.deepEqual(foreign, []);
@@ -1303,7 +1561,7 @@ test('専用セッション: 明示保存・再利用・明示削除と一時領
   assert.deepEqual((await r.app.snapshot()).sessions, []);
 });
 
-test('専用セッション既定: 公開Kindle入口と通常再起動で同じ領域を再利用し、一時利用は分離する', async t => {
+test(process.platform === 'linux' ? '専用セッション既定: Linuxでは公開Kindle入口を拒否する' : '専用セッション既定: 公開Kindle入口と通常再起動で同じ領域を再利用し、一時利用は分離する', async t => {
   await mkdir(root, { recursive: true });
   const directory = await mkdtemp(path.join(root, 'session-restart-'));
   const r = await startApplication({ dataDir: path.join(directory, 'data') });
@@ -1321,8 +1579,17 @@ test('専用セッション既定: 公開Kindle入口と通常再起動で同じ
   control = await openControlWindow(r.url, { headless: true });
   const ui = control.page;
   await ui.locator('#create').click();
+  // click/既定チェック/恒常的なLinux無効表示はcreate応答の完了条件ではない。
+  await waitFor(r.app, snapshot => snapshot.job && !snapshot.busy);
   await ui.locator('[data-stage="browser"] details > summary').click();
   assert.equal(await ui.locator('#keep').isChecked(), true);
+  if (process.platform === 'linux') {
+    assert.equal(await ui.locator('#openKindle').isDisabled(), true);
+    await assert.rejects(r.app.command('openBrowser', { mode: 'kindle' }), { code: 'linux_kindle_unsupported' });
+    assert.deepEqual((await r.app.snapshot()).sessions, []);
+    assert.equal(r.app.reader, undefined);
+    return;
+  }
   await ui.locator('#openKindle').click();
   await waitFor(r.app, s => s.browserOpen && !s.busy);
   const first = r.app.profile;
@@ -1386,7 +1653,7 @@ test('専用セッション既定: 公開Kindle入口と通常再起動で同じ
   assert.equal(restarted.app.profile, first);
 });
 
-test('専用セッション保存寿命: 旧temporaryの保存指定を領域切替・再起動後も保持する', async t => {
+test(process.platform === 'linux' ? '専用セッション保存寿命: 旧temporaryの保存指定を自作試料で保持する' : '専用セッション保存寿命: 旧temporaryの保存指定を領域切替・再起動後も保持する', async t => {
   const r = await setup(t);
   await r.request('create');
   await r.request('openBrowser', { mode: 'sample' });
@@ -1409,6 +1676,15 @@ test('専用セッション保存寿命: 旧temporaryの保存指定を領域切
   });
   restarted = await startApplication({ dataDir: r.app.dataDir });
   await restarted.app.command('create');
+  if (process.platform === 'linux') {
+    assert.equal((await restarted.app.snapshot()).preferredKindleSession, retained);
+    await assert.rejects(restarted.app.command('openBrowser', { mode: 'kindle' }), { code: 'linux_kindle_unsupported' });
+    await restarted.app.command('openBrowser', { mode: 'sample', session: retained });
+    assert.equal(path.basename(restarted.app.profile), retained);
+    await restarted.app.command('closeBrowser');
+    assert.equal((await lstat(path.join(r.app.dataDir, retained))).isDirectory(), true);
+    return;
+  }
   await restarted.app.command('openBrowser', { mode: 'kindle' });
   assert.equal(path.basename(restarted.app.profile), retained, 'version:1の旧保存指定を同じパスで再利用する');
   await restarted.app.reader.context.addCookies([{ name: 'retained-temporary-fixture', value: 'retained', url: fixture.url, expires: Math.floor(Date.now() / 1000) + 3600 }]);
@@ -1961,9 +2237,80 @@ test('自動余白: 公開点検で原本と比較し取消・適用・原寸復
   });
 });
 
+test('JPEG cleanup観測: 出力設定と注入した失敗を保持する', async t => {
+  await t.test('出力先は観測の生成時に取得し、内容は境界とeventだけ', async () => {
+    await mkdir(root, { recursive: true });
+    const directory = await mkdtemp(path.join(root, 'jpeg-observation-'));
+    const eventFile = path.join(directory, 'events.jsonl');
+    const previous = process.env.KTZ_JPEG_CLEANUP_EVENTS;
+    try {
+      delete process.env.KTZ_JPEG_CLEANUP_EVENTS;
+      const disabled = createJpegCleanupObservation();
+      process.env.KTZ_JPEG_CLEANUP_EVENTS = eventFile;
+      const enabled = createJpegCleanupObservation();
+      disabled.bodyError();
+      await assert.rejects(lstat(eventFile), { code: 'ENOENT' });
+      delete process.env.KTZ_JPEG_CLEANUP_EVENTS;
+      enabled.bodyComplete();
+      assert.deepEqual((await readFile(eventFile, 'utf8')).trim().split('\n').map(JSON.parse),
+        [{ boundary: 'body', event: 'complete' }]);
+      if (process.platform !== 'win32') assert.equal((await stat(eventFile)).mode & 0o077, 0);
+    } finally {
+      if (previous === undefined) delete process.env.KTZ_JPEG_CLEANUP_EVENTS;
+      else process.env.KTZ_JPEG_CLEANUP_EVENTS = previous;
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+  await t.test('注入したcontrolとstoreの失敗もHTTP終了と元errorを保持', async () => {
+    const server = http.createServer();
+    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+    const originalHttpClose = http.Server.prototype.close;
+    const body = new Error('body'), control = new Error('control'), store = new Error('store');
+    const observation = createJpegCleanupObservation({ eventFile: null });
+    const app = { store: { async close() { throw store; } }, closeBrowser() {},
+      async close() { await this.store.close(); } };
+    const running = { app, origin: `http://127.0.0.1:${server.address().port}`,
+      async close() {
+        let failure;
+        try { await app.close(); } catch (error) { failure = error; }
+        await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+        if (failure) throw failure;
+      } };
+    observation.attach(running);
+    let removed = false;
+    const cleanup = createControlFirstCleanup({
+      closeControl: () => observation.step('control.close', () => { throw control; }),
+      closeRunning: () => observation.closeRunning(running),
+      removeFixture: () => { removed = true; }, bodyFailure: () => ({ error: body }),
+    });
+    try {
+      await assert.rejects(cleanup(), error => error instanceof AggregateError && error.cause === body
+        && error.errors[0] === body && error.errors[1] === control && error.errors[2] === store);
+      assert.equal(removed, false);
+      assert.equal(server.listening, false);
+      assert.equal(http.Server.prototype.close, originalHttpClose);
+      assert.deepEqual(observation.events(), [
+        ['control.close', 'start'], ['control.close', 'error'], ['running.close', 'start'],
+        ['app.close', 'start'], ['store.close', 'start'], ['store.close', 'error'], ['app.close', 'error'],
+        ['http.close', 'start'], ['http.close', 'end'], ['running.close', 'error'],
+      ].map(([boundary, event]) => ({ boundary, event })));
+    } finally {
+      if (server.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+});
+
 test('JPEG画像軽量化: 公開設定で実取得し画質・原本・クロップとZIP/CBZを再読する', { timeout: 60_000 }, async t => {
-  const r = await setup(t);
-  const control = await openControlWindow(r.url, { headless: true }); t.after(() => control.close());
+  let control, controlFailure, bodyFailure, controlAttempted = false;
+  const jpegObservation = createJpegCleanupObservation();
+  const r = await setup(t, { controlFirst: {
+    control: () => control, controlFailure: () => controlFailure, bodyFailure: () => bodyFailure,
+    controlAttempted: () => controlAttempted, jpegObservation,
+  } });
+  try {
+  controlAttempted = true;
+  try { control = await openControlWindow(r.url, { headless: true }); }
+  catch (error) { controlFailure = { error }; throw error; }
   const ui = control.page;
   await openSampleThroughPublicUi(ui);
   await ui.locator('#pageOutputMode').selectOption('split_spread');
@@ -2067,6 +2414,8 @@ test('JPEG画像軽量化: 公開設定で実取得し画質・原本・クロ�
   assert.deepEqual(reopened.job.issues, []);
   assert.deepEqual(await r.app.image(item.capture_id, true), original);
   assert.deepEqual(await r.app.image(item.capture_id, false, 'right'), originalRight);
+  jpegObservation.bodyComplete();
+  } catch (error) { jpegObservation.bodyError(); bodyFailure = { error }; throw error; }
 });
 
 test('MVP単ページ: 片側表紙を保持し点検で左右順を明示修正して復帰する', { timeout: 40_000 }, async t => {

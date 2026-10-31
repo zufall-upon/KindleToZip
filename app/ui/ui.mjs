@@ -217,7 +217,7 @@ function destinationAlreadyRegistered() {
   const destination = $('destination').value.trim();
   if (!destination || !state?.job) return false;
   if ($('exportResult').textContent && $('exportResult').dataset.destination === destination) return true;
-  const normalize = value => value.replaceAll('/', '\\').replace(/\\+$/, '').toLowerCase();
+  const normalize = value => state.pathCaseSensitive ? value.replace(/\/+$/, '') : value.replaceAll('/', '\\').replace(/\\+$/, '').toLowerCase();
   // A filename-only legacy record does not identify its output directory.
   // Unknown destinations still go through the store's no-overwrite check.
   return state.job.manifest.exports.some(item => item.destination && normalize(destination) === normalize(item.destination));
@@ -230,8 +230,11 @@ function mappingStatus() {
   const complete = fields.filter(field => $(field).value.trim());
   const selectedField = state?.pickingField ?? pickingField;
   const busy = pendingActions > 0 || state?.busy;
-  $('kindleRegion').disabled = !connected || state?.browserOpen || busy;
-  $('chooseDestination').disabled = busy || !state?.job;
+  $('kindleRegion').disabled = !connected || state?.browserOpen || state?.readerReleasePending || busy;
+  $('chooseDestination').disabled = busy || !state?.job || state?.saveDialogAvailable === false || Boolean(state?.storageUncertain);
+  $('destinationDialogHelp').textContent = state?.saveDialogAvailable === false
+    ? 'この環境では保存先ダイアログを利用できません。保存先を手入力してください。'
+    : 'ダイアログで選ぶだけでは保存・取得を開始しません。手入力も利用できます。';
   updateOperationStatus();
   if (busy) $('reason').textContent = '';
   else $('reason').textContent = state?.reason ? errorDescription(state.reason) : '';
@@ -245,10 +248,11 @@ function mappingStatus() {
   $('pageOutputMode').disabled = !canPick || busy;
   $('readingDirection').disabled = !canPick || busy || $('pageOutputMode').value !== 'split_spread';
   $('quickPreview').disabled = !canPick || busy;
-  $('export').disabled = busy || !state?.job || !state.job.manifest.selected_capture_ids.length || state.job.issues.length > 0;
-  $('exportHelp').textContent = destinationAlreadyRegistered() ? 'この保存先には既に検証済みの出力があります。別名を指定すると、既存ファイルを保ったまま保存できます。'
+  $('export').disabled = busy || Boolean(state?.storageUncertain) || !state?.job || !state.job.manifest.selected_capture_ids.length || state.job.issues.length > 0;
+  $('exportHelp').textContent = state?.storageUncertain ? errors.storage_reopen_required
+    : destinationAlreadyRegistered() ? 'この保存先には既に検証済みの出力があります。別名を指定すると、既存ファイルを保ったまま保存できます。'
     : busy ? '処理中です。取り込み中なら一時停止してから保存してください。'
-    : state?.readerReleasePending ? 'ブラウザ終了だけが未完了です。確定原本の点検とZIPは利用できます。安全終了を再試行してください。'
+    : state?.readerReleasePending ? 'ブラウザの終了を確認できません。確定原本があれば点検とZIPを利用できます。次の本には進めません。'
     : !state?.job ? '先に新しい作業か中断データを開いてください。'
     : state.job.issues.length ? '保存済み画像の不整合があります。「画像を点検」で詳細を確認してください。原本は変更していません。'
     : !state.job.manifest.selected_capture_ids.length ? '採用画像がありません。「画像を点検」で保存する画像を採用してください。'
@@ -270,6 +274,7 @@ function mappingStatus() {
   $('parentReader').disabled = complete.length !== fields.length || !canPick;
   const help = !connected ? 'アプリとの接続が切れています。「接続を確認し直す」を押してください。アプリを再起動した場合は、新しく開いた操作画面を使ってください。'
     : !state?.job ? '「決定・次へ」で新しい1冊の作業を用意してください。'
+    : state?.readerReleasePending ? 'ブラウザの終了を確認できません。新しい検査・取得はできません。'
     : !state.browserOpen ? '「決定・次へ」で専用ブラウザを開いてください。'
     : state.state === 'Capturing' ? '取得中です。「キャンセル・前へ」で安全停止して点検へ戻れます。'
     : selectedField ? `専用ブラウザで「${mappingLabels[selectedField]}」をクリックしてください。Escか「指定を取り消す」で中止できます。`
@@ -295,8 +300,8 @@ function mappingStatus() {
   $('resumeCapture').disabled = !connected || busy || !state?.job?.manifest.images.length;
   $('resumeComparison').hidden = !validPreview || !state?.resumePlan;
   const resumeBlocked = state?.resumePlan?.mode === 'blocked';
-  $('approve').disabled = !validPreview || busy || resumeBlocked || !$('previewConfirmed').checked || (needsResume && !$('resumeConfirmed').checked);
-  $('start').disabled = !validPreview || busy || !state?.previewApproved || state?.state !== 'Ready' || !$('previewConfirmed').checked;
+  $('approve').disabled = !validPreview || busy || Boolean(state?.storageUncertain) || resumeBlocked || !$('previewConfirmed').checked || (needsResume && !$('resumeConfirmed').checked);
+  $('start').disabled = !validPreview || busy || Boolean(state?.storageUncertain) || !state?.previewApproved || state?.state !== 'Ready' || !$('previewConfirmed').checked;
   updateWorkflowControls({ busy, validPreview, canPick, completeCount: complete.length, selectedField });
   maybeScrollWorkflow();
 }
@@ -318,17 +323,21 @@ function updateWorkflowControls({ busy = pendingActions > 0 || state?.busy, vali
   const tabPending = !state?.readerTabConfirmed || $('readerTab').value !== state?.selectedReaderTab;
   const inspectImages = hasJob && images && (!state.browserOpen
     || !captureIntent && ['Review', 'Paused', 'NeedsAttention'].includes(state.state));
-  let enabled = connectedNow && !busy && !state?.endingBook && !state?.recoveryRequired;
+  let enabled = connectedNow && !busy && !state?.endingBook && !state?.recoveryRequired && !state?.storageUncertain;
   let reason = '';
   let action = !hasJob ? 'create' : activeStage === 'export' ? 'export'
     : activeStage === 'review' || inspectImages ? 'inspect'
     : !state.browserOpen ? 'openBrowser' : ['setup', 'browser'].includes(activeStage) ? 'captureStage'
     : tabPending ? 'selectReaderTab' : validPreview ? state.previewApproved && state.state === 'Ready' ? 'start' : 'approve' : 'preview';
   if (!connectedNow) reason = 'アプリへ接続し直してください。';
+  else if (state?.storageUncertain) reason = errors.storage_reopen_required;
   else if (state?.endingBook) reason = '現在の本を安全に終了しています。';
   else if (state?.recoveryRequired) reason = '安全停止の完了を確認できません。取得・保存せず「終了・最初から」を再試行してください。';
   else if (busy) reason = '処理が終わるまでお待ちください。中断可能な確認中は「キャンセル・前へ」を使えます。';
-  else if (state?.readerReleasePending && !['inspect', 'export'].includes(action)) reason = 'ブラウザ資源の終了が未完了です。点検・ZIP保存は可能ですが、新しい検査・取得は終了再試行まで待ってください。';
+  else if (state?.readerReleasePending && !['inspect', 'export'].includes(action)) {
+    enabled = false; reason = 'ブラウザ資源の終了が未確認です。確定原本があれば点検・ZIP保存できますが、新しい検査・取得はできません。';
+  }
+  else if (action === 'openBrowser' && state?.kindleSupported === false) { enabled = false; reason = errors.linux_kindle_unsupported; }
   else if (action === 'export' && alreadyExportedHere) {
     enabled = false; reason = 'この保存先へのZIP保存は完了しています。別名を指定するか「終了・最初から」で次の本へ進んでください。';
   }
@@ -365,7 +374,7 @@ function updateWorkflowControls({ busy = pendingActions > 0 || state?.busy, vali
     approve: '本・領域・次へ方向・位置を目視確認し、チェックを入れて「決定・次へ」で承認してください。取得はまだ始まりません。',
     start: '承認済みです。本人が次の「決定・次へ」で取り込み開始を明示します。',
     inspect: state?.reason === 'black_image' ? errors.black_image : state?.readerReleasePending
-      ? 'ブラウザ終了だけが未完了です。確定原本の点検後、「決定・次へ」でZIP保存できます。安全終了を再試行すると次冊へ進めます。'
+      ? 'ブラウザの終了を確認できません。確定原本の点検後、「決定・次へ」でZIP保存できます。次の本には進めません。'
       : activeStage === 'review' && state?.job?.manifest.state === 'review'
       ? '画像の順序・採用・クロップを点検後、「決定・次へ」でZIP保存へ進みます。'
       : state?.lastFailure ? failureSummary(state.lastFailure)
@@ -381,7 +390,7 @@ function updateWorkflowControls({ busy = pendingActions > 0 || state?.busy, vali
   back.title = backDisabled
     ? state?.recoveryRequired ? '安全な終了を再試行してください。' : busy ? 'この処理は安全に中断できません。完了を待ってください。' : '戻る作業がありません。'
     : '確認中は結果を破棄して戻り、取得中は安全停止して点検へ戻ります。';
-  finish.disabled = !connectedNow || !hasJob || Boolean(state?.endingBook);
+  finish.disabled = !connectedNow || !hasJob || Boolean(state?.endingBook) || Boolean(state?.storageUncertain);
   finish.title = !hasJob ? '現在は本の作業がありません。'
     : state?.endingBook ? '安全な停止・書込確定・資源解放を待っています。'
       : '画像・ZIP・設定・保存指定のprofileは保持します。一時profileだけは通常終了時に削除します。';
@@ -403,9 +412,16 @@ const headers = { Authorization: `Bearer ${token}` };
 const states = { Idle: '待機', AuthPending: '手動ログイン・1冊選択待ち', ResumeCheck: '中断復帰：目視照合待ち', Preview: 'プレビュー確認待ち', Ready: '承認済み・明示開始待ち', Capturing: '取得中', Paused: '一時停止', NeedsAttention: '安全停止・確認が必要', Review: '画像点検' };
 const errors = { end_candidate: '終端候補で停止。取得範囲を目視確認してください。', image_review_required: '白紙・重複候補を保持して停止。画像点検してください。', advance_uncertain: 'ページ送りが不明。自動再試行していません。', reader_configuration_required: '可視UIのCSS指定が必要です。', preview_confirmation_required: 'プレビューを確認し、チェックを入れてください。', resume_confirmation_required: '最後の確定画像と現在位置の目視照合が必要です。', explicit_start_required: 'プレビュー承認後に開始してください。', output_exists: '出力先に既存ファイルがあります。別名を指定してください。', operation_busy: '処理中です。一時停止・停止は使用できます。', job_busy: '別のプロセスがこの領域を使用中です。' };
 Object.assign(errors, {
+  linux_kindle_unsupported: 'Linuxでは実Kindleの起動・取得は未対応です。補助操作から自作試料を開いてください。',
+  storage_durability_uncertain: '保存操作は適用済みの可能性があり、永続性を確認できません。取得・保存を停止しています。アプリを再起動し、保存領域を点検してください。',
+  storage_reopen_required: '保存状態の確認が必要です。取得・保存は停止しています。アプリを再起動し、保存領域を点検してください。再起動だけで整合性が保証されるわけではありません。',
+  output_path_changed: '出力先の経路が変化したため処理を停止しました。出力の成功と扱わず、自動で再出力・削除しません。再起動後に出力先と保存領域を点検してください。',
+  output_published_durability_uncertain: '出力が公開済みの可能性がありますが、永続性は未確認です。自動で再出力・削除しません。再起動後に出力先と保存領域を点検してください。',
+  output_published_manifest_update_failed: '出力済みですが保存履歴の記録に失敗しました。自動で再出力・削除しません。再起動後に出力先と保存領域を点検してください。',
+  output_published_manifest_durability_uncertain: '出力済みですが保存履歴の永続性は未確認です。自動で再出力・削除しません。再起動後に出力先と保存領域を点検してください。',
   resume_position_required: '再開位置を確認できません。最後の確定画像の直後へ手動調整し、再プレビューしてください。',
-  save_dialog_failed: '保存先ダイアログを開くか選択結果を受け取る処理に失敗しました。元の保存先は変更していません。',
-  save_dialog_unavailable: 'この環境ではWindows保存先ダイアログを利用できません。保存先を手入力してください。',
+  save_dialog_failed: '保存先ダイアログを開くか選択結果を受け取る処理に失敗しました。元の保存先は変更していません。手入力も利用できます。',
+  save_dialog_unavailable: 'この環境では保存先ダイアログを利用できません。保存先を手入力してください。',
   book_identity_changed: '保存済み画像と現在の本の識別表示が異なります。この作業に別冊を追加せず、次の本は新しい作業で開いてください。',
   capture_in_progress: '取り込み・未確定画像の処理中です。「一時停止」してから保存してください。',
   empty_selection: '採用画像がありません。「画像を点検」で保存する画像を採用してください。',
@@ -436,8 +452,8 @@ Object.assign(errors, {
   safe_stop_incomplete: '前の処理が資源を解放したか確認できません。新しい取り込み・保存はできません。安全な終了を再試行してください。',
   cancel_timeout: '取消処理の完了を確認できませんでした。状態を保全して停止しています。',
   safe_stop_failed: '安全な終了に失敗しました。画像と設定は保持しています。',
-  reader_close_failed: 'ブラウザを閉じられませんでした。書込停止は確認済みです。画像の点検・ZIPは続けられます。安全終了を再試行してください。',
-  reader_release_incomplete: 'ブラウザ資源の解放が未完了です。画像の点検・ZIPまたは終了再試行を行ってください。',
+  reader_close_failed: 'ブラウザの終了を確認できません。書込停止済みで確定原本があれば点検・ZIP保存できます。次の本には進めません。',
+  reader_release_incomplete: 'ブラウザ資源の解放を確認できません。確定原本があれば点検・ZIP保存できます。新しい作業には進めません。',
 });
 const failureStages = {
   capture: '画像取得', capture_begin: '保存準備', capture_upload: '画像転送',
@@ -455,6 +471,7 @@ function errorDescription(code, acquisition = false) {
 }
 function failureSummary(failure) {
   if (!failure) return '';
+  if (state?.storageUncertain) return errorDescription(state.storageUncertain.code, true);
   const sent = { not_sent: '送信なし', sent: '送信済み', unknown: '送信結果不明（再送していません）' }[failure.advanceDispatch] ?? '送信状態不明';
   const field = failure.detail?.field ? ` / 対象：${mappingLabels[failure.detail.field] ?? '表示'}` : '';
   const cause = failure.detail?.cause ? ` / 理由：${failure.detail.cause}` : '';
@@ -1027,22 +1044,29 @@ async function draw(s, generation) {
   $('jobPath').textContent = s.job ? `中断復帰用フォルダ：${s.job.job_path}` : '';
   $('issues').textContent = s.job ? `不整合：${s.job.issues.join(' / ') || 'なし'}\n孤立・未確定ファイル（無断削除しません）：${s.job.orphan_files.join(' / ') || 'なし'}` : '';
   $('pause').disabled = s.state !== 'Capturing';
-  $('stop').disabled = !s.job;
+  $('stop').disabled = !s.job || Boolean(s.storageUncertain);
   $('create').disabled = Boolean(s.job);
   $('recover').disabled = Boolean(s.job);
-  $('openKindle').disabled = !s.job || s.browserOpen;
+  $('openKindle').disabled = !s.job || s.browserOpen || s.readerReleasePending || s.kindleSupported === false || Boolean(s.storageUncertain);
+  $('kindleUnsupported').hidden = s.kindleSupported !== false;
+  $('storageUncertain').hidden = !s.storageUncertain;
+  $('storageUncertain').textContent = s.storageUncertain
+    ? `${errorDescription(s.storageUncertain.code)}${s.storageUncertain.destination ? `\n保存先：${s.storageUncertain.destination}` : ''}\n${errors.storage_reopen_required}` : '';
   const regionKey = JSON.stringify(s.kindleRegions);
   if ($('kindleRegion').dataset.key !== regionKey) {
     $('kindleRegion').replaceChildren(...(s.kindleRegions ?? []).map(region => new Option(region.label, region.id)));
     $('kindleRegion').dataset.key = regionKey;
   }
   $('kindleRegion').value = s.kindleRegion;
-  $('kindleRegion').disabled = s.browserOpen || s.busy || pendingActions > 0;
+  $('kindleRegion').disabled = s.browserOpen || s.readerReleasePending || s.busy || pendingActions > 0;
   $('kindleStartUrl').textContent = s.kindleRegions?.find(region => region.id === s.kindleRegion)?.startUrl ?? '';
-  $('openSample').disabled = !s.job || s.browserOpen;
+  $('openSample').disabled = !s.job || s.browserOpen || s.readerReleasePending || Boolean(s.storageUncertain);
+  $('ownedSampleNotice').hidden = !s.ownedSampleHeaded;
+  $('openOwnedSample').hidden = !s.ownedSampleHeaded;
+  $('openOwnedSample').disabled = !s.job || s.browserOpen || s.readerReleasePending || Boolean(s.storageUncertain);
   $('closeBrowser').disabled = !s.browserOpen;
   mappingStatus();
-  const sessionKey = JSON.stringify(s.sessions);
+  const sessionKey = JSON.stringify([s.sessions, s.browserOpen, s.readerReleasePending]);
   if ($('sessions').dataset.key !== sessionKey) {
     $('sessions').dataset.key = sessionKey;
     $('sessions').replaceChildren();
@@ -1054,6 +1078,7 @@ async function draw(s, generation) {
       li.textContent = `${session.saved ? '保存済み' : '一時・残存'}：${session.id} `;
       const button = document.createElement('button');
       button.textContent = 'この専用セッションを削除';
+      button.disabled = Boolean(s.browserOpen || s.readerReleasePending);
       button.onclick = async () => {
         if (!confirm(translate('取得を停止して専用ブラウザを閉じた後、この専用セッションだけを削除します。よろしいですか？'))) return;
         await run(() => command('deleteSession', { id: session.id, confirmed: true }), false, '専用セッションを削除');
@@ -1115,6 +1140,7 @@ click('openSample', () => {
   return command('openBrowser', { mode: 'sample', keep: Boolean(session), session: session || undefined,
     sampleFixture: $('sampleFixture').value || undefined });
 });
+click('openOwnedSample', () => command('openBrowser', { mode: 'sample-headed' }));
 click('closeBrowser', () => command('closeBrowser'));
 $('readerTab').addEventListener('change', () => { supersedeInteraction(); mappingStatus(); });
 function applyCaptureSettings(settings) {

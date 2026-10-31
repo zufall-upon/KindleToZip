@@ -247,11 +247,15 @@ fn open_source(path: &Path) -> Result<File, &'static str> {
     Ok(file)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn open_source(path: &Path) -> Result<File, &'static str> {
-    let metadata = std::fs::symlink_metadata(path).map_err(|_| "archive_source_invalid")?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() { return Err("archive_source_invalid"); }
-    File::open(path).map_err(|_| "archive_source_invalid")
+    crate::store::open_existing_regular(path).map_err(|_| "archive_source_invalid")
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn open_source(path: &Path) -> Result<File, &'static str> {
+    let _ = path;
+    Err("storage_unsupported")
 }
 
 fn digest_file(file: &mut File) -> Result<String, &'static str> {
@@ -296,13 +300,23 @@ mod tests {
         let base = std::fs::canonicalize(base).unwrap();
         let directory = (0..32).find_map(|_| {
             let candidate = base.join(format!("{}-{}", std::process::id(), TEST_COUNTER.fetch_add(1, Ordering::Relaxed)));
-            match std::fs::create_dir(&candidate) {
+            #[cfg(target_os = "linux")]
+            let created = crate::linux_fs::create_directory(&candidate);
+            #[cfg(not(target_os = "linux"))]
+            let created = std::fs::create_dir(&candidate);
+            match created {
                 Ok(()) => Some(candidate),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
                 Err(error) => panic!("failed to create archive test directory: {error}"),
             }
         }).expect("could not allocate unique archive test directory");
         let source = directory.join("source.png");
+        #[cfg(target_os = "linux")]
+        {
+            let mut file = crate::linux_fs::open_regular(&source, true, true, true).unwrap();
+            file.write_all(&bytes).unwrap();
+        }
+        #[cfg(not(target_os = "linux"))]
         std::fs::write(&source, &bytes).unwrap();
         let input = ArchiveInput { name: "000001.png".to_string(), path: &source, bytes: bytes.len() as u64, sha256: &digest, width: 2, height: 2, allow_black: false };
         let temp = directory.join("output.zip");

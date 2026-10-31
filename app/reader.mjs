@@ -4,6 +4,7 @@ import { AppError } from './store-client.mjs';
 import { visibleCaptureGeometry } from './visible-geometry.mjs';
 import { translateCopy } from './ui/messages.mjs';
 import { createStoreAdapter } from './stores/index.mjs';
+import { ownedSampleOptions, bindOwnedSample } from './owned-sample.mjs';
 
 process.env.PLAYWRIGHT_BROWSERS_PATH ||= fileURLToPath(new URL('../artifacts/browsers/', import.meta.url));
 const { chromium } = await import('playwright');
@@ -191,23 +192,45 @@ export async function configureReaderNetwork(context, sampleUrl) {
 // The live adapter uses only visible official UI chosen by the user. Unknown
 // layouts are rejected, not replaced by hidden APIs or image extraction.
 export class Reader {
-  static async open({ profile, sampleUrl, regionId = 'jp', preconfiguredSample = true, headless = false, onChange, readGuard }) {
+  static async open({ profile, sampleUrl, ownedFixture, regionId = 'jp', preconfiguredSample = true, headless = false, onChange, readGuard, handleSignals = true, lifecycle = { profile, state: 'not_started' } }) {
+    const ownedOptions = ownedFixture ? ownedSampleOptions(ownedFixture) : null;
+    if (ownedFixture) sampleUrl = ownedFixture.url;
     const adapter = createStoreAdapter({ regionId, sampleUrl });
-    const context = await chromium.launchPersistentContext(profile, readerContextOptions({ sampleUrl, headless }));
+    const options = { ...readerContextOptions({ sampleUrl, headless }),
+      ...(ownedOptions ?? {}),
+      ...(handleSignals ? {} : { handleSIGINT: false, handleSIGTERM: false }) };
+    // The record belongs to this particular profile/launch, not to an error
+    // message or a later Reader. Rejection after launch begins proves nothing
+    // about resources Playwright may have created before returning a context.
+    lifecycle.state = 'starting';
+    let context;
+    try { context = await chromium.launchPersistentContext(profile, options); }
+    catch (error) { lifecycle.state = 'close_unconfirmed'; lifecycle.failure = error; throw error; }
+    lifecycle.state = 'active';
     try {
       await configureReaderNetwork(context, sampleUrl);
       const page = context.pages()[0] ?? await context.newPage();
       page.setDefaultTimeout(1800);
-      const reader = new Reader(context, page, sampleUrl, onChange, preconfiguredSample, adapter);
+      const reader = new Reader(context, page, sampleUrl, onChange, preconfiguredSample, adapter, lifecycle);
       reader.readGuard = readGuard;
       await page.goto(adapter.startUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      if (ownedFixture) reader.ownedSampleGuard = await bindOwnedSample(ownedFixture, reader);
       return reader;
-    } catch (error) { await context.close(); throw error; }
+    } catch (error) {
+      try { await context.close(); lifecycle.state = 'closed_confirmed'; }
+      catch (closeError) {
+        lifecycle.state = 'close_unconfirmed';
+        lifecycle.failure = new AggregateError([error, closeError], 'reader_initialization_and_close_failed', { cause: error });
+        throw lifecycle.failure;
+      }
+      throw error;
+    }
   }
 
-  constructor(context, page, sampleUrl, onChange, preconfiguredSample = true, adapter = createStoreAdapter({ sampleUrl })) {
+  constructor(context, page, sampleUrl, onChange, preconfiguredSample = true, adapter = createStoreAdapter({ sampleUrl }), lifecycle = { state: 'active' }) {
     Object.assign(this, { context, page, sampleUrl, onChange });
     Object.defineProperty(this, 'adapter', { value: adapter, enumerable: true });
+    Object.defineProperty(this, 'lifecycle', { value: lifecycle });
     this.id = randomUUID();
     this.mappingRevision = 0;
     this.tabRevision = 0;
@@ -692,6 +715,8 @@ export class Reader {
 
   async configure(config) {
     await this.adoptVisibleReaderPage();
+    if (this.ownedSampleGuard && (!config || Object.entries(sampleConfig).some(([key, value]) => config[key] !== value)
+      || Object.values(config.frames ?? {}).some(Boolean))) throw new AppError('target_changed');
     if (!config || typeof config !== 'object') throw new AppError('reader_configuration_required');
     for (const key of ['frame', 'reader', 'next', 'identity', 'position']) {
       if (typeof config[key] !== 'string' || config[key].length > 400 || (key !== 'frame' && !config[key].trim())) throw new AppError('reader_configuration_required');
@@ -727,6 +752,7 @@ export class Reader {
 
   async read(recovery = null) {
     if (this.readGuard) await this.readGuard();
+    const paint = this.ownedSampleGuard ? await this.ownedSampleGuard.observe() : undefined;
     const pages = this.context.pages();
     if (!this.config || this.page.isClosed() || pages.length !== this.expectedPages.size || pages.some(page => !this.expectedPages.has(page))) throw new AppError('target_changed');
     await this.assertReaderDocument(this.page);
@@ -857,11 +883,11 @@ export class Reader {
     await this.adapter.assertState(this.page);
     const identified = this.adapter.identify(url, identityText, positionText);
     const target = digest(JSON.stringify([url.href, this.config, identityText, clip, display, geometry.viewports, this.captureScale, this.generation]));
-    return { target, ...identified, clip, deviceScaleFactor: this.captureScale,
+    return { target, ...identified, clip, paint, deviceScaleFactor: this.captureScale,
       nextDisabled: !await next.isEnabled() || await next.getAttribute('aria-disabled') === 'true', next };
   }
 
-  same(a, b) { return a.target === b.target && a.position === b.position && a.nextDisabled === b.nextDisabled; }
+  same(a, b) { return a.target === b.target && a.position === b.position && a.nextDisabled === b.nextDisabled && a.paint === b.paint; }
 
   async stable(recovery = null) {
     const a = await this.read(recovery);
@@ -937,14 +963,14 @@ export class Reader {
     const expectedWidth = before.clip.width * before.deviceScaleFactor, expectedHeight = before.clip.height * before.deviceScaleFactor;
     if (Math.abs(dimensions[0] - expectedWidth) > 1.1 || Math.abs(dimensions[1] - expectedHeight) > 1.1) throw new AppError('capture_dimensions_mismatch');
     if (!this.same(before, await this.read())) throw new AppError('target_changed');
-    this.bound = { target: before.target, position: before.position, dimensions, book: before.book };
+    this.bound = { target: before.target, position: before.position, dimensions, book: before.book, paint: before.paint };
     return { png, book: before.book, position: before.position, dimensions, cssDimensions: [before.clip.width, before.clip.height], deviceScaleFactor: before.deviceScaleFactor,
       recovery: { initialHiddenField: recovery?.initialHiddenField ?? null, observation: recovery?.revealObservation ?? 'not_needed' } };
   }
 
   async requireBound() {
     const s = await this.stable();
-    if (!this.bound || s.target !== this.bound.target || s.position !== this.bound.position) throw new AppError('target_changed');
+    if (!this.bound || s.target !== this.bound.target || s.position !== this.bound.position || s.paint !== this.bound.paint) throw new AppError('target_changed');
     return s;
   }
 
@@ -1037,15 +1063,30 @@ export class Reader {
     if (!this.same(after, stable)) throw new AppError('display_unstable');
     const dimensions = this.bound?.dimensions;
     if (!dimensions) throw new AppError('capture_dimensions_mismatch');
-    this.bound = { target: after.target, position: after.position, dimensions, book: before.book };
+    this.bound = { target: after.target, position: after.position, dimensions, book: before.book, paint: stable.paint };
     await onDispatchState({ stage: 'advance_confirmed', status: 'sent' });
   }
 
-  async close() {
-    this.closed = true;
-    await this.scaleSession?.detach().catch(() => {});
-    await this.clearReaderCandidate();
-    await this.clearPickedMarkers();
-    await this.context.close();
+  close() {
+    return this.closePromise ??= (async () => {
+      if (this.lifecycle.state === 'close_unconfirmed') throw this.lifecycle.failure ?? new Error('reader_close_unconfirmed');
+      this.closed = true;
+      try {
+        await this.ownedSampleGuard?.dispose();
+        await this.scaleSession?.detach().catch(() => {});
+        await this.clearReaderCandidate();
+        await this.clearPickedMarkers();
+        await this.context.close();
+        // Another caller may already have observed this same attempt as
+        // unconfirmed while the close was in flight. A late resolve must not
+        // erase that earlier failure from the owning Application.
+        if (this.lifecycle.state === 'close_unconfirmed') throw this.lifecycle.failure ?? new Error('reader_close_unconfirmed');
+        this.lifecycle.state = 'closed_confirmed';
+      } catch (error) {
+        this.lifecycle.state = 'close_unconfirmed';
+        this.lifecycle.failure ??= error;
+        throw error;
+      }
+    })();
   }
 }

@@ -12,7 +12,7 @@
   "type": "module",
   "engines": { "node": ">=22" },
   "scripts": {
-    "test": "node --test --test-concurrency=1 tests/sample-safety.test.mjs tests/manual-launch.test.mjs tests/mvp-workflow.test.mjs tests/portable-repair-flow.test.mjs",
+    "test": "node --test --test-concurrency=1 tests/sample-safety.test.mjs tests/manual-launch.test.mjs tests/mvp-workflow.test.mjs tests/portable-repair-flow.test.mjs tests/owned-headed-sample-flow.test.mjs",
     "test:recovery": "node --test --test-concurrency=1 --test-name-pattern=\"Kindleプリセットの可視証拠|動的Kindle試料の公開復帰|案内追従\" tests/portable-repair-flow.test.mjs",
     "test:resources": "node --test --test-concurrency=1 --test-name-pattern=\"点検画像待機分離|ブラウザ終了だけの失敗|3ボタン公開導線\" tests/portable-repair-flow.test.mjs",
     "test:ui": "node --test --test-concurrency=1 tests/mvp-workflow.test.mjs tests/portable-repair-flow.test.mjs",

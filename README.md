@@ -65,6 +65,10 @@ v0.1.6 also adds a **Kindle region** selector for **Japan, United States and Uni
 
 **From source:** you need **Windows x64, Git, Node.js 22+, and PowerShell 7**. The [setup guide](docs/getting-started.md) installs an isolated Rust toolchain and browser, then launches the app with `npm start`. Start with the self-authored sample, without an Amazon login or a real book.
 
+**Ubuntu experimental source:** the `linux-port` work supports **self-authored fixtures only**, not real Kindle, normal Wayland reading, or a Linux download. With the existing isolated prerequisites, see [Ubuntu source instructions](docs/getting-started.md#ubuntu-source). The control window is headed and the fixture reader is headless by default. An explicit `npm start -- --sample-headed` enables only the app-created standard fixture in a dedicated Wayland window; it does not authorize other sites or profiles. Target-local checks do not guarantee OS-wide visibility or non-interference with other apps or physical input. An installed `/usr/bin/zenity` is an optional destination picker; manual entry remains available, and choosing a path never starts saving or capture. Desktop/portal behavior still requires environment-specific validation; this is not a Linux release.
+
+On Ubuntu 26.04, anonymous ZIP/CBZ destination selection and cancellation were manually exercised with the installed Zenity; the user reported normal display. No native-dialog image was provided or independently inspected. These checks confirmed that selection alone creates no archive; ZIP/CBZ output/content checks are separate integration evidence, not native-picker export or real-Kindle acceptance.
+
 ## Before you use it
 
 - **Quality:** v0.1.6 passed every mandatory exact-source CI and tagged-release gate, including public source UI, deployment and packaged public selection/export regressions. Earlier failed runs remain historical. The user's local-improvement confirmation and earlier v0.1.2 clean-Windows/whole-book report are separate from this hosted EXE's fixture checks; see [validation history and release evidence](docs/validation.md).

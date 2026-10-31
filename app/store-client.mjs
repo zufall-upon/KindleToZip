@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { requireControllerPath } from './controller-path.mjs';
 
 export class AppError extends Error {
   constructor(code, detail) { super(code); this.code = code; this.detail = detail; }
@@ -8,7 +8,7 @@ export class AppError extends Error {
 // Only this fixed, locally built Rust program may commit job data.
 export class StoreClient {
   constructor() {
-    const controller = process.env.KTZ_CONTROLLER_PATH || fileURLToPath(new URL('../artifacts/rust-target/debug/ktz-g02-controller.exe', import.meta.url));
+    const controller = requireControllerPath();
     this.child = spawn(controller, [], {
       windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
     });
@@ -16,6 +16,7 @@ export class StoreClient {
     this.buffer = '';
     this.queue = Promise.resolve();
     this.listeners = new Set();
+    this.errorListeners = new Set();
     this.exited = new Promise(resolve => this.child.once('close', resolve));
     this.child.once('error', () => this.fail());
     this.child.once('exit', () => { if (!this.closed) this.fail(); });
@@ -42,7 +43,11 @@ export class StoreClient {
         this.pending = null;
         clearTimeout(pending.timer);
         if (response.ok) pending.resolve(response.payload);
-        else pending.reject(new AppError(/^[a-z0-9_]+$/.test(response.code) ? response.code : 'store_rejected'));
+        else {
+          const error = new AppError(/^[a-z0-9_]+$/.test(response.code) ? response.code : 'store_rejected');
+          for (const listener of this.errorListeners) listener(error);
+          pending.reject(error);
+        }
       }
     });
   }

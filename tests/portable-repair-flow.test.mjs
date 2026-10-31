@@ -13,6 +13,7 @@ import { Application } from '../app/application.mjs';
 import { Reader } from '../app/reader.mjs';
 import { createStoreAdapter } from '../app/stores/index.mjs';
 import { openControlWindow as openWindow } from '../app/control-window.mjs';
+import { chooseSaveDestination, linuxSaveDestination, saveDialogAvailable } from '../app/save-dialog.mjs';
 import { withPublicDisclosures } from '../poc/browser/public-ui-controls.mjs';
 import { checkLanguageFlow } from './support/language-flow.mjs';
 import { checkCaptureResume } from './support/capture-resume-flow.mjs';
@@ -228,13 +229,71 @@ test('3ボタン公開導線・処理インジケーター: 開始直後のpaint
   await ui.screenshot({ path: path.join(evidence, 'anonymous-next-job.png') });
 });
 
-test('保存先ドライバ: 従来型Windowsダイアログのファイル名欄で取消と非保存の選択ができる', async t => {
+// 明示指定時だけ実desktop試験を定義する。通常CIにGI/Zenity依存やskipを増やさない。
+if (process.platform === 'linux' && process.env.KTZ_NATIVE_DIALOG_TEST === '1') test('Linux実Zenity: 当方chooserの実選択・取消と非保存・明示出力', { timeout: 100_000 }, async () => {
+  const { checkNativeSaveDialog } = await import('./support/linux-save-dialog.mjs');
+  await checkNativeSaveDialog({ startApplication, openControlWindow,
+    capture: captureRepairSaveContext, save: saveRepairContextArchive, entries: storedPngEntries });
+});
+
+function contractDialog({ output = '', code = 0, diagnostic = '', hold = false, missing = false, ignoreTerm = false } = {}) {
+  const children = [];
+  const dialog = input => linuxSaveDestination(input, (executable, args, options) => {
+    assert.equal(executable, '/usr/bin/zenity');
+    assert.equal(options.shell, undefined);
+    assert.match(args[2], new RegExp(`^--title=KindleToZip ${input.format.toUpperCase()} [a-f0-9]{8}$`));
+    assert.deepEqual(args, ['--file-selection', '--save', args[2], `--filename=${input.destination}`,
+      `--file-filter=${input.format.toUpperCase()} | *.${input.format}`]);
+    const script = `${ignoreTerm ? "process.on('SIGTERM',()=>{});" : ''}
+      process.stdout.write(${JSON.stringify(output)}); process.stderr.write(${JSON.stringify(diagnostic)});
+      ${hold ? "process.stdout.write('ready\\n'); setInterval(()=>{},1000);" : `process.exitCode=${code};`}`;
+    const child = missing ? spawn('/nonexistent-ktz-contract/zenity', [], options) : spawn(process.execPath, ['-e', script], options);
+    children.push(child); return child;
+  });
+  return Object.assign(dialog, { children });
+}
+
+if (process.platform === 'linux') test('Linux保存先契約: 任意機能・元文字列・取消・異常・Abortと所有child回収', async t => {
+  assert.equal(saveDialogAvailable({ platform: 'linux', access: () => {} }), true);
+  assert.equal(saveDialogAvailable({ platform: 'linux', access: () => { throw new Error('missing'); } }), false);
+  assert.equal(saveDialogAvailable({ platform: 'darwin' }), false);
+  const destination = '/tmp/opencode/ anonymous-日本語-$(not-a-command).zip ';
+  for (const format of ['zip', 'cbz']) assert.equal(await contractDialog({ output: destination + '\n' })({ destination, format }), destination);
+  assert.equal(await contractDialog({ code: 1 })({ destination, format: 'zip' }), null);
+  for (const scenario of [
+    { code: 1, diagnostic: 'cannot open display' }, { code: 2 }, { code: 0 },
+    { output: 'relative.zip\n' }, { output: '/tmp/one\n/tmp/two\n' }, { output: '/tmp/bad\0.zip\n' },
+    { output: '/tmp/bad\r.zip\n' }, { output: destination }, { output: '/tmp/' + 'a'.repeat(33000) },
+  ]) await assert.rejects(contractDialog(scenario)({ destination, format: 'zip' }), { code: 'save_dialog_failed' });
+  await assert.rejects(contractDialog({ missing: true })({ destination, format: 'zip' }), { code: 'save_dialog_unavailable' });
+  for (const ignoreTerm of [false, true]) await t.test(`abort-${ignoreTerm}`, async () => {
+    const controller = new AbortController(), dialog = contractDialog({ hold: true, ignoreTerm });
+    const pending = dialog({ destination, format: 'zip', signal: controller.signal });
+    // Wait until the owned child has installed its signal handler, not an arbitrary delay.
+    // A ready marker stays inside this disposable child's stdout (not the dialog response).
+    await new Promise(resolve => dialog.children[0].stdout.once('data', resolve));
+    controller.abort(); assert.equal(await pending, null);
+    assert.ok(dialog.children.every(child => child.exitCode !== null || child.signalCode !== null));
+  });
+  const preaborted = new AbortController(); preaborted.abort();
+  const dialog = contractDialog({ hold: true });
+  assert.equal(await dialog({ destination, format: 'zip', signal: preaborted.signal }), null);
+  assert.equal(dialog.children.length, 0);
+});
+
+test(process.platform === 'linux' ? '保存先ドライバ: Linuxの任意実行可否と選択非保存の契約' : '保存先ドライバ: 従来型Windowsダイアログのファイル名欄で取消と非保存の選択ができる', async t => {
   const evidence = path.resolve('artifacts/indicator-review'); await mkdir(evidence, { recursive: true });
   const directory = await mkdtemp(path.join(evidence, 'legacy-dialog-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const source = await readFile('app/save-dialog.ps1', 'utf8');
   const declaration = '$dialog = [System.Windows.Forms.SaveFileDialog]::new()';
   assert.equal(source.split(declaration).length, 2);
+  if (process.platform === 'linux') {
+    const destination = path.join(directory, 'manual.zip');
+    assert.equal(await contractDialog({ output: destination + '\n' })({ destination, format: 'zip' }), destination);
+    await assert.rejects(stat(destination), { code: 'ENOENT' }, '選択だけでは保存しない');
+    return;
+  }
   // Exercise the platform's older common-dialog control IDs without changing
   // the application's default dialog or replacing any native interaction.
   const script = path.join(directory, 'legacy-dialog.ps1');
@@ -267,7 +326,7 @@ test('保存先ドライバ: 従来型Windowsダイアログのファイル名�
   });
 });
 
-test('3ボタン公開導線・保存先ダイアログ: 実Windows表示・書名初期値・選択・取消・ZIP・再開後の所有名', async t => {
+test(process.platform === 'linux' ? '3ボタン公開導線・Linux保存先: 選択・取消・失敗時手入力・ZIPCBZ・非上書き' : '3ボタン公開導線・保存先ダイアログ: 実Windows表示・書名初期値・選択・取消・ZIP・再開後の所有名', async t => {
   const evidence = path.resolve('artifacts/indicator-review'); await mkdir(evidence, { recursive: true });
   const directory = await mkdtemp(path.join(evidence, 'native-anonymous-'));
   const r = await startApplication({ dataDir: path.join(directory, 'data'), sampleFixture: 'layout' });
@@ -278,6 +337,56 @@ test('3ボタン公開導線・保存先ダイアログ: 実Windows表示・書�
   });
   await ui.locator('[data-stage-target="export"]').first().click();
   const initial = await ui.locator('#destination').inputValue();
+  if (process.platform === 'linux') {
+    assert.equal((await r.app.snapshot()).saveDialogAvailable, saveDialogAvailable());
+    r.app.saveDialog = contractDialog({ code: 1 });
+    const choose = async () => {
+      await ui.waitForFunction(() => !document.querySelector('#chooseDestination').disabled);
+      const response = ui.waitForResponse(response => response.url().endsWith('/api/command') && response.request().postDataJSON()?.action === 'chooseDestination');
+      await ui.locator('#chooseDestination').click();
+      const value = await (await response).json();
+      await ui.waitForFunction(() => document.querySelector('#operationStatus').dataset.status !== 'pending');
+      return value;
+    };
+    assert.equal((await choose()).chosenDestination, null);
+    assert.equal(await ui.locator('#destination').inputValue(), initial);
+    for (const failure of [{ missing: true }, { code: 1, diagnostic: 'cannot open display' }, { code: 2 }]) {
+      r.app.saveDialog = contractDialog(failure);
+      assert.match((await choose()).code, /^save_dialog_(unavailable|failed)$/);
+      assert.equal(await ui.locator('#destination').inputValue(), initial);
+      assert.match(await ui.locator('#message').textContent(), /手入力/);
+    }
+    const chosen = path.join(directory, '本人が手入力した匿名名.zip');
+    await assert.rejects(stat(chosen), { code: 'ENOENT' });
+    await ui.locator('#destination').fill(chosen); await saveRepairContextArchive(ui, r.app, 1);
+    const archive = await readFile(chosen);
+    assert.equal(storedPngEntries(archive).length, 1);
+    await assert.rejects(r.app.command('export', { destination: chosen, format: 'zip' }), { code: 'output_exists' });
+    assert.deepEqual(await readFile(chosen), archive);
+    const before = await stat(chosen);
+    r.app.saveDialog = contractDialog({ output: chosen + '\n' });
+    assert.equal((await choose()).chosenDestination, chosen, '既存出力の選択自体は非破壊');
+    await assert.rejects(r.app.command('export', { destination: chosen, format: 'zip' }), { code: 'output_exists' });
+    assert.equal((await stat(chosen)).ino, before.ino);
+    assert.deepEqual(await readFile(chosen), archive);
+    for (const [index, format] of ['zip', 'cbz'].entries()) {
+      await ui.locator('#format').selectOption(format);
+      const selected = path.join(directory, `本人が選んだ匿名名.${format}`);
+      r.app.saveDialog = contractDialog({ output: selected + '\n' });
+      assert.equal((await choose()).chosenDestination, selected);
+      await ui.waitForFunction(value => document.querySelector('#destination').value === value, selected);
+      assert.equal((await r.app.snapshot()).job.manifest.exports.length, index + 1, '選択だけでは保存しない');
+      await assert.rejects(stat(selected), { code: 'ENOENT' });
+      await saveRepairContextArchive(ui, r.app, index + 2);
+      assert.equal(storedPngEntries(await readFile(selected)).length, 1);
+    }
+    await closeRepairSaveContext(ui, r.app);
+    await ui.locator('#recoverPath').fill(captured.job.job_path); await ui.locator('#recover').click();
+    const recovered = await wait(r.app, s => s.job && !s.busy);
+    assert.equal(recovered.browserOpen, false);
+    assert.equal(path.basename(recovered.suggestedDestination), '匿名保存試料 第１巻.zip');
+    return;
+  }
   const driver = async (action, destination, screenshot) => {
     const { stdout } = await promisify(execFile)('pwsh', ['-NoProfile', '-File', 'scripts/drive-owned-save-dialog.ps1', '-OwnerPid', String(process.pid), '-Action', action,
       ...(destination ? ['-Destination', destination] : []), ...(screenshot ? ['-Screenshot', path.join(evidence, screenshot)] : [])], { timeout: 45000, encoding: 'utf8' });
@@ -679,7 +788,16 @@ test('Kindle初回hiddenのページ内復帰候補: 公開試料の実観測復
     const nodes = await page.evaluateHandle(() => [document.querySelector('#readerChromeTitle'), document.querySelector('#position'), document.querySelector('nav')]);
     for (const selector of ['#readerChromeTitle', '#position', 'nav']) assert.equal(await page.locator(selector).isVisible(), false);
     page.mouse.move = () => { throw new Error('initial recovery must not use the browser mouse API'); };
-    await ui.locator('#quickPreview').click(); await ui.locator('#previewImage').waitFor({ state: 'visible' });
+    const completedPreview = async () => {
+      const previous = (await r.app.snapshot()).operationRevision;
+      await ui.locator('#quickPreview').click();
+      await wait(r.app, snapshot => snapshot.operationRevision > previous && snapshot.previewReady && !snapshot.busy);
+      // A previously visible image is not proof that this asynchronous preview
+      // has finished rendering and retained the user's confirmation checkbox.
+      await ui.waitForFunction(() => !document.querySelector('#previewImage').hidden
+        && !document.querySelector('#quickPreview').disabled && document.querySelector('#operationStatus').dataset.status === 'success');
+    };
+    await completedPreview();
     const pixels = PNG.sync.read(r.app.previewImage);
     assert.ok(pixels.width > 0 && pixels.height > 0);
     assert.equal(await page.evaluate(() => window.chromeRecoveryCount), 1);
@@ -694,9 +812,7 @@ test('Kindle初回hiddenのページ内復帰候補: 公開試料の実観測復
       // No invented Kindle auto-hide delay: the fixture's explicit control
       // supplies this independent transition; the real idle delay is unmeasured.
       await page.locator('#hideChrome').click();
-      await ui.locator('#quickPreview').click();
-      await ui.waitForFunction(() => document.querySelector('#operationStatus').dataset.status === 'success');
-      await ui.locator('#previewImage').waitFor({ state: 'visible' });
+      await completedPreview();
       const repeated = await r.app.snapshot();
       assert.equal(repeated.previewApproved, false);
       assert.equal(repeated.job.manifest.images.length, 0);
@@ -708,7 +824,7 @@ test('Kindle初回hiddenのページ内復帰候補: 公開試料の実観測復
       assert.equal(await page.evaluate(() => window.chromeRecoveryCount), 2, 'approval cannot inherit the explicit-preview DOM recovery');
       assert.equal((await r.app.snapshot()).previewApproved, false);
       assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
-      await ui.locator('#quickPreview').click(); await ui.locator('#previewImage').waitFor({ state: 'visible' });
+      await completedPreview();
       await ui.locator('#previewConfirmed').check(); await ui.locator('#approve').click();
       await wait(r.app, snapshot => snapshot.previewApproved && !snapshot.busy);
       await page.locator('#hideChrome').click();
@@ -1351,16 +1467,25 @@ test('点検画像待機分離: 遅い原本サムネイル中も公開ZIP保存
   assert.equal((await r.app.snapshot()).job.manifest.images.length, 1);
 });
 
-test('ブラウザ終了だけの失敗: 原本点検/ZIPを続け、終了再入口で次へ進める', async t => {
+test('ブラウザ終了だけの失敗: 原本点検/ZIPを続け、再終了で終了不明を消さない', async t => {
   await mkdir('artifacts/mvp-tests', { recursive: true });
   const directory = await mkdtemp(path.resolve('artifacts/mvp-tests/reader-close-recovery-'));
   const r = await startApplication({ dataDir: path.join(directory, 'data'), sampleFixture: 'layout' });
   const control = await openControlWindow(r.url, { headless: true });
-  t.after(async () => { await control.close(); await r.close(); await rm(directory, { recursive: true, force: true }); });
+  let reader;
+  t.after(async () => {
+    await control.close();
+    // This injection throws before the real close is attempted. Only the test
+    // owns this real context and explicitly confirms its close for teardown;
+    // that separate action must not rewrite the application's failure result.
+    await reader?.context.close();
+    await assert.rejects(r.close(), /reader_close_failed/);
+    await rm(directory, { recursive: true, force: true });
+  });
   const ui = control.page;
   const captured = await captureRepairSaveContext(ui, r.app);
   const original = await r.app.image(1, true);
-  const reader = r.app.reader;
+  reader = r.app.reader;
   const close = reader.close.bind(reader);
   let failOnce = true;
   reader.close = async () => { if (failOnce) { failOnce = false; throw new Error('fixture_reader_close_failed'); } return close(); };
@@ -1368,6 +1493,14 @@ test('ブラウザ終了だけの失敗: 原本点検/ZIPを続け、終了再�
   const closeFailed = await wait(r.app, snapshot => snapshot.readerReleasePending && !snapshot.recoveryRequired && !snapshot.busy);
   assert.equal(closeFailed.job.job_path, captured.job.job_path);
   assert.equal(closeFailed.job.manifest.images.length, 1);
+  await ui.waitForFunction(() => document.querySelector('#message').textContent.includes('次の本には進めません'));
+  for (const [language, expected] of [['en', /cannot proceed to the next book/], ['zh-CN', /无法处理下一本书/], ['ja', /次の本には進めません/]]) {
+    await ui.locator('#language').selectOption(language);
+    assert.match(await ui.locator('#message').textContent(), expected);
+  }
+  await ui.locator('[data-stage-target="capture"]').first().click();
+  assert.equal(await ui.locator('#decisionButton').isDisabled(), true, '終了不明の間は新しい検査・取得への公開入口を閉じる');
+  assert.match(await ui.locator('#nextAction').textContent(), /終了が未確認.*新しい検査・取得はできません/);
   await ui.locator('[data-stage-target="export"]').first().click();
   await ui.waitForFunction(() => !document.querySelector('#export').disabled);
   const zipPath = path.join(directory, 'reader-close-failed.zip');
@@ -1377,13 +1510,57 @@ test('ブラウザ終了だけの失敗: 原本点検/ZIPを続け、終了再�
   assert.equal(storedPngEntries(zipBytes).length, 1);
   assert.deepEqual(await r.app.image(1, true), original);
 
+  const retry = ui.waitForResponse(response => response.url().endsWith('/api/command')
+    && response.request().postDataJSON()?.action === 'finishBook');
   await ui.locator('#finishBookButton').click();
-  const closed = await wait(r.app, snapshot => !snapshot.job && !snapshot.browserOpen && !snapshot.busy);
-  assert.equal(closed.state, 'Idle', 'the safe-close entry point remains available for retry');
-  assert.equal(closed.readerReleasePending, false);
+  const retryResponse = await retry;
+  assert.equal(retryResponse.status(), 400);
+  assert.equal((await retryResponse.json()).code, 'reader_close_failed');
+  const stillPending = await wait(r.app, snapshot => snapshot.readerReleasePending && !snapshot.busy);
+  assert.equal(stillPending.job.job_path, captured.job.job_path, '再終了では未確認のbrowserを正常化せずジョブを保持');
+  assert.equal(stillPending.browserOpen, true);
   assert.deepEqual(await readFile(zipPath), zipBytes, 'the existing verified archive remains unchanged after retry');
   assert.deepEqual(await readFile(path.join(captured.job.job_path, 'originals/000001.png')), original, 'the confirmed original remains unchanged');
 });
+
+test('ブラウザ終了だけの失敗: 未返却でも公開画面は再openと専用領域削除を案内しない', async t => {
+  await mkdir('artifacts/mvp-tests', { recursive: true });
+  const directory = await mkdtemp(path.resolve('artifacts/mvp-tests/reader-open-unknown-'));
+  const r = await startApplication({ dataDir: path.join(directory, 'data') });
+  const control = await openControlWindow(r.url, { headless: true });
+  const { chromium } = await import('playwright');
+  const before = Object.getOwnPropertyDescriptor(chromium, 'launchPersistentContext');
+  let failedOpen = false;
+  t.after(async () => {
+    if (before) Object.defineProperty(chromium, 'launchPersistentContext', before); else delete chromium.launchPersistentContext;
+    await control.close();
+    if (failedOpen) await assert.rejects(r.close(), /reader_close_failed/);
+    else await r.close().catch(() => {});
+    await rm(directory, { recursive: true, force: true });
+  });
+  const ui = control.page;
+  await r.app.command('create');
+  await ui.waitForFunction(() => !document.querySelector('#openSample').disabled);
+  Object.defineProperty(chromium, 'launchPersistentContext', { configurable: true, writable: true,
+    value: async () => ({ async route() { throw new Error('initialization'); }, async close() { throw new Error('close'); } }) });
+  const response = ui.waitForResponse(value => value.url().endsWith('/api/command')
+    && value.request().postDataJSON()?.action === 'openBrowser');
+  await ui.locator('#openSample').click();
+  const result = await response;
+  assert.equal(result.status(), 400); assert.equal((await result.json()).code, 'browser_open_failed');
+  failedOpen = true;
+  const state = await wait(r.app, value => value.readerReleasePending && !value.busy);
+  assert.equal(state.browserOpen, false);
+  await ui.waitForFunction(() => document.querySelector('#nextAction').textContent.includes('終了が未確認'));
+  assert.equal(await ui.locator('#decisionButton').isDisabled(), true);
+  assert.equal(await ui.locator('#openSample').isDisabled(), true);
+  assert.equal(await ui.locator('#openKindle').isDisabled(), true);
+  assert.equal(await ui.locator('#kindleRegion').isDisabled(), true);
+  assert.match(await ui.locator('#captureHelp').textContent(), /終了を確認できません.*新しい検査・取得はできません/);
+  assert.ok(await ui.locator('#sessions button').count() > 0);
+  assert.equal(await ui.locator('#sessions button').first().isDisabled(), true);
+});
+
 test('公開保存コンテキスト: 出力変更で成功を失効し別ジョブは自身のZIP先へ保存する', async t => {
   await mkdir('artifacts/mvp-tests', { recursive: true });
   const directory = await mkdtemp(path.resolve('artifacts/mvp-tests/save-context-'));

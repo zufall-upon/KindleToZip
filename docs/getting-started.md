@@ -12,6 +12,19 @@ For use without a development setup, follow the [Portable guide](portable.md): d
 
 ## Requirements
 
+<a id="ubuntu-source"></a>
+### Ubuntu experimental source (existing environment)
+
+On `linux-port`, only self-authored fixtures are in scope. Real Kindle, normal Wayland reading and Linux distribution are unavailable/unverified. Reuse the existing Node 22, Rust 1.99.1 controller and pinned Playwright/Chromium environment after checking space and mounts; do not run the Windows installer below on Ubuntu. See [the Ubuntu development path](development.md#experimental-ubuntu-source-development) for the existing-environment commands and limits.
+
+The control window is headed and the fixture reader is headless by default. For the app-created standard self-authored fixture only, on a Wayland session run `npm start -- --sample-headed`; create a job and use the separate headed sample button in the auxiliary browser controls. Select its tab, preview, approve, and start separately. It uses a new temporary profile and accepts no arbitrary URL, other fixture, or saved profile. The checks are limited to the owned browser target and saved data: they do not prove OS-wide visibility or non-interference with other applications or physical input. Real Kindle remains unsupported. Linux optionally uses an executable `/usr/bin/zenity` to select a ZIP/CBZ destination. Selection/cancellation alone never saves or captures; export is a separate explicit action and never overwrites. If the picker is missing or fails, type the path manually. Nothing is installed automatically; desktop/portal behavior requires environment-specific validation.
+
+On Ubuntu 26.04, anonymous ZIP/CBZ destination selection and cancellation were manually exercised with the installed Zenity; the user reported normal display. No native-dialog image was provided or independently inspected. These checks confirmed that selection alone creates no archive; ZIP/CBZ output/content checks are separate integration evidence, not native-picker export or real-Kindle acceptance.
+
+Startup distinguishes known controller, private-storage, lock and control-window failures without repairing permissions or fetching dependencies. For a suspected long `TMPDIR`, explicitly select a short private directory with `KTZ_TEMP_DIR`; there is no automatic relocation or guessed path-length cutoff.
+
+### Windows x64
+
 - Windows x64, with a writable local project folder.
 - Git, Node.js **22 or later**, and PowerShell **7** (`pwsh`). Run the commands below in PowerShell 7, not Windows PowerShell 5.1.
 - Internet access for initial tool and dependency downloads.
