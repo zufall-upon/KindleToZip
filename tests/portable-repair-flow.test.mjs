@@ -1493,6 +1493,14 @@ test('ブラウザ終了だけの失敗: 原本点検/ZIPを続け、再終了�
   const closeFailed = await wait(r.app, snapshot => snapshot.readerReleasePending && !snapshot.recoveryRequired && !snapshot.busy);
   assert.equal(closeFailed.job.job_path, captured.job.job_path);
   assert.equal(closeFailed.job.manifest.images.length, 1);
+  await ui.waitForFunction(() => document.querySelector('#message').textContent.includes('次の本には進めません'));
+  for (const [language, expected] of [['en', /cannot proceed to the next book/], ['zh-CN', /无法处理下一本书/], ['ja', /次の本には進めません/]]) {
+    await ui.locator('#language').selectOption(language);
+    assert.match(await ui.locator('#message').textContent(), expected);
+  }
+  await ui.locator('[data-stage-target="capture"]').first().click();
+  assert.equal(await ui.locator('#decisionButton').isDisabled(), true, '終了不明の間は新しい検査・取得への公開入口を閉じる');
+  assert.match(await ui.locator('#nextAction').textContent(), /終了が未確認.*新しい検査・取得はできません/);
   await ui.locator('[data-stage-target="export"]').first().click();
   await ui.waitForFunction(() => !document.querySelector('#export').disabled);
   const zipPath = path.join(directory, 'reader-close-failed.zip');
@@ -1514,6 +1522,45 @@ test('ブラウザ終了だけの失敗: 原本点検/ZIPを続け、再終了�
   assert.deepEqual(await readFile(zipPath), zipBytes, 'the existing verified archive remains unchanged after retry');
   assert.deepEqual(await readFile(path.join(captured.job.job_path, 'originals/000001.png')), original, 'the confirmed original remains unchanged');
 });
+
+test('ブラウザ終了だけの失敗: 未返却でも公開画面は再openと専用領域削除を案内しない', async t => {
+  await mkdir('artifacts/mvp-tests', { recursive: true });
+  const directory = await mkdtemp(path.resolve('artifacts/mvp-tests/reader-open-unknown-'));
+  const r = await startApplication({ dataDir: path.join(directory, 'data') });
+  const control = await openControlWindow(r.url, { headless: true });
+  const { chromium } = await import('playwright');
+  const before = Object.getOwnPropertyDescriptor(chromium, 'launchPersistentContext');
+  let failedOpen = false;
+  t.after(async () => {
+    if (before) Object.defineProperty(chromium, 'launchPersistentContext', before); else delete chromium.launchPersistentContext;
+    await control.close();
+    if (failedOpen) await assert.rejects(r.close(), /reader_close_failed/);
+    else await r.close().catch(() => {});
+    await rm(directory, { recursive: true, force: true });
+  });
+  const ui = control.page;
+  await r.app.command('create');
+  await ui.waitForFunction(() => !document.querySelector('#openSample').disabled);
+  Object.defineProperty(chromium, 'launchPersistentContext', { configurable: true, writable: true,
+    value: async () => ({ async route() { throw new Error('initialization'); }, async close() { throw new Error('close'); } }) });
+  const response = ui.waitForResponse(value => value.url().endsWith('/api/command')
+    && value.request().postDataJSON()?.action === 'openBrowser');
+  await ui.locator('#openSample').click();
+  const result = await response;
+  assert.equal(result.status(), 400); assert.equal((await result.json()).code, 'browser_open_failed');
+  failedOpen = true;
+  const state = await wait(r.app, value => value.readerReleasePending && !value.busy);
+  assert.equal(state.browserOpen, false);
+  await ui.waitForFunction(() => document.querySelector('#nextAction').textContent.includes('終了が未確認'));
+  assert.equal(await ui.locator('#decisionButton').isDisabled(), true);
+  assert.equal(await ui.locator('#openSample').isDisabled(), true);
+  assert.equal(await ui.locator('#openKindle').isDisabled(), true);
+  assert.equal(await ui.locator('#kindleRegion').isDisabled(), true);
+  assert.match(await ui.locator('#captureHelp').textContent(), /終了を確認できません.*新しい検査・取得はできません/);
+  assert.ok(await ui.locator('#sessions button').count() > 0);
+  assert.equal(await ui.locator('#sessions button').first().isDisabled(), true);
+});
+
 test('公開保存コンテキスト: 出力変更で成功を失効し別ジョブは自身のZIP先へ保存する', async t => {
   await mkdir('artifacts/mvp-tests', { recursive: true });
   const directory = await mkdtemp(path.resolve('artifacts/mvp-tests/save-context-'));

@@ -230,7 +230,7 @@ function mappingStatus() {
   const complete = fields.filter(field => $(field).value.trim());
   const selectedField = state?.pickingField ?? pickingField;
   const busy = pendingActions > 0 || state?.busy;
-  $('kindleRegion').disabled = !connected || state?.browserOpen || busy;
+  $('kindleRegion').disabled = !connected || state?.browserOpen || state?.readerReleasePending || busy;
   $('chooseDestination').disabled = busy || !state?.job || state?.saveDialogAvailable === false || Boolean(state?.storageUncertain);
   $('destinationDialogHelp').textContent = state?.saveDialogAvailable === false
     ? 'この環境では保存先ダイアログを利用できません。保存先を手入力してください。'
@@ -252,7 +252,7 @@ function mappingStatus() {
   $('exportHelp').textContent = state?.storageUncertain ? errors.storage_reopen_required
     : destinationAlreadyRegistered() ? 'この保存先には既に検証済みの出力があります。別名を指定すると、既存ファイルを保ったまま保存できます。'
     : busy ? '処理中です。取り込み中なら一時停止してから保存してください。'
-    : state?.readerReleasePending ? 'ブラウザ終了だけが未完了です。確定原本の点検とZIPは利用できます。安全終了を再試行してください。'
+    : state?.readerReleasePending ? 'ブラウザの終了を確認できません。確定原本があれば点検とZIPを利用できます。次の本には進めません。'
     : !state?.job ? '先に新しい作業か中断データを開いてください。'
     : state.job.issues.length ? '保存済み画像の不整合があります。「画像を点検」で詳細を確認してください。原本は変更していません。'
     : !state.job.manifest.selected_capture_ids.length ? '採用画像がありません。「画像を点検」で保存する画像を採用してください。'
@@ -274,6 +274,7 @@ function mappingStatus() {
   $('parentReader').disabled = complete.length !== fields.length || !canPick;
   const help = !connected ? 'アプリとの接続が切れています。「接続を確認し直す」を押してください。アプリを再起動した場合は、新しく開いた操作画面を使ってください。'
     : !state?.job ? '「決定・次へ」で新しい1冊の作業を用意してください。'
+    : state?.readerReleasePending ? 'ブラウザの終了を確認できません。新しい検査・取得はできません。'
     : !state.browserOpen ? '「決定・次へ」で専用ブラウザを開いてください。'
     : state.state === 'Capturing' ? '取得中です。「キャンセル・前へ」で安全停止して点検へ戻れます。'
     : selectedField ? `専用ブラウザで「${mappingLabels[selectedField]}」をクリックしてください。Escか「指定を取り消す」で中止できます。`
@@ -333,8 +334,10 @@ function updateWorkflowControls({ busy = pendingActions > 0 || state?.busy, vali
   else if (state?.endingBook) reason = '現在の本を安全に終了しています。';
   else if (state?.recoveryRequired) reason = '安全停止の完了を確認できません。取得・保存せず「終了・最初から」を再試行してください。';
   else if (busy) reason = '処理が終わるまでお待ちください。中断可能な確認中は「キャンセル・前へ」を使えます。';
+  else if (state?.readerReleasePending && !['inspect', 'export'].includes(action)) {
+    enabled = false; reason = 'ブラウザ資源の終了が未確認です。確定原本があれば点検・ZIP保存できますが、新しい検査・取得はできません。';
+  }
   else if (action === 'openBrowser' && state?.kindleSupported === false) { enabled = false; reason = errors.linux_kindle_unsupported; }
-  else if (state?.readerReleasePending && !['inspect', 'export'].includes(action)) reason = 'ブラウザ資源の終了が未完了です。点検・ZIP保存は可能ですが、新しい検査・取得は終了再試行まで待ってください。';
   else if (action === 'export' && alreadyExportedHere) {
     enabled = false; reason = 'この保存先へのZIP保存は完了しています。別名を指定するか「終了・最初から」で次の本へ進んでください。';
   }
@@ -371,7 +374,7 @@ function updateWorkflowControls({ busy = pendingActions > 0 || state?.busy, vali
     approve: '本・領域・次へ方向・位置を目視確認し、チェックを入れて「決定・次へ」で承認してください。取得はまだ始まりません。',
     start: '承認済みです。本人が次の「決定・次へ」で取り込み開始を明示します。',
     inspect: state?.reason === 'black_image' ? errors.black_image : state?.readerReleasePending
-      ? 'ブラウザ終了だけが未完了です。確定原本の点検後、「決定・次へ」でZIP保存できます。安全終了を再試行すると次冊へ進めます。'
+      ? 'ブラウザの終了を確認できません。確定原本の点検後、「決定・次へ」でZIP保存できます。次の本には進めません。'
       : activeStage === 'review' && state?.job?.manifest.state === 'review'
       ? '画像の順序・採用・クロップを点検後、「決定・次へ」でZIP保存へ進みます。'
       : state?.lastFailure ? failureSummary(state.lastFailure)
@@ -449,8 +452,8 @@ Object.assign(errors, {
   safe_stop_incomplete: '前の処理が資源を解放したか確認できません。新しい取り込み・保存はできません。安全な終了を再試行してください。',
   cancel_timeout: '取消処理の完了を確認できませんでした。状態を保全して停止しています。',
   safe_stop_failed: '安全な終了に失敗しました。画像と設定は保持しています。',
-  reader_close_failed: 'ブラウザを閉じられませんでした。書込停止は確認済みです。画像の点検・ZIPは続けられます。安全終了を再試行してください。',
-  reader_release_incomplete: 'ブラウザ資源の解放が未完了です。画像の点検・ZIPまたは終了再試行を行ってください。',
+  reader_close_failed: 'ブラウザの終了を確認できません。書込停止済みで確定原本があれば点検・ZIP保存できます。次の本には進めません。',
+  reader_release_incomplete: 'ブラウザ資源の解放を確認できません。確定原本があれば点検・ZIP保存できます。新しい作業には進めません。',
 });
 const failureStages = {
   capture: '画像取得', capture_begin: '保存準備', capture_upload: '画像転送',
@@ -1044,7 +1047,7 @@ async function draw(s, generation) {
   $('stop').disabled = !s.job || Boolean(s.storageUncertain);
   $('create').disabled = Boolean(s.job);
   $('recover').disabled = Boolean(s.job);
-  $('openKindle').disabled = !s.job || s.browserOpen || s.kindleSupported === false || Boolean(s.storageUncertain);
+  $('openKindle').disabled = !s.job || s.browserOpen || s.readerReleasePending || s.kindleSupported === false || Boolean(s.storageUncertain);
   $('kindleUnsupported').hidden = s.kindleSupported !== false;
   $('storageUncertain').hidden = !s.storageUncertain;
   $('storageUncertain').textContent = s.storageUncertain
@@ -1055,12 +1058,12 @@ async function draw(s, generation) {
     $('kindleRegion').dataset.key = regionKey;
   }
   $('kindleRegion').value = s.kindleRegion;
-  $('kindleRegion').disabled = s.browserOpen || s.busy || pendingActions > 0;
+  $('kindleRegion').disabled = s.browserOpen || s.readerReleasePending || s.busy || pendingActions > 0;
   $('kindleStartUrl').textContent = s.kindleRegions?.find(region => region.id === s.kindleRegion)?.startUrl ?? '';
-  $('openSample').disabled = !s.job || s.browserOpen || Boolean(s.storageUncertain);
+  $('openSample').disabled = !s.job || s.browserOpen || s.readerReleasePending || Boolean(s.storageUncertain);
   $('closeBrowser').disabled = !s.browserOpen;
   mappingStatus();
-  const sessionKey = JSON.stringify(s.sessions);
+  const sessionKey = JSON.stringify([s.sessions, s.browserOpen, s.readerReleasePending]);
   if ($('sessions').dataset.key !== sessionKey) {
     $('sessions').dataset.key = sessionKey;
     $('sessions').replaceChildren();
@@ -1072,6 +1075,7 @@ async function draw(s, generation) {
       li.textContent = `${session.saved ? '保存済み' : '一時・残存'}：${session.id} `;
       const button = document.createElement('button');
       button.textContent = 'この専用セッションを削除';
+      button.disabled = Boolean(s.browserOpen || s.readerReleasePending);
       button.onclick = async () => {
         if (!confirm(translate('取得を停止して専用ブラウザを閉じた後、この専用セッションだけを削除します。よろしいですか？'))) return;
         await run(() => command('deleteSession', { id: session.id, confirmed: true }), false, '専用セッションを削除');
