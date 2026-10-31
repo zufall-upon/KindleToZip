@@ -388,6 +388,31 @@ test(process.platform === 'linux' ? 'Kindle地域公開UI: Linuxでは実Kindle�
     await assert.rejects(r.app.command('openBrowser', { mode: 'kindle' }), { code: 'linux_kindle_unsupported' });
     assert.deepEqual((await r.app.snapshot()).sessions, before);
     assert.equal(r.app.reader, undefined);
+    // The unsupported entrypoint cannot be followed by a successful preview,
+    // acquisition or a new archive from this still-empty job. This does not
+    // revoke review/export of originals saved by a legitimate earlier workflow.
+    const unchanged = (await r.app.snapshot()).job.manifest;
+    const rejected = async (action, input, code) => {
+      const denied = await fetch(`${r.origin}/api/command`, { method: 'POST', headers: {
+        Authorization: `Bearer ${r.token}`, 'Content-Type': 'application/json', Origin: r.origin,
+      }, body: JSON.stringify({ action, input }) });
+      assert.equal(denied.status, 400);
+      assert.equal((await denied.json()).code, code);
+    };
+    await rejected('preview', { config: sampleConfig }, 'open_browser_first');
+    await rejected('approve', { confirmed: true }, 'preview_confirmation_required');
+    await rejected('start', { confirmed: true }, 'explicit_start_required');
+    for (const format of ['zip', 'cbz']) {
+      const destination = path.join(r.directory, `unsupported-reader.${format}`);
+      await rejected('export', { destination, format }, 'empty_selection');
+      await assert.rejects(lstat(destination), { code: 'ENOENT' });
+    }
+    const deniedState = await r.app.snapshot();
+    assert.equal(deniedState.previewReady, false); assert.equal(deniedState.previewApproved, false);
+    assert.deepEqual(deniedState.job.manifest.images, unchanged.images);
+    assert.deepEqual(deniedState.job.manifest.exports, unchanged.exports);
+    assert.deepEqual(deniedState.sessions, before);
+    assert.equal(r.app.reader, undefined, '読書pageが存在せずページ送りも開始しない');
     trace.emit(t, 'region.assertions', 'complete');
     return;
   }
