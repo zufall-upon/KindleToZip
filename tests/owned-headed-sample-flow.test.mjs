@@ -141,7 +141,9 @@ async function run(t, mode) {
   }
 }
 
-test('Linux公開npm start: 専用有頭自作試料の製品縦断と限定故障', { skip: !enabled, timeout: 480_000 }, async t => {
+// Like the existing Linux-only public tests, register native Wayland cases
+// only where they apply. Windows full CI requires an unskipped test suite.
+if (enabled) test('Linux公開npm start: 専用有頭自作試料の製品縦断と限定故障', { timeout: 480_000 }, async t => {
   for (const mode of ['positive', 'response-loss', 'target-book', 'target-page', 'target-node', 'minimized', 'state-failure', 'window-mismatch', 'close-failure']) {
     await t.test(mode, { timeout: 90_000 }, sub => run(sub, mode));
   }
@@ -154,7 +156,7 @@ test('有頭自作認可: 任意loopback URLや偽fixtureオブジェクトで�
     { code: 'owned_sample_unavailable' });
 });
 
-test('有頭自作proxy: 拒否応答中のpeer resetで実processを落とさない', { skip: !enabled }, () => {
+if (enabled) test('有頭自作proxy: 拒否応答中のpeer resetで実processを落とさない', () => {
   const module = new URL('../app/owned-sample.mjs', import.meta.url).href;
   const script = `import net from 'node:net'; import {startOwnedSample,ownedSampleOptions} from ${JSON.stringify(module)};
     const fixture=await startOwnedSample(); const port=Number(new URL(ownedSampleOptions(fixture).proxy.server).port);
