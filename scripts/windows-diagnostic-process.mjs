@@ -127,12 +127,13 @@ export function createWindowsOwnerTracker({ runnerPid, supervisorPid, backend, n
     return Number.isFinite(time) && new Date(time).toISOString() === iso;
   };
   let active = new Map(), validScan = false, rootIdentity = null, rootRetired = false;
-  function decision(kind, action, previous, observed, parentIdentityMatched = 'unknown', stopAttempted = false) {
+  function decision(kind, action, previous, observed, parentIdentityMatched = 'unknown', stopAttempted = false, subreason) {
     const record = { role: (previous ?? observed)?.pid === runnerPid ? 'root' : 'child', kind, decision: action,
       pid: (previous ?? observed)?.pid ?? runnerPid,
       previousCreationDate: validBirth(previous?.creationDate) ? previous.creationDate : 'unknown',
       observedCreationDate: validBirth(observed?.creationDate) ? observed.creationDate : 'unknown',
       absenceObserved: previous ? absences.has(key(previous)) : false, parentIdentityMatched, stopAttempted };
+    if (subreason !== undefined) record.subreason = subreason;
     const id = JSON.stringify(record);
     if (decisions.has(id)) return;
     decisions.add(id);
@@ -192,7 +193,8 @@ export function createWindowsOwnerTracker({ runnerPid, supervisorPid, backend, n
         if (row.pid === runnerPid || next.has(row.pid) || !next.has(row.parentPid)) continue;
         const parent = next.get(row.parentPid), liveParent = current.get(row.parentPid);
         if (!liveParent || liveParent.creationDate !== parent.creationDate) {
-          decision('parent_changed', 'reject', parent, liveParent, false); throw failure('ancestry_unconfirmed');
+          decision('parent_changed', 'reject', parent, liveParent, false, false, 'admission_parent_mismatch');
+          throw failure('ancestry_unconfirmed');
         }
         if (row.creationDate === null || row.creationDate === undefined || row.creationDate === '') {
           decision('child_birth_missing', 'reject', null, row, true); throw failure('identity_unconfirmed');
@@ -206,7 +208,8 @@ export function createWindowsOwnerTracker({ runnerPid, supervisorPid, backend, n
           // the same PID could still be ours: retain uncertainty, not success.
           const historicalParent = [...history.values()].find(item => item.pid === parent.pid
             && item.creationDate !== parent.creationDate && item.creationDate <= row.creationDate);
-          decision('child_birth_before_parent', historicalParent ? 'reject' : 'new_unowned', null, row, true);
+          decision('child_birth_before_parent', historicalParent ? 'reject' : 'new_unowned', null, row, true, false,
+            historicalParent ? 'parent_pid_reused_ambiguous' : undefined);
           if (historicalParent) throw failure('ancestry_unconfirmed');
           continue;
         }
@@ -227,7 +230,9 @@ export function createWindowsOwnerTracker({ runnerPid, supervisorPid, backend, n
         && (!validBirth(row.creationDate) || !validBirth(liveParent.creationDate)
           || (item.creationDate <= row.creationDate && row.creationDate < liveParent.creationDate)));
       if ((!liveParent && !beforeAllOwnedParents) || possibleEarlierChild) {
-        decision('parent_changed', 'reject', null, row, false); throw failure('ancestry_unconfirmed');
+        decision('parent_changed', 'reject', null, row, false, false,
+          liveParent ? 'parent_pid_reused_ambiguous' : 'orphan_parent_absent');
+        throw failure('ancestry_unconfirmed');
       }
       if (!liveParent) decision('child_birth_before_parent', 'new_unowned', null, row, false);
     }

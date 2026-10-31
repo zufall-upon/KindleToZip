@@ -180,6 +180,8 @@ test('Windows所有履歴: activeとretiredの証拠を混同しない', async t
     const m = model([root]); const [old] = await m.tracker.scan();
     m.setRows([child]); await assert.rejects(m.tracker.scan(), { code: 'ancestry_unconfirmed' });
     await assert.rejects(m.tracker.stop(old), { code: 'identity_unconfirmed' }); assert.equal(m.stops.length, 0);
+    assert.ok(m.decisions.some(d => d.kind === 'parent_changed' && d.subreason === 'orphan_parent_absent'
+      && d.decision === 'reject' && !d.stopAttempted));
   });
   await t.test('H scan後stop直前のPID再利用は既存handle照合の拒否を伝播する', async () => {
     const m = model([root, child], 'identity_mismatch'); const [, old] = await m.tracker.scan();
@@ -249,6 +251,19 @@ test('Windows新子の開始時刻: 識別不能と現親の所有証拠なし�
     }
     assert.equal(m.stopped.length, 0);
   });
+  await t.test('全owned親世代より古い個体は親不在でも非採用で停止しない', async () => {
+    const m = model(); m.setRows([root, child]); await m.tracker.scan();
+    m.setRows([root]); await m.tracker.scan();
+    const replacement = { ...child, creationDate: d };
+    m.setRows([root, replacement]); await m.tracker.scan();
+    const older = { pid: 43, parentPid: child.pid, creationDate: '20251231235959.000001Z', name: 'node.exe' };
+    m.setRows([root, replacement, older]);
+    assert.deepEqual((await m.tracker.scan()).map(item => item.pid), [41, 42]);
+    m.setRows([root, older]); assert.deepEqual((await m.tracker.scan()).map(item => item.pid), [41]);
+    await assert.rejects(m.tracker.stop(older), { code: 'identity_unconfirmed' });
+    assert.equal(m.stopped.length, 0); assert.equal(m.tracker.history().some(item => item.pid === older.pid), false);
+    assert.ok(m.decisions.some(item => item.kind === 'child_birth_before_parent' && item.decision === 'new_unowned'));
+  });
   await t.test('過去owned親からの未知子かもしれない個体を残存なしにしない', async () => {
     const m = model(); m.setRows([root, child]); await m.tracker.scan();
     m.setRows([root]); await m.tracker.scan();
@@ -259,7 +274,8 @@ test('Windows新子の開始時刻: 識別不能と現親の所有証拠なし�
     await assert.rejects(m.tracker.stop(unknown), { code: 'identity_unconfirmed' });
     await assert.rejects(m.tracker.stop(replacement), { code: 'identity_unconfirmed' }); assert.equal(m.stopped.length, 0);
     assert.equal(m.tracker.history().some(e => e.pid === 43), false);
-    assert.ok(m.decisions.some(e => e.kind === 'child_birth_before_parent' && e.decision === 'reject' && !e.stopAttempted));
+    assert.ok(m.decisions.some(e => e.kind === 'child_birth_before_parent' && e.decision === 'reject'
+      && e.subreason === 'parent_pid_reused_ambiguous' && !e.stopAttempted));
     m.setRows([root, unknown]); await assert.rejects(m.tracker.scan(), { code: 'ancestry_unconfirmed' });
     await assert.rejects(m.tracker.stop(unknown), { code: 'identity_unconfirmed' }); assert.equal(m.stopped.length, 0);
     // An unowned replacement at the parent PID is not evidence that a child
@@ -269,6 +285,8 @@ test('Windows新子の開始時刻: 識別不能と現親の所有証拠なし�
     other.setRows([root, { ...replacement, parentPid: 99 }, unknown]);
     await assert.rejects(other.tracker.scan(), { code: 'ancestry_unconfirmed' });
     await assert.rejects(other.tracker.stop(unknown), { code: 'identity_unconfirmed' }); assert.equal(other.stopped.length, 0);
+    assert.ok(other.decisions.some(e => e.kind === 'parent_changed' && e.decision === 'reject'
+      && e.subreason === 'parent_pid_reused_ambiguous' && !e.stopAttempted));
   });
 });
 
@@ -314,6 +332,74 @@ test('Windows新子の開始時刻: collectorも非対象と識別不能を区�
       for (const line of metadata) assert.doesNotMatch(line, /999997|private-invalid-date|private-child-name|CreationDate|"pid"/);
     });
   }
+});
+
+test('Windows所有判定: 公開callerは親不一致・不在・再利用の拒否を分け不明を保持する', async t => {
+  const cases = [
+    { mode: 'absent', kind: 'parent_changed', subreason: 'orphan_parent_absent', matched: false, queries: 2 },
+    { mode: 'reused-unowned', kind: 'parent_changed', subreason: 'parent_pid_reused_ambiguous', matched: false, queries: 3 },
+    { mode: 'reused-owned', kind: 'child_birth_before_parent', subreason: 'parent_pid_reused_ambiguous', matched: true, queries: 4 },
+    { mode: 'synthetic-parent-mismatch', kind: 'parent_changed', subreason: 'admission_parent_mismatch', matched: false, queries: 1 },
+  ];
+  for (const expected of cases) await t.test(expected.mode, async () => {
+    const directory = await sandbox();
+    let baseMs;
+    const birth = delta => {
+      const iso = new Date(baseMs + delta).toISOString();
+      return `${iso.slice(0, 19).replace(/[-:T]/g, '')}.${iso.slice(20, 23)}000Z`;
+    };
+    let queries = 0, rootRow, backendStops = 0, output = '';
+    const { result } = await fixture(directory, 'setInterval(()=>{},1000)', {
+      output(line) {
+        output += line;
+        // The real JSON/CIM backend gives a stable snapshot. Deliberately
+        // mutate the same plain mock row only to exercise the defensive branch;
+        // this does not claim that a real CIM snapshot can reach it.
+        if (expected.mode === 'synthetic-parent-mismatch' && line.includes('child_birth_before_parent')) rootRow.creationDate = birth(150);
+      },
+      backendFactory(child) {
+        baseMs = Date.now() - 250;
+        return {
+          async query() {
+            queries++;
+            rootRow = { pid: child.pid, parentPid: process.pid, creationDate: birth(0), name: 'node.exe' };
+            const parent = { pid: 999991, parentPid: child.pid, creationDate: birth(50), name: 'private-parent-name' };
+            const unknown = { pid: 999992, parentPid: parent.pid, creationDate: birth(100), name: 'private-unknown-name' };
+            if (expected.mode === 'synthetic-parent-mismatch') return [rootRow,
+              { pid: 999993, parentPid: child.pid, creationDate: birth(-100), name: 'private-older-name' },
+              { ...unknown, parentPid: child.pid }];
+            if (queries === 1) return [rootRow, parent];
+            if (expected.mode === 'absent') return [rootRow, unknown];
+            if (queries === 2) return [rootRow];
+            const replacement = { ...parent, parentPid: expected.mode === 'reused-unowned' ? 99 : child.pid, creationDate: birth(150) };
+            if (expected.mode === 'reused-owned' && queries === 3) return [rootRow, replacement];
+            return [rootRow, replacement, unknown];
+          },
+          async stop() { backendStops++; return 'unconfirmed'; },
+        };
+      },
+    });
+    assert.equal(queries, expected.queries);
+    assert.equal(result.outcome, 'failed'); assert.equal(result.collectionError, 'ancestry_unconfirmed');
+    assert.equal(result.testOutcome, 'unknown'); assert.equal(result.collectionOutcome, 'incomplete');
+    assert.equal(result.cleanupOutcome, 'unknown'); assert.equal(result.remainingState, 'unknown');
+    assert.equal(result.observedProcesses.some(item => item.pid === 999992), false);
+    assert.equal(result.remainingProcesses.some(item => item.pid === 999992), false);
+    assert.equal(backendStops, 0);
+    // The existing failure fallback may stop only the directly spawned runner.
+    assert.equal(result.forced.length, 1); assert.equal(result.forced[0].method, 'direct_child_handle');
+    assert.equal(result.forced[0].reason, 'monitor_failure');
+    const lines = output.split('\n').filter(line => line.startsWith('KTZ_OWNERSHIP:'));
+    const metadata = lines.map(line => JSON.parse(line.slice('KTZ_OWNERSHIP:'.length)));
+    const rejects = metadata.filter(item => item.decision === 'reject');
+    assert.equal(rejects.length, 1);
+    assert.deepEqual(rejects[0], { role: expected.mode === 'synthetic-parent-mismatch' ? 'root' : 'child',
+      kind: expected.kind, decision: 'reject', absenceObserved: false, parentIdentityMatched: expected.matched,
+      stopAttempted: false, subreason: expected.subreason });
+    for (const line of lines) assert.doesNotMatch(line, /99999[123]|\d{14}\.\d{6}Z|private-|creationDate|"pid"/);
+    for (const item of metadata) assert.ok(Object.keys(item).every(key =>
+      ['role', 'kind', 'decision', 'absenceObserved', 'parentIdentityMatched', 'stopAttempted', 'subreason'].includes(key)));
+  });
 });
 
 test('Windows所有判定: 公開ログは固定分類だけでPIDと開始時刻を出さない', async () => {

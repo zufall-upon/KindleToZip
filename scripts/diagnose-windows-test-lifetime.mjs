@@ -18,6 +18,7 @@ const collectionCodes = new Set(['event_read_timeout', 'event_file_invalid', 'in
   'monitor_streams_timeout', 'monitor_command_failed', 'monitor_output_limit', 'monitor_command_timeout',
   'system_root_unavailable', 'metadata_invalid', 'termination_invalid', 'root_identity_invalid',
   'identity_invalid', 'identity_changed', 'identity_unconfirmed', 'ancestry_unconfirmed', 'termination_unconfirmed']);
+const ownershipSubreasons = new Set(['admission_parent_mismatch', 'orphan_parent_absent', 'parent_pid_reused_ambiguous']);
 function codeOf(error) {
   try { const code = Object.getOwnPropertyDescriptor(error, 'code')?.value; return collectionCodes.has(code) ? code : 'collection_failed'; }
   catch { return 'collection_failed'; }
@@ -214,10 +215,12 @@ export async function runWindowsDiagnostic({ command, args, cwd = root, env = pr
     }
     const backend = backendFactory ? backendFactory(child) : createWindowsBackend();
     tracker = createWindowsOwnerTracker({ runnerPid: child.pid, supervisorPid: process.pid, backend, notBeforeMs: spawnedAfter,
-      onDecision: ({ role, kind, decision, absenceObserved, parentIdentityMatched, stopAttempted }) => {
+      onDecision: ({ role, kind, decision, absenceObserved, parentIdentityMatched, stopAttempted, subreason }) => {
         // Only fixed, non-secret decision metadata reaches the public CI log.
         // Exact PID/dates are not needed to distinguish active from retired reuse.
-        output(`KTZ_OWNERSHIP:${JSON.stringify({ role, kind, decision, absenceObserved, parentIdentityMatched, stopAttempted })}\n`);
+        const metadata = { role, kind, decision, absenceObserved, parentIdentityMatched, stopAttempted };
+        if (ownershipSubreasons.has(subreason)) metadata.subreason = subreason;
+        output(`KTZ_OWNERSHIP:${JSON.stringify(metadata)}\n`);
       } });
     while (!childExit && !spawnError && !timeout && !collectionError) {
       await drain(); await scan();
