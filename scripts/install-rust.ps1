@@ -8,8 +8,8 @@ Remove-Item Env:RUSTUP_TOOLCHAIN -ErrorAction SilentlyContinue
 $cargo = Join-Path $env:CARGO_HOME 'bin/cargo.exe'
 $rustup = Join-Path $env:CARGO_HOME 'bin/rustup.exe'
 $bootstrap = Join-Path $root 'artifacts/toolchains/downloads/rustup-init.exe'
-$source = 'https://win.rustup.rs/x86_64'
-$expected = '00f139da614dced87d3c3d4121c43eebdac3c1bf8a5ee86b9d80dfd71c8d70fd'
+$source = 'https://static.rust-lang.org/rustup/archive/1.29.3/x86_64-pc-windows-gnu/rustup-init.exe'
+$expected = 'f6289656ce42e1099f3cbc6f10ef6321dfde54773faf599dd36fd3b1f07d9103'
 if (-not (Test-Path -LiteralPath $cargo)) {
     New-Item -ItemType Directory -Force -Path (Split-Path $bootstrap) | Out-Null
     if (-not (Test-Path -LiteralPath $bootstrap)) {

@@ -524,7 +524,7 @@ async function publicTwoBookFlow() {
   };
   const selectFixtureAndPreset = async profileId => {
     const ui = control.page;
-    const details = ui.locator('[data-stage="browser"] details');
+    const details = ui.locator('[data-stage="browser"] > details');
     if (!await details.evaluate(element => element.open)) await details.locator('summary').click();
     const session = profileId ?? 'new';
     await ui.waitForFunction(id => [...document.querySelector('#session').options].some(option => option.value === id), session);
@@ -585,6 +585,12 @@ async function publicTwoBookFlow() {
     const profileId = path.basename(profile);
     require(/^saved-[a-f0-9-]{36}$/.test(profileId), 'two_book_profile_is_persistent');
     await running.app.reader.page.evaluate(() => { document.cookie = 'ktz_packaged_two_book=retained; Max-Age=86400; SameSite=Lax'; });
+    // Match the source recovery fixture: auto-hide with valid progress now
+    // succeeds. Change the range contract on the first turn to exercise an
+    // actual post-send failure and preservation/recovery of the first image.
+    await running.app.reader.page.locator('#next').evaluate(button => button.addEventListener('click', () => {
+      document.querySelector('#position').max = '13';
+    }, { once: true }));
     await ui.locator('#previewConfirmed').check(); await next();
     await wait(snapshot => snapshot.previewApproved);
     await next();
@@ -596,6 +602,7 @@ async function publicTwoBookFlow() {
     assert.doesNotMatch(await ui.locator('#message').textContent(), /取得は始めていません/);
     assert.doesNotMatch(await ui.locator('#nextAction').textContent(), /取得は始めていません/);
     assert.equal(await running.app.reader.page.locator('#position').inputValue(), '8');
+    await running.app.reader.page.locator('#position').evaluate(element => { element.max = '12'; });
     const firstOriginal = await running.app.image(1, true);
     await next(); await next(); await next();
     await ui.waitForFunction(() => document.querySelector('#exportResult').textContent.includes('保存先：'));

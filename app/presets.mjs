@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { AppError } from './store-client.mjs';
 import { kindleChromeConfig } from './stores/kindle.mjs';
+import { samePath, privateMetadata } from './private-path.mjs';
 
 // Definitions contain selectors, not scripts, URLs, authentication or book data.
 export const initialPresets = () => ({ version: 1, selected: 'kindle-visible', presets: [
@@ -28,8 +29,8 @@ export function validatePresets(value) {
 async function check(file) {
   try {
     const stat = await lstat(file);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 512_000
-      || path.resolve(await realpath(file)).toLowerCase() !== path.resolve(file).toLowerCase()) throw new AppError('unsafe_presets');
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 512_000 || !privateMetadata(stat)
+      || !samePath(await realpath(file), file)) throw new AppError('unsafe_presets');
     return true;
   } catch (e) { if (e.code === 'ENOENT') return false; throw e; }
 }

@@ -13,11 +13,12 @@
       <div class="flow-status"><strong id="state">接続中</strong><span id="reason"></span></div>
       <div class="next-action"><strong>次の1操作</strong><p id="nextAction">アプリへ接続しています。</p><button id="reconnect" hidden>接続を確認し直す</button></div>
       <p id="message" role="status" aria-live="polite"></p>
+      <p id="storageUncertain" role="alert" hidden></p>
     </div>
     <div id="operationStatus" data-status="idle" aria-busy="false">
       <div class="operation-heading"><span id="operationLabel" role="status">待機中</span><span id="operationPercent">0%</span></div>
       <div id="operationBar" role="progressbar" aria-label="現在の処理工程" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="operationFill"></div></div>
-      <small id="operationDetail">操作待ち</small>
+      <small id="operationDetail">操作待ち</small><small id="operationActivity" hidden></small><small>この割合は現在の処理工程であり、全冊の取得率ではありません。</small>
     </div>
     <div class="workflow-actions">
       <button id="decisionButton" class="primary">決定・次へ</button>
@@ -35,31 +36,60 @@
   </dialog>
   <header><h1>KindleToZip <small>手順ガイド</small></h1><p>1冊の画像を点検してZIP / CBZへ。既存ファイルは上書きしません。</p></header>
   <p id="connection"></p>
-  <aside>ログイン・本の選択・プレビュー承認・取得開始は本人が行ってください。</aside>
+  <aside id="workflowNotice">ログイン・本の選択・プレビュー承認・取得開始は本人が行ってください。</aside>
   <details id="stageTools"><summary>点検・再開の画面を直接開く（補助）</summary>
   <nav class="steps" aria-label="作業手順">
     <button data-stage-target="setup">1 作業を用意</button><button data-stage-target="browser">2 本を開く</button><button data-stage-target="capture">3 指定・取り込み</button><button data-stage-target="review">4 点検・編集</button><button data-stage-target="export">5 保存</button>
   </nav></details>
   <section data-stage="setup"><h2>1. 作業を用意する</h2>
-    <p>「決定・次へ」で新しい1冊の作業を用意します。前回の続きだけ、補助設定から中断データを開けます。</p>
-    <details><summary>作業先・中断データ・終了</summary>
+    <p>「決定・次へ」で新しい1冊の作業を用意します。保存済みの画像は、下のフォルダ指定から開いて確認できます。自動取得はしません。</p>
+    <div class="saved-workspace">
+      <h3>保存済みの画像を確認</h3>
+      <p>前回の「中断復帰用フォルダ」を指定してください。限定試験の作業は読取専用です。通常の作業は既存の点検・編集・保存へ進めます。</p>
+      <label>保存済みジョブのフォルダ<input id="recoverPath" placeholder="…\jobs\ジョブID"></label>
+      <button id="recover">保存済みの作業を開く（自動取得しない）</button>
+    </div>
+    <details id="setupOptions"><summary>作業先・中断データ・終了</summary>
     <button id="create">新規1冊ジョブ（個別操作）</button>
     <label>作業先（空欄はアプリ専用領域）<input id="baseDir" placeholder="既存のローカルフォルダの絶対パス"></label>
-    <label>中断ジョブのフォルダ<input id="recoverPath" placeholder="…\jobs\ジョブID"></label>
-    <button id="recover">中断データを開く（自動取得しない）</button><button id="closeJob">ジョブを閉じる</button>
+    <button id="closeJob">ジョブを閉じる</button>
+    <button id="newLimitedTrialButton" hidden>旧作業を残して新しい空ジョブを用意</button>
+    <p id="newLimitedTrialHelp" hidden>別の空ジョブを用意するだけです。接続・プレビュー・取得は自動開始せず、実Kindleの新しい試行許可も追加しません。</p>
     <p id="jobPath"></p><p id="issues"></p></details>
   </section>
   <section data-stage="browser"><h2>2. 専用ブラウザで本を開く</h2>
+    <p id="kindleUnsupported" role="status" hidden>実Kindleへの接続・撮影・取得は本人の具体的な許可まで停止中です。</p>
+    <div id="linuxSource" hidden>
+      <label>取得元<select id="captureSource"><option value="">取得元を選択してください</option><option value="kindle">Kindle（日本・保存専用セッション）</option><option value="owned-fixture">匿名の自作試料（新しい専用領域）</option></select></label>
+      <div id="portableKindleSelection" hidden>
+        <label>Kindleの保存専用セッション<select id="portableKindleSession"><option value="">保存セッションを明示選択</option></select></label>
+        <p id="portableKindleStatus" role="status">選択後に接続準備を確認できます。ログイン状態と実Kindle取得の許可は確認しません。</p>
+        <details id="portablePreparationOptions"><summary>接続準備の個別操作</summary>
+          <button id="preparePortableSession">選択した保存セッションの準備だけを確認</button>
+          <button id="openPreparedPortable">準備済みの専用Readerを開く</button>
+        </details>
+        <p id="portableScopeNotice">表示は保存領域の存在のみです。本人のログイン報告は自動検証ではありません。実Kindleへの接続・プレビュー・送り・保存は未許可です。</p>
+      </div>
+      <p id="linuxFixtureNotice">試料はアプリが生成します。実Kindleや既存プロファイルは開きません。プレビューは本人の操作時だけ表示し、有限の画面数を承認した後、別操作で開始します。</p>
+      <p>Portableのログイン入口とReaderの準備は同じ相対保存セッションを参照します。新規生成や別のセッションへの自動切替はしません。操作画面のブラウザには認証profileを渡しません。</p>
+      <p>他アプリ・物理入力・OS全体の非干渉や遮蔽は保証しません。</p>
+    </div>
+    <div id="kindleSource">
     <p>利用地域を選び、本人がログインして1冊を開きます。本棚タブは閉じなくてかまいません。</p>
     <label>Kindle利用地域<select id="kindleRegion"></select></label>
     <p id="kindleRegionHelp">表示言語とは別の設定です。地域を変えるには専用ブラウザを閉じ、対象タブの選択・プレビュー・承認をやり直してください。</p>
     <p id="kindleStartUrl"></p>
     <p>ログイン状態はEXE横に保存します。同じPC・Windows利用者で再利用でき、再認証が必要な場合もあります。</p>
     <p>「決定・次へ」で専用Kindleを開きます。本を開いた後も同じボタンで対象タブの選択へ進みます。</p>
+    </div>
     <details><summary>専用セッション・自作試料（補助）</summary>
     <button id="openKindle">選択地域のKindle Webを開く（個別操作）</button>
     <label>テスト画像 <select id="sampleFixture"><option value="">標準の自作試料</option><option value="image-review">匿名図形：片側表紙とボタン重なり</option><option value="kindle-chrome-dynamic">Kindle風：位置変化・操作バーの一時非表示</option><option value="kindle-chrome-hidden">Kindle風：初回から識別・位置・操作バー非表示（自動復帰なし）</option><option value="kindle-chrome-recoverable">Kindle風：初期非表示から上端DOMイベント列で復帰</option><option value="kindle-chrome-tabs">Kindle風：読書タブとライブラリの再プレビュー切分け</option><option value="kindle-chrome-ambiguous">匿名見開き：136位置で次へ候補が増える</option></select></label>
     <button id="openSample">選択した自作試料を開く</button>
+    <p id="ownedSampleNotice" role="status" hidden>有頭モードはアプリが生成する標準の自作試料だけです。対象内の入力と保存を確認しますが、他アプリ・物理入力・OS画面全体の非干渉や遮蔽は保証しません。実Kindleには使えません。</p>
+    <button id="openOwnedSample" hidden>標準の自作試料を専用有頭ブラウザで開く</button>
+    <p id="ownedPipeNotice" role="status" hidden>Linux所有pipeは匿名の自作試料と新規専用領域だけです。実Kindleには使えず、取得には有限の画面数が必要です。他アプリ・物理入力・OS全体の非干渉は保証しません。</p>
+    <button id="openOwnedPipe" hidden>匿名自作試料をLinux所有pipeで開く</button>
     <label><input type="checkbox" id="keep" checked> ログイン状態を次回も保存する（既定ON。OFFで新しい一時領域を使用）</label>
     <label>既存の専用セッション<select id="session"><option value="">前回の専用領域を再利用（なければ新規）</option><option value="new">新しい専用領域</option></select></label>
     <button id="closeBrowser">専用ブラウザを閉じる</button>
@@ -69,9 +99,10 @@
   </section>
   <section data-stage="capture"><h2>3. 指定 → プレビュー → 取り込み</h2>
     <label>対象の専用タブ<select id="readerTab"><option value="">対象タブを選択</option></select></label>
-    <p>読書画面のタブを選んで「決定・次へ」。選び直すとプレビューと承認をやり直します。</p>
-    <label>Kindleプリセット<select id="preset"></select></label>
-    <p>タイトル・位置バーのある画面はKindleプリセットでプレビューできます。合わない場合は詳細指定へ。編集はEXE横に保存します。</p>
+    <p id="readerTabHelp">読書画面のタブを選んで「決定・次へ」。選び直すとプレビューと承認をやり直します。</p>
+    <label>表示検査プリセット<select id="preset"></select></label>
+    <p id="sourceIdentity" role="status">選択した取得元を確認してください。プリセット名は実Kindleへの接続や対応の証明ではありません。</p>
+    <p id="presetHelp">タイトル・位置バーのある画面はKindleプリセットでプレビューできます。合わない場合は詳細指定へ。編集はEXE横に保存します。</p>
     <details id="presetEditor"><summary>プリセットの追加・編集</summary>
       <label>名前<input id="presetName" maxlength="100"></label>
       <label>検査方法<select id="presetMode"><option value="visible">表示中の項目を一意に自動検査</option><option value="selectors">プリセットの4項目を使用</option></select></label>
@@ -100,7 +131,7 @@
     <button id="approve">プレビューを承認 / 復帰を確認</button>
     <button id="start">この表示条件で取り込み開始</button>
     </details>
-    <p>自動判定できない場合は、詳細指定で対象を選んでください。</p>
+    <p id="manualHelp">自動判定できない場合は、詳細指定で対象を選んでください。</p>
     <details id="manualOptions"><summary>自動判定できない場合（詳細指定）</summary>
       <p>画面の4項目を指定してプレビューします。専用ブラウザの可視UIを使い、指定クリックでページは送りません。CSS・iframeを使う方法はさらに下の詳細設定にあります。</p>
       <button id="pickAll">4項目を続けて指定</button><button id="cancelPick" hidden>指定を取り消す</button>
@@ -124,38 +155,47 @@
       <h3>最後の確定画像と再開位置</h3>
       <img id="resumeImage" alt="最後の確定原本" hidden>
       <p id="resumeStatus" role="status"></p>
-      <p>現在位置が最後の画像の直後か、本人が照合してください。違う場合は公式画面で手動調整し、再プレビューしてください。</p>
+      <p>送り未送信の場合は、最後の確定画像と同じ画像・同じ位置から再開します。次のページへは送らず、明示開始後にアプリが1回送ります。</p>
+      <button id="resumePreview">現在位置を再プレビュー</button>
     </aside>
     <img id="previewImage" alt="保存前の元画像プレビュー" hidden>
     <div id="previewPages" class="preview-pages" aria-label="実際に出力するページのプレビュー"></div>
     <fieldset id="approval"><legend>プレビューを見てから開始</legend>
+    <p id="captureLimitMode">通常の自作試料では空欄は上限なしです。</p>
+    <details id="captureLimitOptions"><summary>取得画面数の上限（任意・詳細）</summary>
+    <label>今回の最大取得画面数<input id="maxCaptures" type="number" min="1" max="9007199254740991" step="1" inputmode="numeric" aria-describedby="captureLimitHelp captureLimitMode"></label>
+    <p id="captureLimitHelp">新しく保存する表示画面の数です。見開き分割後のページ数・実ページ範囲・全冊完了ではありません。上限の画面を保存したら次へを送らず停止します。変更後は再承認が必要です。</p>
+    </details>
     <label><input id="previewConfirmed" type="checkbox"> この本・領域・次へ方向・位置が正しい</label>
     <label id="resumeLabel" hidden><input id="resumeConfirmed" type="checkbox"> 最後の確定画像と現在位置を目視照合した（必要なら公式画面で手動調整）</label>
+    <p id="approvalModeStatus" role="status"></p>
     </fieldset>
     <p>終端候補・白紙・重複・ログアウト・不明な送りで停止します。取得範囲は目視確認してください。</p>
   </section>
-  <section data-stage="review"><h2>4. 画像を点検・並べ替え・クロップ</h2>
+  <section data-stage="review"><h2 id="reviewHeading">4. 画像を点検・並べ替え・クロップ</h2>
+    <p id="limitedReviewNotice" role="status" hidden>今回の限定試験はここで停止します。最大2表示・送り1回、PNG原本とジョブ記録のみです。再開・再取得・編集・ZIP/CBZ保存はできません。全冊取得の確認ではありません。</p>
     <button id="resumeCapture">画像を残して途中から再開</button>
     <p id="counts"></p>
-    <p>画像カードの「前へ」「後へ」で出力順を変更できます。「除外」しても原本は消えません。画像ごとに1枚または左右2枚と読み順を修正できます。判定は目視で確かめてください。</p>
+    <p id="normalCaptureResult" role="status" hidden></p>
+    <p class="reviewEditHelp">画像カードの「前へ」「後へ」で出力順を変更できます。「除外」しても原本は消えません。画像ごとに1枚または左右2枚と読み順を修正できます。判定は目視で確かめてください。</p>
     <button id="restoreOrder">全画像を取得順で採用</button>
     <details id="orderDetails"><summary>画像番号を指定して順序・採用を変更</summary><button id="review">点検モードへ</button><label>画像番号をカンマ区切り（省いた画像は除外・原本保持）<input id="order"></label><button id="saveOrder">順序・採用を保存</button></details>
     <p id="imageLoadStatus" role="status"></p>
     <div id="images" class="images"></div>
-    <h3>選択画像の非破壊クロップ</h3>
-    <p>画像カードで選ぶか画像IDを入力し、白・黒の端余白の候補を検出できます。内容認識ではありません。原本と見比べ、本文・枠・ページ番号が残る場合だけ適用してください。候補だけでは保存状態は変わりません。</p>
+    <h3 class="reviewEditHelp">選択画像の非破壊クロップ</h3>
+    <p class="reviewEditHelp">画像カードで選ぶか画像IDを入力し、白・黒の端余白の候補を検出できます。内容認識ではありません。原本と見比べ、本文・枠・ページ番号が残る場合だけ適用してください。候補だけでは保存状態は変わりません。</p>
     <button id="detectCrop">選択画像の余白を検出</button><p id="autoCropStatus" role="status"></p><output id="autoCropBounds"></output>
     <div class="crop-comparison"><figure><figcaption id="inspectCaption">原本</figcaption><img id="inspectImage" alt="選択した原本" hidden></figure><figure id="autoCropFigure" hidden><figcaption>余白除去の候補（未適用）</figcaption><canvas id="autoCropPreview" role="img" aria-label="余白除去候補のプレビュー"></canvas></figure></div>
     <div id="autoCropActions" hidden><button id="applyAutoCrop">候補を適用</button><button id="cancelAutoCrop">候補を取り消す</button></div>
     <div class="grid"><label>画像ID<input type="number" id="cropId" min="1"></label><label>x<input type="number" id="cropX" value="0" min="0"></label><label>y<input type="number" id="cropY" value="0" min="0"></label><label>幅<input type="number" id="cropWidth" min="1"></label><label>高さ<input type="number" id="cropHeight" min="1"></label></div>
     <button id="crop">クロップして結果を点検（原本保持）</button><button id="resetCrop">全原寸へ戻す</button>
-    <p>点検後は「決定・次へ」でZIP保存へ進みます。</p>
+    <p class="reviewEditHelp">点検後は「決定・次へ」でZIP保存へ進みます。</p>
   </section>
   <section data-stage="export"><h2>5. ZIPを保存</h2>
     <p>初期保存先はこの作業のフォルダです。既存ファイルは上書きしません。</p>
     <label>保存先のファイル名<input id="destination" placeholder="既存フォルダ\作品.zip"></label>
-    <button id="chooseDestination">保存先を選ぶ…</button><p>ダイアログで選ぶだけでは保存・取得を開始しません。手入力も利用できます。</p>
-    <p>停止・プレビュー失敗後も、保存済みの採用画像をZIPにできます。</p>
+    <button id="chooseDestination">保存先を選ぶ…</button><p id="destinationDialogHelp">ダイアログで選ぶだけでは保存・取得を開始しません。手入力も利用できます。</p>
+    <p id="ordinaryExportAvailability">停止・プレビュー失敗後も、保存済みの採用画像をZIPにできます。</p>
     <p id="exportHelp" role="status"></p>
     <details id="exportOptions"><summary>範囲確認・点検済みの印（任意）</summary>
     <label>別形式（必要な場合のみ）<select id="format"><option value="zip">ZIP（通常）</option><option value="cbz">CBZ（任意）</option></select></label>
@@ -163,6 +203,6 @@
     <label><input id="warningsAccepted" type="checkbox"> 点検済みの印（任意・保存条件ではありません）</label>
     <button id="export">ZIPを検証して保存（個別操作）</button></details><pre id="exportResult"></pre>
   </section>
-  <footer>画像・書名の外部送信やテレメトリはありません。Kindleと公式認証先への通信は必要です。</footer>
+  <footer id="trafficNotice">画像・書名の外部送信やテレメトリはありません。Kindleと公式認証先への通信は必要です。</footer>
 </body>
 </html>

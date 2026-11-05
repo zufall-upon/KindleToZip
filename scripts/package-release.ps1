@@ -19,7 +19,7 @@ try {
     Copy-Item -LiteralPath LICENSE -Destination $packageDir
     Copy-Item -LiteralPath docs/portable.md -Destination "$packageDir/README.md"
     $notices = New-Item -ItemType Directory -Path "$packageDir/third-party-notices"
-    foreach ($name in @('playwright','playwright-core')) {
+    foreach ($name in @('playwright','playwright-core','pngjs')) {
         $destination = New-Item -ItemType Directory -Path "$notices/$name"
         Get-ChildItem -Path "node_modules/$name/*" -File | Where-Object { $_.Name -match '^(LICENSE|NOTICE|COPYING)' } | Copy-Item -Destination $destination
     }
@@ -51,7 +51,7 @@ try {
             [IO.File]::WriteAllText((Join-Path $destination 'IJG-NOTICE.txt'), $acknowledgement + $header.Value.TrimEnd() + "`n */`n", [Text.UTF8Encoding]::new($false))
         }
     }
-    Invoke-WebRequest -Uri https://raw.githubusercontent.com/nodejs/node/v22.14.0/LICENSE -OutFile "$notices/Node.js-LICENSE"
+    Invoke-WebRequest -Uri https://raw.githubusercontent.com/nodejs/node/v22.22.1/LICENSE -OutFile "$notices/Node.js-LICENSE"
     $browsers = (Resolve-Path artifacts/browsers).Path
     Get-ChildItem -LiteralPath $browsers -Recurse -File | Where-Object { $_.Name -match '^(LICENSE|NOTICE|ABOUT|COPYING|COPYRIGHT)([._-]|$)' } | ForEach-Object {
         $relative = [IO.Path]::GetRelativePath($browsers, $_.FullName)

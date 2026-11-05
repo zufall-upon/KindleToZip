@@ -65,6 +65,10 @@ v0.1.6 also adds a **Kindle region** selector for **Japan, United States and Uni
 
 **From source:** you need **Windows x64, Git, Node.js 22+, and PowerShell 7**. The [setup guide](docs/getting-started.md) installs an isolated Rust toolchain and browser, then launches the app with `npm start`. Start with the self-authored sample, without an Amazon login or a real book.
 
+**Ubuntu x64 candidate:** v0.2.0 prepares a Linux Portable package alongside Windows. The dedicated real-reader path requires Wayland and a supported Chromium Snap; source launch supports anonymous fixtures. The development installation completed a user-selected 161-image book export on 2026-11-05, including interruption recovery, ZIP content/order verification and normal shutdown. This is distinct from hosted package verification. See the [Ubuntu Portable guide](docs/ubuntu-portable.ja.md) and [release preparation](docs/releasing.md).
+
+On Ubuntu 26.04, anonymous ZIP/CBZ destination selection and cancellation were manually exercised with the installed Zenity; the user reported normal display. No native-dialog image was provided or independently inspected. These checks confirmed that selection alone creates no archive; ZIP/CBZ output/content checks are separate integration evidence, not native-picker export or real-Kindle acceptance.
+
 ## Before you use it
 
 - **Quality:** v0.1.6 passed every mandatory exact-source CI and tagged-release gate, including public source UI, deployment and packaged public selection/export regressions. Earlier failed runs remain historical. The user's local-improvement confirmation and earlier v0.1.2 clean-Windows/whole-book report are separate from this hosted EXE's fixture checks; see [validation history and release evidence](docs/validation.md).

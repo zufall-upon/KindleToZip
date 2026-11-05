@@ -1,12 +1,12 @@
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { controllerPath, requireControllerPath } from '../../app/controller-path.mjs';
 import { ProbeError } from './probe.mjs';
 
-export const guardExecutable = fileURLToPath(new URL('../../artifacts/rust-target/debug/ktz-g02-controller.exe', import.meta.url));
+export const guardExecutable = controllerPath();
 
 export class RustGuard {
   constructor() {
-    this.child = spawn(guardExecutable, [], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+    this.child = spawn(requireControllerPath(), [], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
     this.id = 0;
     this.pending = null;
     this.queue = Promise.resolve();

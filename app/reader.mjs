@@ -1,9 +1,16 @@
 import { fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { AppError } from './store-client.mjs';
+import { withReaderChromeHidden } from './reader-chrome-overlay.mjs';
 import { visibleCaptureGeometry } from './visible-geometry.mjs';
 import { translateCopy } from './ui/messages.mjs';
 import { createStoreAdapter } from './stores/index.mjs';
+import { ownedSampleOptions, bindOwnedSample } from './owned-sample.mjs';
+import { resolveOwnedSession } from './owned-session.mjs';
+import { sampleConfig } from './sample-reader-config.mjs';
+import { kindleChromeConfig } from './stores/kindle.mjs';
+import { captureStartupFailure, captureStartupDiagnostic, singleCaptureContext } from './expected-capture-diagnostic.mjs';
+export { sampleConfig } from './sample-reader-config.mjs';
 
 process.env.PLAYWRIGHT_BROWSERS_PATH ||= fileURLToPath(new URL('../artifacts/browsers/', import.meta.url));
 const { chromium } = await import('playwright');
@@ -11,6 +18,10 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const MAX_CAPTURE_PIXELS = 16_000_000;
 const MAX_CAPTURE_BYTES = 32 * 1024 * 1024;
+// Minted only by a real page-input dispatch, never by configuration/API input.
+// An uncertain send remains sticky until a new explicit preview (ordinary jobs
+// only; the limited budget independently forbids that recovery).
+const turns = new WeakMap();
 
 function pngDimensions(bytes) {
   if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes.at(-2) === 0xff && bytes.at(-1) === 0xd9) {
@@ -163,10 +174,6 @@ function visibleConfigurationCandidates() {
   return { regions, identities, positions, next };
 }
 
-export const sampleConfig = {
-  frame: '', reader: '#sheet', next: '#next', identity: 'h1', position: '#position',
-};
-
 export function readerContextOptions({ sampleUrl, headless = false } = {}) {
   return {
     headless, viewport: { width: 1100, height: 850 }, deviceScaleFactor: 1,
@@ -191,23 +198,107 @@ export async function configureReaderNetwork(context, sampleUrl) {
 // The live adapter uses only visible official UI chosen by the user. Unknown
 // layouts are rejected, not replaced by hidden APIs or image extraction.
 export class Reader {
-  static async open({ profile, sampleUrl, regionId = 'jp', preconfiguredSample = true, headless = false, onChange, readGuard }) {
-    const adapter = createStoreAdapter({ regionId, sampleUrl });
-    const context = await chromium.launchPersistentContext(profile, readerContextOptions({ sampleUrl, headless }));
+  static async open({ profile, sampleUrl, ownedFixture, ownedSession, ownedPipe = false, regionId = 'jp', preconfiguredSample = true, headless = false, onChange, readGuard, handleSignals = true, lifecycle = { profile, state: 'not_started' } }) {
+    const pipe = ownedSession || ownedPipe ? resolveOwnedSession(ownedSession ?? ownedFixture) : null;
+    const ownedOptions = ownedFixture && !pipe ? ownedSampleOptions(ownedFixture) : null;
+    if (pipe) sampleUrl = pipe.sampleUrl;
+    else if (ownedFixture) sampleUrl = ownedFixture.url;
+    const adapter = pipe?.adapter ?? createStoreAdapter({ regionId, sampleUrl });
+    const options = { ...readerContextOptions({ sampleUrl, headless }),
+      ...(ownedOptions ?? {}),
+      ...(handleSignals ? {} : { handleSIGINT: false, handleSIGTERM: false }) };
+    // The record belongs to this particular profile/launch, not to an error
+    // message or a later Reader. Rejection after launch begins proves nothing
+    // about resources Playwright may have created before returning a context.
+    lifecycle.state = 'starting';
+    let context, browser, ownedPage;
+    try {
+      if (pipe) {
+        await pipe.beforeAttach?.();
+        browser = await chromium.connectOverCDP(pipe.transport, { noDefaults: true, timeout: 30_000 });
+        pipe.startupRecord?.reached('pipe_attached');
+        await pipe.afterAttach?.(browser);
+        pipe.startupRecord?.readerInitialization?.('page_identity', 'start');
+        if (pipe.startupDiagnostics) context = singleCaptureContext(browser);
+        else {
+          if (browser.contexts().length !== 1) throw new AppError('target_changed');
+          [context] = browser.contexts();
+          if (context.pages().length !== 1) throw new AppError('target_changed');
+        }
+        [ownedPage] = context.pages();
+      } else context = await chromium.launchPersistentContext(profile, options);
+    } catch (error) {
+      await pipe?.startupRecord?.failed(error, 'pipe_attach');
+      if (pipe?.startupDiagnostics && !captureStartupDiagnostic(error)) {
+        error = captureStartupFailure('connection', 'connection_failed', error?.code === 'target_changed' ? 'target_changed' : 'operation_failed');
+      }
+      if (pipe) {
+        try { await pipe.close(); lifecycle.state = 'closed_confirmed'; }
+        catch (closeError) { lifecycle.state = 'close_unconfirmed'; lifecycle.failure = closeError; }
+      } else { lifecycle.state = 'close_unconfirmed'; lifecycle.failure = error; }
+      throw error;
+    }
+    lifecycle.state = 'active';
     try {
       await configureReaderNetwork(context, sampleUrl);
-      const page = context.pages()[0] ?? await context.newPage();
+      // Network setup yields even without routes. The restored page may have
+      // disappeared or been replaced meanwhile; ownership never grants creation
+      // of a replacement tab or selection of a different restored page.
+      if (pipe) {
+        const pages = context.pages();
+        if (pages.length !== 1 || pages[0] !== ownedPage || ownedPage.isClosed()) {
+          if (pipe.startupDiagnostics) throw captureStartupFailure('page', pages.length > 1 ? 'multiple_pages' : 'target_replaced');
+          throw new AppError('target_changed');
+        }
+        pipe.startupRecord?.readerInitialization?.('page_identity', 'complete');
+      }
+      const page = pipe ? ownedPage : context.pages()[0] ?? await context.newPage();
       page.setDefaultTimeout(1800);
-      const reader = new Reader(context, page, sampleUrl, onChange, preconfiguredSample, adapter);
+      const reader = new Reader(context, page, sampleUrl, onChange, preconfiguredSample, adapter, lifecycle);
       reader.readGuard = readGuard;
-      await page.goto(adapter.startUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      reader.ownedPipe = pipe;
+      if (pipe) {
+        pipe.startupRecord?.readerInitialization?.('pipe_ready', 'start');
+        await pipe.ready(page);
+        pipe.startupRecord?.readerInitialization?.('pipe_ready', 'complete');
+        // noDefaults leaves Playwright's viewport unset. Preserve the actual
+        // window dimensions explicitly so shared geometry can validate clips.
+        pipe.startupRecord?.readerInitialization?.('viewport_read', 'start');
+        const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+        if (!Number.isInteger(viewport.width) || !Number.isInteger(viewport.height) || viewport.width < 16 || viewport.height < 16) {
+          if (pipe.startupDiagnostics) throw captureStartupFailure('viewport', 'viewport_unavailable', 'window_not_available');
+          throw new AppError('window_not_available');
+        }
+        pipe.startupRecord?.readerInitialization?.('viewport_read', 'complete');
+        pipe.startupRecord?.readerInitialization?.('viewport_apply', 'start');
+        await page.setViewportSize(viewport);
+        pipe.startupRecord?.readerInitialization?.('viewport_apply', 'complete');
+      }
+      else await page.goto(adapter.startUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      if (pipe) {
+        pipe.startupRecord?.readerInitialization?.('pipe_bind', 'start');
+        reader.ownedSessionGuard = await pipe.bind(reader);
+        pipe.startupRecord?.readerInitialization?.('pipe_bind', 'complete');
+      }
+      else if (ownedFixture) reader.ownedSampleGuard = await bindOwnedSample(ownedFixture, reader);
+      pipe?.startupRecord?.reached('reader_initialized');
       return reader;
-    } catch (error) { await context.close(); throw error; }
+    } catch (error) {
+      await pipe?.startupRecord?.failed(error, 'reader_initialize');
+      try { if (pipe) await pipe.close(); else await context.close(); lifecycle.state = 'closed_confirmed'; }
+      catch (closeError) {
+        lifecycle.state = 'close_unconfirmed';
+        lifecycle.failure = new AggregateError([error, closeError], 'reader_initialization_and_close_failed', { cause: error });
+        throw lifecycle.failure;
+      }
+      throw error;
+    }
   }
 
-  constructor(context, page, sampleUrl, onChange, preconfiguredSample = true, adapter = createStoreAdapter({ sampleUrl })) {
+  constructor(context, page, sampleUrl, onChange, preconfiguredSample = true, adapter = createStoreAdapter({ sampleUrl }), lifecycle = { state: 'active' }) {
     Object.assign(this, { context, page, sampleUrl, onChange });
     Object.defineProperty(this, 'adapter', { value: adapter, enumerable: true });
+    Object.defineProperty(this, 'lifecycle', { value: lifecycle });
     this.id = randomUUID();
     this.mappingRevision = 0;
     this.tabRevision = 0;
@@ -239,6 +330,11 @@ export class Reader {
     page.on('framenavigated', frame => {
       const candidate = this.readerCandidate;
       if (page === this.page && candidate && (frame === page.mainFrame() || frame === candidate.frame)) void this.clearReaderCandidate();
+      // Playwright includes pushState/replaceState in this event. A pinned
+      // normal Reader already observes actual document commits via CDP and
+      // checks sticky route/book/position identity at every operation boundary.
+      // Do not revoke that binding merely because its URL was normalized.
+      if (this.ownedSessionGuard?.handlesNavigation?.(page, frame)) return;
       this.changed();
     });
     page.on('download', download => { void download.cancel(); this.changed(); });
@@ -284,8 +380,15 @@ export class Reader {
   async setCaptureScale(scale) {
     if (![1, 2].includes(scale)) throw new AppError('invalid_capture_scale');
     if (this.page.isClosed()) throw new AppError('target_changed');
-    const viewport = this.page.viewportSize();
+    const viewport = this.page.viewportSize() ?? (this.ownedPipe ? await this.page.evaluate(() => ({ width: innerWidth, height: innerHeight })) : null);
     if (!viewport) throw new AppError('capture_scale_unavailable');
+    // noDefaults also applies to a user-selected new tab. Establish the same
+    // actual viewport contract as the initial owned page, before scale setup;
+    // never weaken visibleCaptureGeometry's unknown/mismatch rejection.
+    if (this.ownedPipe && !this.page.viewportSize()) {
+      if (!Number.isInteger(viewport.width) || !Number.isInteger(viewport.height) || viewport.width < 16 || viewport.height < 16) throw new AppError('capture_scale_unavailable');
+      await this.page.setViewportSize(viewport);
+    }
     if (this.scaleSession && this.scalePage !== this.page) {
       await this.scaleSession.detach().catch(() => {});
       this.scaleSession = null; this.scalePage = null;
@@ -335,7 +438,13 @@ export class Reader {
     // not copied Kindle markup or a guess about its internal rendering.
     if (!this.adapter.acceptsUrl(page.url())) throw new AppError('auth_or_target_changed');
     const library = await this.adapter.isLibrary(page);
-    if (library) {
+    // A fixed expected-book session can bind the actual reader document even
+    // when the service uses a library-prefixed reader route. Do not relax the
+    // general library guard: the session must reassert its exact ASIN/title and
+    // original document before treating that same page as a reader.
+    if (library && this.ownedSessionGuard?.allowsLibraryReader) {
+      await this.ownedSessionGuard.assertIdentity();
+    } else if (library) {
       this.bound = null;
       const error = new AppError('reader_library_selected', { field: 'reader', cause: 'library_selected' });
       error.stage = 'reader_target_check';
@@ -344,6 +453,7 @@ export class Reader {
   }
 
   async autoConfiguration() {
+    if (this.ownedSessionGuard?.limited || this.ownedSessionGuard?.normal) return { ...kindleChromeConfig, frames: {} };
     const page = this.page, generation = this.generation;
     const deadline = Date.now() + 1200;
     for (;;) {
@@ -691,7 +801,9 @@ export class Reader {
   }
 
   async configure(config) {
+    turns.delete(this);
     await this.adoptVisibleReaderPage();
+    (this.ownedSessionGuard ?? this.ownedSampleGuard)?.validateConfig(config);
     if (!config || typeof config !== 'object') throw new AppError('reader_configuration_required');
     for (const key of ['frame', 'reader', 'next', 'identity', 'position']) {
       if (typeof config[key] !== 'string' || config[key].length > 400 || (key !== 'frame' && !config[key].trim())) throw new AppError('reader_configuration_required');
@@ -725,8 +837,13 @@ export class Reader {
     return this.adapter.revealChrome(this, recovery, authIndicators);
   }
 
-  async read(recovery = null) {
+  async read(recovery = null, navigation = false) {
+    const turn = !recovery && !navigation ? turns.get(this) : null;
+    if (turn && (turn.phase === 'failed' || turn.phase === 'pending')) throw new AppError('advance_uncertain');
+    if (turn && (turn.page !== this.page || turn.generation !== this.generation || turn.config !== this.config || turn.bound !== this.bound)) throw new AppError('target_changed');
     if (this.readGuard) await this.readGuard();
+    const ownedGuard = this.ownedSessionGuard ?? this.ownedSampleGuard;
+    const paint = ownedGuard ? await ownedGuard.observe() : undefined;
     const pages = this.context.pages();
     if (!this.config || this.page.isClosed() || pages.length !== this.expectedPages.size || pages.some(page => !this.expectedPages.has(page))) throw new AppError('target_changed');
     await this.assertReaderDocument(this.page);
@@ -735,6 +852,7 @@ export class Reader {
     // Only explicitly configured visible elements are read; no cookies, console,
     // network bodies, hidden service state or complete DOM is collected.
     const markerTexts = {};
+    let progress = null;
     const visible = async key => {
       const selector = this.config[key];
       const frame = this.config.frames?.[key] ?? this.config.frame;
@@ -770,6 +888,11 @@ export class Reader {
           // Only the exact node observed while visibly inspecting this mapping
           // may temporarily hide. Read its current displayed value, never a
           // cached string or a neighboring/hidden service API.
+        } else if (same && key === 'next' && turn && this.adapter.rangeAdvanced(turn.before, progress)
+          && (turn.phase === 'sent' || turn.phase === 'confirmed' && JSON.stringify(progress) === JSON.stringify(turn.confirmed))) {
+          // The same once-visible node is still structurally/direction checked,
+          // but is not an action target here. Real range progress, not changed
+          // pixels or an invisible button alone, authorizes this observation.
         } else if (same && key === 'next' && (!recovery || picked.point && !this.isKindleChromeConfiguration())) {
           // Normal page-local hover may reveal an auto-hiding official control.
           // Preserve that explicit picker opt-in outside the DOM-only Kindle
@@ -777,6 +900,20 @@ export class Reader {
           // Do not force CSS visibility or dispatch a hidden/synthetic click.
           if (picked.point) await this.page.mouse.move(picked.point.x, picked.point.y);
           await locator.waitFor({ state: 'visible', timeout: 700 }).catch(() => {});
+          if (navigation && typeof navigation === 'object' && this.isKindleChromeConfiguration()) {
+            console.log(`KTZ_NEXT_REVEAL:${picked.point ? 'point_present' : 'point_absent'}`);
+            if (!await locator.isVisible() && !navigation.revealAttempted) {
+              navigation.revealAttempted = true;
+              console.log('KTZ_NEXT_REVEAL:attempted');
+              const observation = await this.revealKindleChrome(navigation);
+              console.log(`KTZ_NEXT_REVEAL:${observation === 'dispatched' ? 'dispatched' : 'rejected'}`);
+              if (this.page !== navigation.page || this.generation !== navigation.generation || this.config !== navigation.config
+                  || !await locator.evaluate((element, original) => element === original, picked.handle).catch(() => false)) throw new AppError('target_changed');
+              console.log('KTZ_NEXT_REVEAL:same_node');
+              if (observation === 'dispatched') await locator.waitFor({ state: 'visible', timeout: 700 }).catch(() => {});
+              console.log(`KTZ_NEXT_REVEAL:${await locator.isVisible() ? 'visible' : 'still_hidden'}`);
+            }
+          }
           if (!await locator.isVisible()) reject('hidden');
         } else if (recovery && ['identity', 'position', 'next'].includes(key)) {
           recovery.initialHiddenField ??= key;
@@ -802,7 +939,7 @@ export class Reader {
       if (['identity', 'position', 'next'].includes(key) && !same) {
         // A bound preview owns these exact nodes. Only a new explicit preview
         // may establish evidence for a replacement, even if its text is equal.
-        if (this.bound) throw new AppError('target_changed');
+        if (this.bound && !(key === 'identity' && this.ownedSessionGuard?.allowsIdentityRedraw)) throw new AppError('target_changed');
         // A preset and a manually configured selector acquire identical,
         // short-lived evidence only after this actual visible-node check.
         // Initial hidden content therefore remains untrusted.
@@ -820,13 +957,14 @@ export class Reader {
     const region = await visible('reader');
     const identity = await visible('identity');
     const position = await visible('position');
+    progress = await this.adapter.rangePosition(this.config, position);
     const next = await visible('next');
     await this.adapter.validateMarkers({ config: this.config, region, identity, position, next });
     const geometry = await visibleCaptureGeometry(this.page, region);
     const clip = geometry.clip;
     const identityText = markerTexts.identity ?? await identity.evaluate(markerText, { field: 'identity' });
     const positionText = markerTexts.position ?? await position.evaluate(markerText, { field: 'position' });
-    const viewport = this.page.viewportSize();
+    const viewport = this.page.viewportSize() ?? (this.ownedPipe ? await this.page.evaluate(() => ({ width: innerWidth, height: innerHeight })) : null);
     const invalidDisplay = (field, cause) => { throw new AppError('display_or_position_unknown', { field, cause }); };
     if (!identityText) invalidDisplay('identity', 'label_empty');
     if (!positionText) invalidDisplay('position', 'label_empty');
@@ -856,29 +994,44 @@ export class Reader {
     if (!geometry.unobscured) rejectSurface('blocked_hit');
     await this.adapter.assertState(this.page);
     const identified = this.adapter.identify(url, identityText, positionText);
-    const target = digest(JSON.stringify([url.href, this.config, identityText, clip, display, geometry.viewports, this.captureScale, this.generation]));
-    return { target, ...identified, clip, deviceScaleFactor: this.captureScale,
+    const documentIdentity = this.ownedSessionGuard?.documentIdentity;
+    const target = digest(JSON.stringify([documentIdentity ?? url.href, this.config, identityText, clip, display, geometry.viewports, this.captureScale, this.generation]));
+    await this.ownedSessionGuard?.assertIdentity();
+    if (turn) {
+      // Locator expressions may resolve again across the asynchronous checks.
+      // Never finish a post-turn observation on a newly substituted marker.
+      if (this.pickedMarkers.next !== turn.next || this.pickedMarkers.position !== turn.position
+        || !await next.evaluate((node, original) => node === original, turn.next.handle).catch(() => false)
+        || !await position.evaluate((node, original) => node === original, turn.position.handle).catch(() => false))
+        throw new AppError('target_changed');
+    }
+    if (progress && String(progress.value) !== positionText) throw new AppError('target_changed');
+    return { target, ...identified, clip, paint, progress, deviceScaleFactor: this.captureScale,
       nextDisabled: !await next.isEnabled() || await next.getAttribute('aria-disabled') === 'true', next };
   }
 
-  same(a, b) { return a.target === b.target && a.position === b.position && a.nextDisabled === b.nextDisabled; }
+  same(a, b) { return a.target === b.target && a.position === b.position && a.nextDisabled === b.nextDisabled && a.paint === b.paint
+    && JSON.stringify(a.progress) === JSON.stringify(b.progress); }
 
-  async stable(recovery = null) {
-    const a = await this.read(recovery);
+  async stable(recovery = null, navigation = false) {
+    const a = await this.read(recovery, navigation);
     await sleep(140);
-    const b = await this.read(recovery);
+    const b = await this.read(recovery, navigation);
     if (!this.same(a, b)) throw new AppError('display_unstable');
     return b;
   }
 
-  async screenshotVisibleClip(clip) {
+  async screenshotVisibleClip(clip, purpose) {
     let timeout;
     try {
       if (!this.scaleSession || this.scalePage !== this.page) await this.setCaptureScale(this.captureScale);
       // Geometry is viewport-relative; CDP's screenshot clip is document-relative.
       // Read the offset without scrolling the page or extending the visible area.
       const offset = await this.page.evaluate(() => ({ x: scrollX, y: scrollY }));
-      const result = await Promise.race([
+      // The preceding geometry/control checks contain awaits. Recheck after
+      // them, directly at the actual screenshot boundary, not just on entry.
+      await this.ownedSessionGuard?.assertIdentity();
+      const dispatch = () => Promise.race([
         this.scaleSession.send('Page.captureScreenshot', {
           format: this.imageFormat,
           ...(this.imageFormat === 'jpeg' ? { quality: this.jpegQuality } : {}),
@@ -887,9 +1040,13 @@ export class Reader {
         }),
         new Promise((_, reject) => { timeout = setTimeout(() => reject(new AppError('capture_failed')), 2500); }),
       ]);
+      const budget = this.ownedSessionGuard?.singleRunBudget;
+      const result = budget ? await budget.screenshot(purpose, dispatch) : await dispatch();
+      await this.ownedSessionGuard?.assertIdentity();
       if (typeof result?.data !== 'string') throw new AppError('capture_failed');
       return Buffer.from(result.data, 'base64');
     } catch (error) {
+      this.ownedSessionGuard?.singleRunBudget?.fail();
       if (error instanceof AppError) throw error;
       throw new AppError('capture_failed');
     } finally {
@@ -897,7 +1054,7 @@ export class Reader {
     }
   }
 
-  async screenshotWithoutSelectedNavigation(before) {
+  async screenshotWithoutSelectedNavigation(before, purpose) {
     const handle = await before.next.elementHandle();
     if (!handle) throw new AppError('target_changed');
     let original = null;
@@ -917,7 +1074,7 @@ export class Reader {
         });
         if (original) await handle.evaluate(element => element.style.setProperty('visibility', 'hidden', 'important'));
       }
-      return await this.screenshotVisibleClip(clip);
+      return await withReaderChromeHidden(this, () => this.screenshotVisibleClip(clip, purpose));
     } finally {
       try {
         if (original) await handle.evaluate((element, previous) => {
@@ -931,47 +1088,76 @@ export class Reader {
   }
 
   async preview(recovery = null) {
-    const before = await this.stable(recovery);
-    const png = await this.screenshotWithoutSelectedNavigation(before);
-    const dimensions = pngDimensions(png);
-    const expectedWidth = before.clip.width * before.deviceScaleFactor, expectedHeight = before.clip.height * before.deviceScaleFactor;
-    if (Math.abs(dimensions[0] - expectedWidth) > 1.1 || Math.abs(dimensions[1] - expectedHeight) > 1.1) throw new AppError('capture_dimensions_mismatch');
-    if (!this.same(before, await this.read())) throw new AppError('target_changed');
-    this.bound = { target: before.target, position: before.position, dimensions, book: before.book };
-    return { png, book: before.book, position: before.position, dimensions, cssDimensions: [before.clip.width, before.clip.height], deviceScaleFactor: before.deviceScaleFactor,
-      recovery: { initialHiddenField: recovery?.initialHiddenField ?? null, observation: recovery?.revealObservation ?? 'not_needed' } };
+    turns.delete(this); // A preview must establish visible markers afresh.
+    const endPreviewObservation = this.ownedSessionGuard?.beginPreview?.();
+    try {
+      const before = await this.stable(recovery);
+      await this.ownedSessionGuard?.assertIdentity();
+      const png = await this.screenshotWithoutSelectedNavigation(before, 'preview');
+      const dimensions = pngDimensions(png);
+      const expectedWidth = before.clip.width * before.deviceScaleFactor, expectedHeight = before.clip.height * before.deviceScaleFactor;
+      if (Math.abs(dimensions[0] - expectedWidth) > 1.1 || Math.abs(dimensions[1] - expectedHeight) > 1.1) throw new AppError('capture_dimensions_mismatch');
+      if (!this.same(before, await this.read())) throw new AppError('target_changed');
+      this.bound = { target: before.target, position: before.position, dimensions, book: before.book, paint: before.paint };
+      return { png, book: before.book, position: before.position, dimensions, cssDimensions: [before.clip.width, before.clip.height], deviceScaleFactor: before.deviceScaleFactor,
+        recovery: { initialHiddenField: recovery?.initialHiddenField ?? null, observation: recovery?.revealObservation ?? 'not_needed' } };
+    } catch (error) { this.ownedSessionGuard?.singleRunBudget?.fail(); throw error; }
+    finally { endPreviewObservation?.(); }
   }
 
-  async requireBound() {
-    const s = await this.stable();
-    if (!this.bound || s.target !== this.bound.target || s.position !== this.bound.position) throw new AppError('target_changed');
+  async requireBound(navigation = false) {
+    const s = await this.stable(null, navigation);
+    if (!this.bound || s.target !== this.bound.target || s.position !== this.bound.position || s.paint !== this.bound.paint) throw new AppError('target_changed');
     return s;
   }
 
   async capture() {
-    const before = await this.requireBound();
-    const bound = this.bound;
-    const png = await this.screenshotWithoutSelectedNavigation(before);
-    if (this.bound !== bound) throw new AppError('target_changed');
-    const dimensions = pngDimensions(png);
-    if (dimensions[0] !== bound.dimensions[0] || dimensions[1] !== bound.dimensions[1]) throw new AppError('capture_dimensions_mismatch');
-    if (!this.same(before, await this.read())) throw new AppError('target_changed');
-    return png;
+    try {
+      const before = await this.requireBound();
+      const bound = this.bound;
+      await this.ownedSessionGuard?.assertIdentity();
+      const png = await this.screenshotWithoutSelectedNavigation(before, 'capture');
+      if (this.bound !== bound) throw new AppError('target_changed');
+      const dimensions = pngDimensions(png);
+      if (dimensions[0] !== bound.dimensions[0] || dimensions[1] !== bound.dimensions[1]) throw new AppError('capture_dimensions_mismatch');
+      if (!this.same(before, await this.read())) throw new AppError('target_changed');
+      return png;
+    } catch (error) { this.ownedSessionGuard?.singleRunBudget?.fail(); throw error; }
   }
 
   async advance(cancelled, onDispatchState = () => {}) {
+    try { return await this.advanceBound(cancelled, onDispatchState); }
+    catch (error) {
+      const turn = turns.get(this);
+      if (turn && turn.phase !== 'confirmed') turn.phase = 'failed';
+      this.ownedSessionGuard?.singleRunBudget?.fail(); throw error;
+    }
+  }
+
+  async advanceBound(cancelled, onDispatchState = () => {}) {
+    const previous = turns.get(this);
+    if (previous && previous.phase !== 'confirmed') throw new AppError('advance_uncertain');
+    // A bound, once-visible fixed-preset next may auto-hide between screenshot
+    // and input. Reuse the existing non-click chrome reveal at most once for
+    // this entire advance, without inheriting an explicit preview's wait policy.
+    const navigation = { page: this.page, generation: this.generation, config: this.config, revealAttempted: false };
     await onDispatchState({ stage: 'advance_preflight', status: 'not_sent' });
-    const before = await this.requireBound();
+    await onDispatchState({ stage: 'advance_bound_check', status: 'not_sent' });
+    const before = await this.requireBound(navigation);
     if (cancelled()) throw new AppError('cancelled');
+    await onDispatchState({ stage: 'advance_next_check', status: 'not_sent' });
     if (before.nextDisabled) throw new AppError('end_candidate');
+    await onDispatchState({ stage: 'advance_handle_check', status: 'not_sent' });
     const button = await before.next.elementHandle();
     if (!button) throw new AppError('reader_ui_unknown');
     try {
       // A trial may wait for an overlay or animation, but must never send a
       // click. Revalidate cancellation and the bound book after that wait.
+      await onDispatchState({ stage: 'advance_trial_check', status: 'not_sent' });
       await button.click({ trial: true, timeout: 1800 });
       if (cancelled()) throw new AppError('cancelled');
-      const current = await this.requireBound();
+      await onDispatchState({ stage: 'advance_recheck', status: 'not_sent' });
+      const current = await this.requireBound(navigation);
       if (!this.same(before, current) || !await current.next.evaluate((element, original) => element === original, button)) throw new AppError('target_changed');
       // Confirm the top document does not cover a configured iframe. Deeper
       // frame nesting has no verified coordinate contract and is rejected.
@@ -986,7 +1172,8 @@ export class Reader {
         // anywhere after this point must never authorize an automatic resend.
         await onDispatchState({ stage: 'advance_dispatch', status: 'unknown' });
         if (cancelled()) throw new AppError('cancelled');
-        await this.requireBound();
+        await this.requireBound(navigation);
+        console.log('KTZ_NEXT_REVEAL:pre_dispatch_checked');
         const rectangle = element => {
           const { x, y, width, height } = element.getBoundingClientRect();
           return { x, y, width, height };
@@ -1016,10 +1203,27 @@ export class Reader {
         if (!top.stable) throw new AppError('advance_geometry_changed');
         if (!top.clear) throw new AppError('advance_obscured');
         if (cancelled()) throw new AppError('cancelled');
+        await this.ownedSessionGuard?.assertIdentity();
+        if (cancelled()) throw new AppError('cancelled');
         // Page-scoped trusted input, dispatched once without locator auto-wait
         // or retries. Finish an already dispatched down/up pair before
         // acknowledging cancellation, without another reading action.
-        await this.adapter.turnPage(this.page, point);
+        const budget = this.ownedSessionGuard?.singleRunBudget;
+        const send = async () => {
+          const turn = { phase: 'pending', page: this.page, generation: this.generation, config: this.config,
+            bound: this.bound, before: before.progress, next: this.pickedMarkers.next, position: this.pickedMarkers.position };
+          turns.set(this, turn);
+          await this.adapter.turnPage(this.page, point);
+          turn.phase = 'sent';
+        };
+        if (budget) await budget.advance(async () => {
+          await this.ownedSessionGuard?.beforeAdvance?.();
+          await this.ownedSessionGuard?.assertIdentity();
+          if (cancelled()) throw new AppError('cancelled');
+          await send();
+        });
+        else await send();
+        await this.ownedSessionGuard?.assertIdentity();
         await onDispatchState({ stage: 'advance_confirmation', status: 'sent' });
       } finally { if (topElement !== button) await topElement.dispose(); }
     } finally { await button.dispose(); }
@@ -1033,19 +1237,45 @@ export class Reader {
       await sleep(80);
     } while (Date.now() < deadline);
     if (after.position === before.position) throw new AppError('advance_uncertain');
+    if (before.progress && !this.adapter.rangeAdvanced(before.progress, after.progress)) throw new AppError('advance_uncertain');
+    this.ownedSessionGuard?.validateTransition(before.position, after.position);
     const stable = await this.stable();
     if (!this.same(after, stable)) throw new AppError('display_unstable');
     const dimensions = this.bound?.dimensions;
     if (!dimensions) throw new AppError('capture_dimensions_mismatch');
-    this.bound = { target: after.target, position: after.position, dimensions, book: before.book };
+    this.bound = { target: after.target, position: after.position, dimensions, book: before.book, paint: stable.paint };
     await onDispatchState({ stage: 'advance_confirmed', status: 'sent' });
+    await this.ownedSessionGuard?.afterAdvance?.();
+    this.ownedSessionGuard?.singleRunBudget?.confirmAdvance();
+    const turn = turns.get(this);
+    turn.bound = this.bound; turn.confirmed = stable.progress; turn.phase = 'confirmed';
   }
 
-  async close() {
-    this.closed = true;
-    await this.scaleSession?.detach().catch(() => {});
-    await this.clearReaderCandidate();
-    await this.clearPickedMarkers();
-    await this.context.close();
+  close() {
+    return this.closePromise ??= (async () => {
+      if (this.lifecycle.state === 'close_unconfirmed') throw this.lifecycle.failure ?? new Error('reader_close_unconfirmed');
+      this.closed = true;
+      try {
+        // CDP detach/dispose has no timeout. Disconnect the owned transport and
+        // start its bounded owner shutdown before any protocol cleanup, so an
+        // unresponsive browser cannot prevent the supervision deadline.
+        if (this.ownedPipe) await this.ownedPipe.close();
+        await this.ownedSessionGuard?.dispose();
+        await this.ownedSampleGuard?.dispose();
+        await this.scaleSession?.detach().catch(() => {});
+        await this.clearReaderCandidate();
+        await this.clearPickedMarkers();
+        if (!this.ownedPipe) await this.context.close();
+        // Another caller may already have observed this same attempt as
+        // unconfirmed while the close was in flight. A late resolve must not
+        // erase that earlier failure from the owning Application.
+        if (this.lifecycle.state === 'close_unconfirmed') throw this.lifecycle.failure ?? new Error('reader_close_unconfirmed');
+        this.lifecycle.state = 'closed_confirmed';
+      } catch (error) {
+        this.lifecycle.state = 'close_unconfirmed';
+        this.lifecycle.failure ??= error;
+        throw error;
+      }
+    })();
   }
 }

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { requireControllerPath } from './controller-path.mjs';
 
 export class AppError extends Error {
   constructor(code, detail) { super(code); this.code = code; this.detail = detail; }
@@ -8,7 +8,7 @@ export class AppError extends Error {
 // Only this fixed, locally built Rust program may commit job data.
 export class StoreClient {
   constructor() {
-    const controller = process.env.KTZ_CONTROLLER_PATH || fileURLToPath(new URL('../artifacts/rust-target/debug/ktz-g02-controller.exe', import.meta.url));
+    const controller = requireControllerPath();
     this.child = spawn(controller, [], {
       windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
     });
@@ -16,6 +16,7 @@ export class StoreClient {
     this.buffer = '';
     this.queue = Promise.resolve();
     this.listeners = new Set();
+    this.errorListeners = new Set();
     this.exited = new Promise(resolve => this.child.once('close', resolve));
     this.child.once('error', () => this.fail());
     this.child.once('exit', () => { if (!this.closed) this.fail(); });
@@ -35,14 +36,27 @@ export class StoreClient {
         if (response.progress) {
           const p = response.progress;
           if (pending.kind !== 'export' || !Number.isSafeInteger(p.done) || !Number.isSafeInteger(p.total)
-            || p.done < 0 || p.done >= p.total || !['write', 'verify', 'publish'].includes(p.stage)) return this.fail();
+            || p.done < 0 || p.done >= p.total || !['inspect', 'prepare', 'write', 'verify', 'publish'].includes(p.stage)
+            || pending.progressTotal !== undefined && pending.progressTotal !== p.total
+            || p.done < (pending.progressDone ?? -1)) return this.fail();
+          // A progressing archive is not an unresponsive request. Only new,
+          // validated work refreshes the inactivity limit; a separate absolute
+          // deadline still bounds an export, even with continuous responses.
+          if (p.done > (pending.progressDone ?? -1)) pending.timer.refresh();
+          pending.progressDone = p.done;
+          pending.progressTotal = p.total;
           pending.onProgress?.(p);
           continue;
         }
         this.pending = null;
         clearTimeout(pending.timer);
+        clearTimeout(pending.deadline);
         if (response.ok) pending.resolve(response.payload);
-        else pending.reject(new AppError(/^[a-z0-9_]+$/.test(response.code) ? response.code : 'store_rejected'));
+        else {
+          const error = new AppError(/^[a-z0-9_]+$/.test(response.code) ? response.code : 'store_rejected');
+          for (const listener of this.errorListeners) listener(error);
+          pending.reject(error);
+        }
       }
     });
   }
@@ -52,6 +66,7 @@ export class StoreClient {
     this.failed = true;
     if (this.pending) {
       clearTimeout(this.pending.timer);
+      clearTimeout(this.pending.deadline);
       this.pending.reject(new AppError('store_disconnected'));
       this.pending = null;
     }
@@ -66,7 +81,8 @@ export class StoreClient {
       const line = JSON.stringify({ version: 1, id, command: { kind, ...payload, ...(kind === 'export' && onProgress ? { progress: true } : {}) } }) + '\n';
       if (Buffer.byteLength(line) > 65_536) throw new AppError('request_too_large');
       return new Promise((resolve, reject) => {
-        this.pending = { id, kind, onProgress, resolve, reject, timer: setTimeout(() => this.fail(), 120_000) };
+        this.pending = { id, kind, onProgress, resolve, reject, timer: setTimeout(() => this.fail(), 120_000),
+          deadline: kind === 'export' ? setTimeout(() => this.fail(), 30 * 60_000) : undefined };
         this.child.stdin.write(line);
       });
     });

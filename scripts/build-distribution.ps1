@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $package = Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw -Encoding utf8 | ConvertFrom-Json
 $version = [string]$package.version
-$expectedNode = '22.14.0'
+$expectedNode = '22.22.1'
 $expectedPlaywright = '1.64.1'
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
@@ -85,6 +85,7 @@ try {
         $entries.Add([pscustomobject]@{ Source = $publicUiHelper.FullName; Relative = 'poc/browser/public-ui-controls.mjs'; Length = [long]$publicUiHelper.Length })
         Add-PackageDirectory 'node_modules/playwright' 'node_modules/playwright'
         Add-PackageDirectory 'node_modules/playwright-core' 'node_modules/playwright-core'
+        Add-PackageDirectory 'node_modules/pngjs' 'node_modules/pngjs'
         foreach ($relative in @('poc/fixtures/reader-image-review.html', 'poc/fixtures/reader-image-review.js')) {
             $file = Get-Item -LiteralPath (Join-Path $root $relative)
             if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing to bundle a reparse point: $relative" }

@@ -1,6 +1,9 @@
 html { color-scheme: light; font-family: sans-serif; background: #eee; color: #111; }
 body { margin: 24px; }
-h1 { font-size: 20px; height: 32px; }
+/* Keep the canvas on an integral CSS-pixel boundary.  The browser screenshot
+   includes an outside border row when a fractional top rounds the clip down;
+   that row alone makes this 480px-tall blank fail the 99.9% white oracle. */
+h1 { font-size: 20px; height: 32px; margin: 13px 0; }
 #reader { width: 600px; height: 480px; border: 2px solid #555; }
 #sheet { display: block; }
 nav { margin-top: 8px; }

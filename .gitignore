@@ -1,6 +1,7 @@
 # Local agent instructions and private development records
 AGENTS.md
 /.sortie-dogs-v010/
+/.sortie-env/
 /docs/*
 !/docs/09-mvp-ipc-ja.md
 !/docs/development.md
@@ -16,10 +17,15 @@ AGENTS.md
 !/docs/screenshots.md
 !/docs/portable.md
 !/docs/store-adapters.md
+!/docs/ubuntu-portable.ja.md
+!/docs/linux-login.ja.md
 /scripts/check-records.mjs
 
 # Dependencies, build outputs, and local test environments
 /node_modules/
+/node_modules
+/release/
+/release-linux/
 /artifacts/
 /_testenv/
 debug/

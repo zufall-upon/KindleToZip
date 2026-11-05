@@ -28,7 +28,7 @@ export function installLanguageSelector() {
     if (changed || !originals.has(node)) originals.set(node, node.data);
     const source = originals.get(node);
     // Paths and identifiers are opaque. Only translate the fixed line prefixes.
-    if (node.parentElement?.closest('#exportResult, #jobPath, #connection, #issues')) {
+    if (node.parentElement?.closest('#exportResult, #jobPath, #connection, #issues, #storageUncertain')) {
       node.data = source.split('\n').map(line => {
         const separator = line.indexOf('：');
         const opaque = /^(保存先|中断復帰用フォルダ|接続先|不整合|孤立・未確定ファイル)/.test(line);

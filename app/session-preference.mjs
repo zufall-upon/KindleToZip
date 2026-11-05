@@ -2,6 +2,7 @@ import { lstat, readFile, realpath, writeFile, rename, rm } from 'node:fs/promis
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { AppError } from './store-client.mjs';
+import { samePath, privateMetadata } from './private-path.mjs';
 
 export const sessionId = /^(saved|temporary)-[a-f0-9-]{36}$/;
 const filename = directory => path.join(directory, 'kindle-session.json');
@@ -11,8 +12,8 @@ const validId = value => typeof value === 'string' && sessionId.test(value);
 async function check(file) {
   try {
     const info = await lstat(file);
-    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > 1024 * 1024
-      || path.resolve(await realpath(file)).toLowerCase() !== path.resolve(file).toLowerCase()) throw new AppError('unsafe_session_preferences');
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > 1024 * 1024 || !privateMetadata(info)
+      || !samePath(await realpath(file), file)) throw new AppError('unsafe_session_preferences');
     return true;
   } catch (error) {
     if (error.code === 'ENOENT') return false;

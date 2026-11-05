@@ -50,6 +50,15 @@ fieldset { border: 1px solid #b8c6d8; border-radius: 8px; margin-top: 16px; }
 #operationPercent { font-variant-numeric: tabular-nums; flex-shrink: 0; }
 #operationBar { height: 10px; background: #dbe5ee; border: 1px solid #657e98; border-radius: 4px; overflow: hidden; margin: 3px 0; }
 #operationFill { height: 100%; width: 0%; background: #246da8; }
+#operationStatus[aria-busy="true"] .operation-heading::before { content: ""; width: 12px; height: 12px; flex-shrink: 0; align-self: center; border: 2px solid #c7d9e8; border-top-color: #246da8; border-radius: 50%; animation: operation-spin 1s linear infinite; }
+#operationStatus[aria-busy="true"][data-indeterminate="true"] #operationFill { width: 28% !important; animation: operation-sweep 1.8s ease-in-out infinite alternate; }
+#operationActivity { display: block; font-size: 12px; font-weight: normal; font-variant-numeric: tabular-nums; }
+@keyframes operation-spin { to { transform: rotate(360deg); } }
+@keyframes operation-sweep { from { transform: translateX(-100%); } to { transform: translateX(360%); } }
+@media (prefers-reduced-motion: reduce) {
+  #operationStatus[aria-busy="true"] .operation-heading::before,
+  #operationStatus[aria-busy="true"][data-indeterminate="true"] #operationFill { animation: none; }
+}
 #operationDetail { display: block; font-weight: normal; font-size: 12px; line-height: 1.3; overflow-wrap: anywhere; }
 [data-status="failure"] #operationFill { background: #a92f34; }
 [data-status="cancelled"] #operationFill { background: #876425; }
@@ -80,4 +89,22 @@ body { padding-bottom: max(260px, 46vh); }
   #reason { margin: 0; }
 }
 .language-selector { float: right; display: flex; align-items: center; gap: .5rem; margin: .25rem; }
+/* Leave room for guidance above progress details and actions on short windows. */
+@media (max-height: 500px) {
+  .workflow-bar { max-height: 70vh; }
+}
 .language-selector select { width: auto; }
+.saved-workspace { border: 1px solid #b8c7d6; border-radius: .5rem; padding: 1rem; margin: 1rem 0; }
+/* The one-shot result is read-only. Retain original-image inspection, never
+   advertise edit/resume/archive controls which this permission does not allow. */
+body[data-limited="true"]:not([data-archive-editable="true"]) [data-stage="review"] button:not(.limited-inspect),
+body[data-limited="true"]:not([data-archive-editable="true"]) [data-stage="review"] select,
+body[data-limited="true"]:not([data-archive-editable="true"]) [data-stage="review"] input,
+body[data-limited="true"]:not([data-archive-editable="true"]) #orderDetails,
+body[data-limited="true"]:not([data-archive-editable="true"]) .reviewEditHelp,
+body[data-limited="true"]:not([data-archive-editable="true"]) [data-stage="review"] > .grid,
+body[data-limited="true"] #mappingDetails,
+body[data-limited="true"] #parentReader,
+body[data-limited="true"] #resumeComparison,
+body[data-limited="true"] #captureLimitHelp { display: none; }
+body[data-limited="true"] #resumeCapture { display: none; }

@@ -21,7 +21,19 @@ test('Rust実行ファイルとの版付きIPCで明示開始と安全停止を�
   await assert.rejects(guard.requireCapturing(), /not_authorized/);
 });
 
-test('Win32の受動観測をRustで実行し、開始から停止まで採取', async t => {
+test(process.platform === 'linux' ? 'Linuxの受動観測はunsupportedを明示する' : 'Win32の受動観測をRustで実行し、開始から停止まで採取', async t => {
+  if (process.platform === 'linux') {
+    const input = [
+      { version: 1, id: 1, command: { kind: 'observe_start' } },
+      { version: 1, id: 2, command: { kind: 'observe_stop' } },
+      { version: 1, id: 3, command: { kind: 'snapshot' } },
+    ].map(value => `${JSON.stringify(value)}\n`).join('');
+    const run = spawnSync(guardExecutable, [], { input, encoding: 'utf8', timeout: 3000 });
+    assert.equal(run.status, 0);
+    const messages = run.stdout.trim().split(/\r?\n/).map(line => JSON.parse(line));
+    assert.deepEqual(messages.map(message => [message.ok, message.code]), Array(3).fill([false, 'observer_unsupported']));
+    return;
+  }
   const guard = new RustGuard();
   t.after(() => guard.close());
   await guard.request({ kind: 'observe_start' });

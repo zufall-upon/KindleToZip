@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { readFile, readdir, lstat, rm, realpath } from 'node:fs/promises';
+import { readFile, readdir, lstat, rm, realpath, statfs } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { StoreClient, AppError } from './store-client.mjs';
@@ -8,19 +8,48 @@ import { startFixture } from '../poc/browser/fixture-server.mjs';
 import { sessionId, readSessionPreferences, saveSessionPreference, forgetSessionPreference } from './session-preference.mjs';
 import { initialPresets, readPresets, savePresets } from './presets.mjs';
 import { bookFilename } from './export-name.mjs';
-import { chooseSaveDestination } from './save-dialog.mjs';
+import { chooseSaveDestination, saveDialogAvailable } from './save-dialog.mjs';
 import { kindleRegion, kindleRegions } from './stores/kindle.mjs';
+import { samePath, privateMetadata } from './private-path.mjs';
+import { startOwnedSample, startOwnedPipeSample, startOwnedGuiSample } from './owned-sample.mjs';
+import { portableLinuxSessionProtected, portableLinuxSessionCandidate, resolveExistingPortableLinuxSession } from './portable-linux-session.mjs';
+import { portableLimitedAvailable, portableNormalAvailable } from './portable-linux-site.mjs';
+import { startPortableKindleReader } from './portable-linux-reader.mjs';
+import { portableLimitedClaimState, portableLimitedOriginClaimState, assertPortableLimitedSettings } from './portable-limited-claim.mjs';
+import { readPortableStartupRecord } from './portable-limited-failure.mjs';
+import { projectPortablePilotStop } from './portable-limited-pilot.mjs';
+import { reservePortableArchive, bindPortableArchiveJob, bindPortableArchiveSession,
+  portableArchiveAvailable, recordPortableArchiveCapture, releasePortableArchive, portableArchiveEditable } from './portable-postprocess-ticket.mjs';
+import { isNormalCaptureBudget } from './expected-capture-budget.mjs';
+import { markPortableNormalJob, bindPortableNormalJob, assertPortableNormalJob,
+  readPortableNormalResult, beginPortableNormalResult, finishPortableNormalResult } from './portable-normal-job.mjs';
+import { isPortableNormalGuard } from './portable-limited-session.mjs';
 
 const defaultData = process.env.KTZ_USER_DATA_DIR || fileURLToPath(new URL('../artifacts/mvp-data/', import.meta.url));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+// Conservative per-run safety ceilings, not a claim about total book size.
+// Storage is checked on the actual job filesystem; an unavailable check fails
+// closed. A stopped job retains its originals and existing checkpoint.
+const normalRunMilliseconds = 2 * 60 * 60 * 1000;
+const normalJobBytes = 2 * 1024 * 1024 * 1024;
+const normalFreeBytes = 256 * 1024 * 1024;
+
+function captureLimit(value = null) {
+  if (value !== null && (!Number.isSafeInteger(value) || value < 1)) throw new AppError('invalid_capture_limit');
+  return value;
+}
 
 export class Application {
-  constructor({ dataDir = defaultData, sampleHeadless = true, sampleFixture = 'reader', saveDialog = chooseSaveDestination } = {}) {
+  constructor({ dataDir = defaultData, sampleHeadless = true, ownedSampleHeaded = false, ownedSamplePipe = false, sampleFixture = 'reader', saveDialog = chooseSaveDestination, ownsSignals = false, portableArchiveTrial = false } = {}) {
     this.saveDialog = saveDialog;
     this.kindleRegion = 'jp';
     if (!['reader', 'image-review', 'layout', 'kindle-chrome', 'kindle-chrome-dynamic', 'kindle-chrome-hidden', 'kindle-chrome-recoverable', 'kindle-chrome-tabs', 'kindle-chrome-ambiguous'].includes(sampleFixture)) throw new AppError('invalid_sample_fixture');
     this.dataDir = path.resolve(dataDir);
-    this.sampleHeadless = sampleHeadless;
+    this.sampleHeadless = process.platform === 'linux' ? true : sampleHeadless;
+    Object.defineProperty(this, 'ownedSampleHeaded', { value: process.platform === 'linux' && ownedSampleHeaded === true });
+    Object.defineProperty(this, 'ownedSamplePipe', { value: process.platform === 'linux' && ownedSamplePipe === true });
+    this.ownsSignals = ownsSignals;
+    this.portableArchiveTrial = portableArchiveTrial === true;
     this.sampleFixture = sampleFixture;
     this.store = new StoreClient();
     this.state = 'Idle';
@@ -29,6 +58,15 @@ export class Application {
     this.bookGeneration = 0;
     this.commands = new Set();
     this.store.listeners.add(() => this.invalidate('store_disconnected'));
+    this.store.errorListeners.add(error => this.observeStorageError(error));
+  }
+
+  observeStorageError(error) {
+    if (!['storage_durability_uncertain', 'storage_reopen_required', 'output_path_changed', 'output_published_durability_uncertain',
+      'output_published_manifest_update_failed', 'output_published_manifest_durability_uncertain'].includes(error.code)) return;
+    if (!this.storageUncertain) this.storageUncertain = { code: error.code, destination: this.pendingExportDestination ?? null };
+    this.invalidate(error.code);
+    if (this.job) this.state = 'NeedsAttention';
   }
 
   async init() {
@@ -46,11 +84,21 @@ export class Application {
   }
 
   invalidate(reason, { inspecting = false } = {}) {
+    // Reader/Store invalidation cancels the loop before its catch runs. Retain
+    // the first cause for this acquisition instead of reporting it as a user
+    // cancellation (or losing it when shutdown clears the current UI reason).
+    if (this.state === 'Capturing' && reason && !this.captureCancelReason) this.captureCancelReason = reason;
     this.epoch += 1;
+    this.reader?.ownedSessionGuard?.singleRunBudget?.invalidate?.();
     this.previewImage = null;
     this.previewInfo = null;
     this.previewBook = null;
+    this.previewNormalGuard = null;
+    this.previewNormalBudget = null;
     this.previewApproved = false;
+    this.approvedMaxCaptures = null;
+    this.approvedNormalGuard = null;
+    this.approvedNormalBudget = null;
     this.resumePlan = null;
     this.displayInspection = inspecting ? { status: 'checking' } : null;
     if (this.state === 'Capturing') this.state = 'NeedsAttention';
@@ -59,6 +107,14 @@ export class Application {
   }
 
   async snapshot() {
+    // A fixed stop display never queries the Reader or Store again, including
+    // when either resource's close was unconfirmed. It grants no new command.
+    if (this.portablePilotStop) return {
+      portablePilotStop: this.portablePilotStop, state: this.state, job: this.job ?? null,
+      operationRevision: this.epoch, bookGeneration: this.bookGeneration,
+      busy: false, browserOpen: Boolean(this.reader), readerReleasePending: Boolean(this.readerReleasePending),
+      previewReady: false, previewApproved: false, sessions: [],
+    };
     const job = this.job;
     // A poll during close must not query an already closed Rust job. Retain
     // the last confirmed snapshot until close succeeds; a close failure keeps
@@ -68,14 +124,45 @@ export class Application {
       if (this.job === job) job.manifest = progress.manifest;
     }
     const entries = await readdir(this.dataDir, { withFileTypes: true });
+    const limited = job ? await this.isPortableLimitedJob() : false;
+    const limitedSite = portableLimitedAvailable(this.dataDir);
+    const editable = limited && await this.canPortableArchiveEdit();
     return {
-      state: this.state, reason: this.reason, job: this.job ?? null, operationRevision: this.epoch,
+      state: this.state, reason: this.reason, job: this.job ?? null, operationRevision: this.epoch, bookGeneration: this.bookGeneration,
       presets: this.presets,
       browserOpen: Boolean(this.reader), previewReady: Boolean(this.previewImage), previewApproved: this.previewApproved === true,
-      sessions: entries.filter(e => e.isDirectory() && sessionId.test(e.name)).map(e => ({ id: e.name, saved: e.name.startsWith('saved-') || this.savedTemporarySessions.has(e.name) })),
+      approvedMaxCaptures: this.previewApproved ? this.approvedMaxCaptures : null,
+      sessions: await Promise.all(entries.filter(e => e.isDirectory() && sessionId.test(e.name)).map(async e => ({
+        id: e.name, saved: e.name.startsWith('saved-') || this.savedTemporarySessions.has(e.name),
+        ...(await portableLinuxSessionProtected(path.join(this.dataDir, e.name)) ? { protectedLinuxSession: true } : {}),
+        ...(await portableLinuxSessionCandidate(path.join(this.dataDir, e.name)) ? { portableLinuxCandidate: true } : {}),
+      }))),
       preferredKindleSession: this.preferredKindleSession ?? null,
+      portableKindlePrepared: this.portableKindlePrepared ?? null,
+      portableLimitedAvailable: limitedSite && !limited && await portableArchiveAvailable(this.dataDir, job, this.portableArchiveTrial), portableLimitedJob: limited,
+      portableNormalAvailable: portableNormalAvailable(this.dataDir) && !this.portableArchiveTrial && !limited,
+      portableNormalReader: this.fixture?.normal === true,
+      portableArchiveEditable: editable,
+      portableArchiveClosing: Boolean(this.portableArchiveClosing),
+      portableArchiveResult: this.portableArchiveResult ?? null,
+      // Consumption belongs to the current job, including a failed zero-image attempt.
+      portableLimitedConsumed: limited,
+      portableLimitedStartup: limited ? this.portableStartupRecord?.jobId === job.manifest.job_id
+        && this.portableStartupRecord.data === path.dirname(path.dirname(job.job_path))
+        ? this.portableStartupRecord.snapshot() : await readPortableStartupRecord(path.dirname(path.dirname(job.job_path)), job.manifest.job_id) : null,
       kindleRegion: this.kindleRegion, kindleRegions,
-      sample: Boolean(this.fixture), config: this.reader?.sampleUrl ? sampleConfig : null,
+      kindleSupported: process.platform !== 'linux',
+      linuxOwnedSourceAvailable: process.platform === 'linux',
+      ownedSampleHeaded: this.ownedSampleHeaded,
+      ownedSamplePipe: this.ownedSamplePipe, finiteCaptureRequired: Boolean(this.reader?.ownedSessionGuard?.normal !== true &&
+        (this.reader?.ownedPipe || this.reader?.ownedSessionGuard?.singleRunBudget)),
+      portableNormalResult: job ? this.portableNormalResultUncertainJob === job.manifest.job_id
+        ? { status: 'unknown', mode: null, limit: null, reason: null, stage: null, dispatch: null }
+        : await readPortableNormalResult(this.dataDir, job) : null,
+      saveDialogAvailable: this.saveDialog !== chooseSaveDestination || saveDialogAvailable(),
+      pathCaseSensitive: process.platform !== 'win32',
+      storageUncertain: this.storageUncertain ?? null,
+      sample: Boolean(this.fixture) && !this.fixture.limited && !this.fixture.normal, config: this.reader?.sampleUrl ? sampleConfig : null,
       pickerStage: this.reader?.pickStage ?? null,
       browserId: this.reader?.id ?? null,
       readerTabs: this.reader?.tabs() ?? [],
@@ -153,6 +240,7 @@ export class Application {
 
   async command(action, input = {}) {
     if (this.closed) throw new AppError('application_closed');
+    if (this.portablePilotStop) throw new AppError('portable_limited_review_only');
     const inspecting = ['preview', 'quickPreview'].includes(action);
     // Report only completed inspection evidence, never infer login success
     // from a selected tab or from four non-empty selectors.
@@ -166,6 +254,7 @@ export class Application {
       return { ...result, displayInspection: this.displayInspection ?? null };
     } catch (error) {
       if (inspecting && this.displayInspection?.status === 'checking' && error.code !== 'operation_busy') {
+        this.reader?.ownedSessionGuard?.singleRunBudget?.fail();
         this.displayInspection = { status: 'failed', code: error.code ?? 'operation_failed', detail: error.detail ?? null,
           stage: ['auto_visibility_wait', 'preview_visibility_wait', 'reader_target_check'].includes(error.stage) ? error.stage : 'preview_inspection' };
       }
@@ -174,7 +263,37 @@ export class Application {
     finally { this.commands.delete(pending); }
   }
 
+  async enforcePortableLimitedCommand(action, input) {
+    // The ticket's newly created job cannot enter a generic sample Reader or
+    // reset/settings path before its unchanged limited claim has been created.
+    if (this.job && this.portableArchiveJob === this.job.manifest.job_id && !await this.isPortableLimitedJob()) {
+      const preparation = ['preparePortableKindle', 'openBrowser', 'closeBrowser', 'closeJob', 'finishBook'];
+      if (!preparation.includes(action) || action === 'openBrowser' && input.mode !== 'kindle')
+        throw new AppError('portable_postprocess_unavailable');
+    }
+    if (!['closeBrowser', 'closeJob', 'finishBook', 'stop', 'pause'].includes(action) && await this.isPortableLimitedJob()) {
+      const allowed = ['selectReaderTab', 'preview', 'quickPreview', 'approve', 'start', 'closeBrowser', 'closeJob', 'finishBook', 'review', 'pause', 'stop', 'cancelBack', 'cancelPick'];
+      const editing = ['review', 'crop', 'resetCrop', 'detectCrop', 'applyAutoCrop', 'setPageLayout', 'chooseDestination', 'export'].includes(action);
+      const editable = editing && await this.canPortableArchiveEdit();
+      if ((!allowed.includes(action) || action === 'review' && input.ids !== undefined) && !editable)
+        throw new AppError('portable_limited_review_only');
+      if (editable) {
+        this.job = (await this.store.call('job_info')).snapshot;
+        if (!await this.canPortableArchiveEdit()) throw new AppError('portable_postprocess_unavailable');
+        for (const image of this.job.manifest.images) await this.image(image.capture_id, true);
+      }
+      if (['preview', 'quickPreview', 'approve', 'start'].includes(action)) {
+        if (!this.reader?.ownedSessionGuard?.limited) throw new AppError('portable_limited_claim_consumed');
+        assertPortableLimitedSettings(this.job);
+      }
+    }
+  }
+
   async dispatchCommand(action, input) {
+    if (this.portablePilotStop) throw new AppError('portable_limited_review_only');
+    // Rust freezes the job after uncertain durability. Also prevent Node-owned
+    // settings/session mutations and new browser or capture operations.
+    if (this.storageUncertain && action !== 'closeBrowser') throw new AppError('storage_reopen_required');
     if (['cancelBack', 'finishBook', 'closeJob'].includes(action)) this.destinationDialog?.abort();
     if (action === 'chooseDestination') return this.chooseDestination(input);
     // Cancellation is observed locally before any queued Rust request.
@@ -183,6 +302,23 @@ export class Application {
     if (action === 'finishBook') return this.trackOperation(action, p => this.finishBook(p), input.progressKey);
     if (action === 'cancelPick') return this.trackOperation(action, async () => { this.selectionCancelEpoch = (this.selectionCancelEpoch ?? 0) + 1; await this.reader?.cancelPick(); return this.snapshot(); }, input.progressKey);
     return this.exclusive(action, async progress => {
+      // Hold the Application exclusion while awaiting the durable claim check.
+      // Otherwise a concurrently completed connect could arm a limited job
+      // after a caller's stale "unused" result but before its export/settings.
+      await this.enforcePortableLimitedCommand(action, input);
+      if (this.portablePilotStop) throw new AppError('portable_limited_review_only');
+      // Optional optimistic fence for the individual preparation controls. It
+      // only narrows an existing action; ordinary public callers remain valid.
+      const checkPreparationState = () => {
+        if (input.ifState === undefined) return;
+        const expected = input.ifState;
+        if (!['create', 'preparePortableKindle', 'openBrowser'].includes(action) || !expected
+            || Object.keys(expected).sort().join(',') !== 'epoch,generation,job'
+            || expected.job !== (this.job?.manifest?.job_id ?? null)
+            || expected.epoch !== this.epoch || expected.generation !== this.bookGeneration)
+          throw new AppError('target_changed');
+      };
+      checkPreparationState();
       let lastExport = null;
       switch (action) {
         case 'setKindleRegion': {
@@ -190,8 +326,20 @@ export class Application {
           if (this.reader) throw new AppError('close_browser_first');
           if (this.kindleRegion !== region.id) {
             this.kindleRegion = region.id;
+            this.portableKindlePrepared = null;
             this.invalidate('kindle_region_changed');
           }
+          break;
+        }
+        case 'preparePortableKindle': {
+          if (process.platform !== 'linux' || Object.keys(input).some(key => !['session', 'progressKey', 'language', 'ifState'].includes(key))
+            || input.language !== undefined && !['ja', 'en', 'zh-CN'].includes(input.language)) throw new AppError('invalid_browser_mode');
+          if (this.reader || !this.job) throw new AppError('browser_or_job_state');
+          this.portableKindlePrepared = null;
+          const selected = await this.resolvePortableKindle(input.session);
+          checkPreparationState();
+          if (this.portableArchiveJob === this.job.manifest.job_id) await bindPortableArchiveSession(this.dataDir, this.job, selected.id);
+          this.portableKindlePrepared = selected.id;
           break;
         }
         case 'cancelReset': {
@@ -254,7 +402,18 @@ export class Application {
         }
         case 'create': {
           if (this.job) throw new AppError('close_job_first');
+          const archiveTrial = this.portableArchiveTrial && portableLimitedAvailable(this.dataDir);
+          if (archiveTrial) {
+            if (input.baseDir && path.resolve(input.baseDir) !== this.dataDir) throw new AppError('portable_postprocess_unavailable');
+            await reservePortableArchive(this.dataDir);
+          }
           this.job = (await this.store.call('create_job', { base_dir: path.resolve(input.baseDir || this.dataDir) })).snapshot;
+          if (archiveTrial) {
+            this.portableArchiveJob = this.job.manifest.job_id;
+            await bindPortableArchiveJob(this.dataDir, this.job);
+          } else if (portableNormalAvailable(this.dataDir) && this.job.job_path === path.join(this.dataDir, 'jobs', this.job.manifest.job_id)) {
+            await markPortableNormalJob(this.dataDir, this.job);
+          }
           this.bookGeneration += 1;
           this.state = 'AuthPending';
           this.reason = null;
@@ -280,6 +439,7 @@ export class Application {
           try {
             await this.store.call('close_job');
             this.job = null;
+            this.pending = false;
             this.bookGeneration += 1;
             this.state = 'Idle';
             this.invalidate(null);
@@ -287,10 +447,90 @@ export class Application {
           break;
         }
         case 'openBrowser': {
+          if (!['sample', 'kindle', 'sample-headed', 'sample-owned-pipe', 'owned-fixture'].includes(input.mode)) throw new AppError('invalid_browser_mode');
+          const portableKindle = process.platform === 'linux' && input.mode === 'kindle';
+          if (portableKindle) {
+            if (this.portableArchiveTrial && portableLimitedAvailable(this.dataDir) && this.portableArchiveJob !== this.job?.manifest.job_id)
+              throw new AppError('portable_postprocess_unavailable');
+            if (Object.keys(input).some(key => !['mode', 'session', 'progressKey', 'language', 'ifState'].includes(key))
+              || input.language !== undefined && !['ja', 'en', 'zh-CN'].includes(input.language)) throw new AppError('invalid_browser_mode');
+            if (this.reader || !this.job) throw new AppError('browser_or_job_state');
+            if (this.readerLifecycle?.state === 'close_unconfirmed') throw new AppError('reader_release_incomplete');
+            if (this.profile || this.fixture) throw new AppError('close_browser_first');
+            // Preparation is not a reservation. Resolve the same explicit ID
+            // again; the child independently takes the login owner's lock.
+            const selected = await this.resolvePortableKindle(input.session);
+            checkPreparationState();
+            this.job = (await this.store.call('job_info')).snapshot;
+            checkPreparationState();
+            const normal = portableNormalAvailable(this.dataDir) && !this.portableArchiveTrial;
+            if (!normal && !portableLimitedAvailable(this.dataDir)) throw new AppError('linux_kindle_permission_required');
+            let normalJobCheck = null, capability;
+            if (normal) {
+              const jobId = this.job.manifest.job_id, jobPath = this.job.job_path, generation = this.bookGeneration;
+              await bindPortableNormalJob(this.dataDir, this.job, selected.id);
+              this.portableNormalSession = selected.id;
+              normalJobCheck = async () => {
+                if (this.bookGeneration !== generation || this.job?.manifest?.job_id !== jobId || this.job.job_path !== jobPath
+                    || capability && this.fixture !== capability) throw new AppError('target_changed');
+                const current = (await this.store.call('job_binding')).binding;
+                if (current.manifest.job_id !== jobId || current.job_path !== jobPath) throw new AppError('target_changed');
+                await assertPortableNormalJob(this.dataDir, current, selected.id);
+              };
+            }
+            this.profile = selected.profile;
+            this.profilePersistent = true;
+            this.ownedPipeFixture = true;
+            this.readerLifecycle = { profile: selected.profile, state: 'starting' };
+            try {
+              this.fixture = await startPortableKindleReader(selected, this.job, checkPreparationState, normalJobCheck);
+              capability = this.fixture;
+              this.reader = await Reader.open({ profile: selected.profile, ownedSession: this.fixture,
+                regionId: this.kindleRegion, lifecycle: this.readerLifecycle, handleSignals: false,
+                onChange: () => this.invalidate('browser_target_changed'), readGuard: null });
+              this.assertNormalReaderBinding();
+              await this.reader.setCaptureScale(this.job.manifest.capture_settings.capture_scale);
+              this.reader.imageFormat = this.job.manifest.capture_settings.image_format;
+              this.reader.jpegQuality = this.job.manifest.capture_settings.jpeg_quality;
+              this.state = this.job.manifest.images.length ? 'ResumeCheck' : 'AuthPending';
+              this.reason = null;
+            } catch (error) {
+              if (this.readerLifecycle.state === 'starting') {
+                this.readerLifecycle.state = error.portableReaderNotStarted || error.portableReaderClosed
+                  ? 'closed_confirmed' : 'close_unconfirmed';
+                if (this.readerLifecycle.state === 'close_unconfirmed') this.readerLifecycle.failure = error;
+              }
+              let closeError;
+              if (this.readerLifecycle.state === 'close_unconfirmed') this.readerReleasePending = true;
+              else try { await this.closeBrowser(); } catch (failure) { closeError = failure; }
+              const failure = new AppError('browser_open_failed');
+              failure.cause = closeError ? new AggregateError([error, closeError], 'browser_open_and_close_failed', { cause: error }) : error;
+              throw failure;
+            }
+            break;
+          }
+          const ownedHeaded = input.mode === 'sample-headed';
+          const guiOwned = input.mode === 'owned-fixture';
+          const ownedPipe = input.mode === 'sample-owned-pipe' || guiOwned;
+          if (ownedHeaded && (!this.ownedSampleHeaded || input.keep || input.session || input.sampleFixture)) throw new AppError('invalid_browser_mode');
+          if (ownedPipe && (process.platform !== 'linux' || !guiOwned && !this.ownedSamplePipe || Object.keys(input).some(key => !['mode', 'progressKey', 'language'].includes(key))
+            || input.language !== undefined && !['ja', 'en', 'zh-CN'].includes(input.language))) throw new AppError('invalid_browser_mode');
           if (this.reader || !this.job) throw new AppError('browser_or_job_state');
-          if (input.mode !== 'sample' && input.mode !== 'kindle') throw new AppError('invalid_browser_mode');
+          // Dispose only a previously confirmed-safe failed attempt before
+          // assigning a new profile. An unknown attempt is never overwritten.
+          if (this.readerLifecycle?.state === 'close_unconfirmed') throw new AppError('reader_release_incomplete');
           const sampleFixture = input.sampleFixture ?? this.sampleFixture;
           if (input.mode === 'sample' && !['reader', 'image-review', 'layout', 'kindle-chrome', 'kindle-chrome-dynamic', 'kindle-chrome-hidden', 'kindle-chrome-recoverable', 'kindle-chrome-tabs', 'kindle-chrome-ambiguous'].includes(sampleFixture)) throw new AppError('invalid_sample_fixture');
+          // Reject a different owner's layout before closing or changing any
+          // previous Application profile/fixture. Recheck at actual acquisition.
+          if (typeof input.session === 'string' && sessionId.test(input.session)) {
+            await this.ensureGenericSession(path.join(this.dataDir, input.session));
+          }
+          if (this.profile || this.fixture) {
+            const retainProfile = typeof input.session === 'string' && sessionId.test(input.session)
+              && this.profile && path.basename(this.profile) === input.session;
+            await this.closeBrowser({ retainProfile });
+          }
           const keep = input.keep === true || input.mode === 'kindle' && input.keep !== false;
           let selected = input.session;
           if (!selected && input.mode === 'kindle' && keep) {
@@ -303,17 +543,21 @@ export class Application {
             }
           }
           let profile;
-          if (selected && selected !== 'new') {
+          if (ownedPipe) {
+            profile = null; // The detached owner alone creates the fresh profile.
+          } else if (selected && selected !== 'new') {
             if (!sessionId.test(selected)) throw new AppError('invalid_session');
             profile = path.join(this.dataDir, selected);
-            await this.ensureOwnedDirectory(profile);
+            await this.ensureGenericSession(profile);
           } else {
             profile = path.join(this.dataDir, `${keep ? 'saved' : 'temporary'}-${randomUUID()}`);
             await this.store.call('create_session_directory', { path: profile });
           }
           this.profile = profile;
+          this.ownedPipeFixture = ownedPipe;
+          this.readerLifecycle = { profile, state: 'not_started' };
           this.advanceProgress(progress, 1, '専用領域を確認。設定の保存待ち');
-          this.profilePersistent = keep || path.basename(profile).startsWith('saved-') || this.savedTemporarySessions.has(path.basename(profile));
+          this.profilePersistent = Boolean(profile && (keep || path.basename(profile).startsWith('saved-') || this.savedTemporarySessions.has(path.basename(profile))));
           if (this.profilePersistent && (input.mode === 'kindle' || keep && path.basename(profile).startsWith('temporary-'))) {
             const id = path.basename(profile);
             const preferences = await saveSessionPreference(this.dataDir, id, { preferred: input.mode === 'kindle' });
@@ -321,12 +565,17 @@ export class Application {
             this.savedTemporarySessions = new Set(preferences.savedTemporarySessions);
           }
           try {
-            if (input.mode === 'sample') this.fixture = await startFixture({ fixture: sampleFixture });
+            if (ownedPipe) { this.readerLifecycle.state = 'starting'; this.fixture = await (guiOwned ? startOwnedGuiSample() : startOwnedPipeSample()); }
+            else if (ownedHeaded) this.fixture = await startOwnedSample();
+            else if (input.mode === 'sample') this.fixture = await startFixture({ fixture: sampleFixture });
             this.advanceProgress(progress, 2, '設定・試料準備完了。ブラウザの起動と画面応答待ち');
             this.reader = await Reader.open({ profile, sampleUrl: this.fixture?.url, regionId: this.kindleRegion,
+              ownedFixture: ownedHeaded ? this.fixture : undefined, ownedSession: ownedPipe ? this.fixture : undefined,
+              lifecycle: this.readerLifecycle,
               preconfiguredSample: ['reader', 'image-review'].includes(sampleFixture), headless: input.mode === 'sample' && this.sampleHeadless,
+              handleSignals: !this.ownsSignals,
               onChange: () => this.invalidate('browser_target_changed'),
-              readGuard: input.mode === 'sample' && this.sampleHeadless ? null : async () => {
+              readGuard: ownedHeaded || ownedPipe || input.mode === 'sample' && this.sampleHeadless ? null : async () => {
                 const { snapshot } = await this.store.call('snapshot');
                 if (!snapshot.cursor_valid || snapshot.foreground === 0) throw new AppError('window_not_available');
               } });
@@ -336,7 +585,13 @@ export class Application {
             this.reader.jpegQuality = this.job.manifest.capture_settings.jpeg_quality;
             this.state = this.job.manifest.images.length ? 'ResumeCheck' : 'AuthPending';
             this.reason = null;
-          } catch { throw new AppError('browser_open_failed'); }
+          } catch (error) {
+            if (ownedPipe && this.readerLifecycle.state === 'starting') { this.readerLifecycle.state = 'close_unconfirmed'; this.readerLifecycle.failure = error; }
+            if (this.readerLifecycle.state === 'close_unconfirmed') this.readerReleasePending = true;
+            const failure = new AppError('browser_open_failed');
+            failure.cause = error;
+            throw failure;
+          }
           break;
         }
         case 'closeBrowser': await this.closeBrowser(); break;
@@ -383,7 +638,7 @@ export class Application {
           if (this.reader) throw new AppError('close_browser_first');
           if (input.confirmed !== true || !/^(saved|temporary)-[a-f0-9-]{36}$/.test(input.id)) throw new AppError('session_delete_confirmation_required');
           const directory = path.join(this.dataDir, input.id);
-          await this.ensureOwnedDirectory(directory);
+          await this.ensureGenericSession(directory);
           await rm(directory, { recursive: true });
           const preferences = await forgetSessionPreference(this.dataDir, input.id);
           this.preferredKindleSession = preferences.session;
@@ -393,7 +648,12 @@ export class Application {
         case 'preview': {
           console.log('KTZ_PREVIEW:requested');
           if (!this.reader) throw new AppError('open_browser_first');
+          this.assertNormalReaderBinding();
           this.invalidate(null, { inspecting: true });
+          await this.reader.ownedSessionGuard?.preparePreview?.();
+          this.assertNormalReaderBinding();
+          const normalGuard = this.reader.ownedSessionGuard?.normal === true ? this.reader.ownedSessionGuard : null;
+          const normalBudget = normalGuard?.singleRunBudget;
           await this.reader.adoptVisibleReaderPage();
           this.advanceProgress(progress, 1, '対象タブ確認済み。表示の安定・画像取得待ち');
           const epoch = this.epoch;
@@ -401,6 +661,10 @@ export class Application {
           this.advanceProgress(progress, 2, '表示検査・画像取得完了。レイアウト検査待ち');
           const layout = await this.inspectLayout(preview.png);
           if (this.epoch !== epoch) throw new AppError('cancelled');
+          if (normalGuard && (this.reader.ownedSessionGuard !== normalGuard || normalGuard.singleRunBudget !== normalBudget
+              || !isNormalCaptureBudget(normalBudget))) throw new AppError('target_changed');
+          this.previewNormalGuard = normalGuard;
+          this.previewNormalBudget = normalBudget ?? null;
           this.previewImage = preview.png;
           this.previewBook = preview.book;
           this.previewPosition = preview.position;
@@ -422,17 +686,27 @@ export class Application {
         case 'quickPreview': {
           if (!this.reader) throw new AppError('open_browser_first');
           if (!this.reader.explicitPage) throw new AppError('select_reader_tab');
+          this.assertNormalReaderBinding();
           this.invalidate(null, { inspecting: true });
           this.state = 'AuthPending';
+          await this.reader.ownedSessionGuard?.preparePreview?.();
+          this.assertNormalReaderBinding();
+          const normalGuard = this.reader.ownedSessionGuard?.normal === true ? this.reader.ownedSessionGuard : null;
+          const normalBudget = normalGuard?.singleRunBudget;
           const epoch = this.epoch;
           const preset = this.presets.presets.find(p => p.id === this.presets.selected);
           const mode = input.mode ?? preset.mode;
-          const config = mode === 'visible' ? await this.reader.autoConfiguration() : input.config ?? preset.config;
+          const config = this.reader.ownedSessionGuard?.limited || this.reader.ownedSessionGuard?.normal || mode === 'visible'
+            ? await this.reader.autoConfiguration() : input.config ?? preset.config;
           this.advanceProgress(progress, 1, '設定対象の確認完了。表示の安定・画像取得待ち');
           const preview = await this.reader.configure(config);
           this.advanceProgress(progress, 2, '表示検査・画像取得完了。レイアウト検査待ち');
           const layout = await this.inspectLayout(preview.png);
           if (this.epoch !== epoch) throw new AppError('cancelled');
+          if (normalGuard && (this.reader.ownedSessionGuard !== normalGuard || normalGuard.singleRunBudget !== normalBudget
+              || !isNormalCaptureBudget(normalBudget))) throw new AppError('target_changed');
+          this.previewNormalGuard = normalGuard;
+          this.previewNormalBudget = normalBudget ?? null;
           this.previewImage = preview.png;
           this.previewBook = preview.book;
           this.previewPosition = preview.position;
@@ -478,47 +752,141 @@ export class Application {
           break;
         }
         case 'approve': {
+          this.assertNormalReaderBinding();
           const epoch = this.epoch;
+          const normalGuard = this.reader?.ownedSessionGuard;
+          const budget = normalGuard?.singleRunBudget;
+          const normalOwned = normalGuard?.normal === true;
+          if ((normalOwned || this.previewNormalGuard) && (normalGuard !== this.previewNormalGuard
+              || budget !== this.previewNormalBudget || !isNormalCaptureBudget(budget))) {
+            this.previewNormalBudget?.fail(); this.invalidate('target_changed'); throw new AppError('target_changed');
+          }
+          // A new GUI approval attempt replaces the old one, even if the new
+          // request is invalid or unconfirmed. It cannot fall back to old consent.
+          if (this.previewApproved && budget?.revokeApproval) {
+            budget.revokeApproval(); this.previewApproved = false; this.approvedMaxCaptures = null;
+            this.approvedNormalGuard = null; this.approvedNormalBudget = null; this.state = 'Preview';
+          }
           if (!this.previewImage || input.confirmed !== true) throw new AppError('preview_confirmation_required');
+          const maxCaptures = captureLimit(input.maxCaptures);
+          if (!normalOwned && (this.reader?.ownedPipe || budget) && maxCaptures === null) throw new AppError('invalid_capture_limit');
           try { await this.reader.requireBound(); }
-          catch (error) { this.invalidate(error.code ?? 'target_changed'); throw error; }
+          catch (error) { this.reader.ownedSessionGuard?.singleRunBudget?.fail(); this.invalidate(error.code ?? 'target_changed'); throw error; }
           this.job = (await this.store.call('job_info')).snapshot;
+          if (this.reader.ownedSessionGuard?.limited) assertPortableLimitedSettings(this.job);
+          if (budget && !normalOwned && (this.job.manifest.images.length || this.job.manifest.state !== 'ready')) {
+            budget.fail();
+            throw new AppError('expected_capture_new_job_required');
+          }
+          // Normal owned runs may resume only from the exact durable last
+          // original, never from a changed position or an uncertain dispatch.
+          // A recovered upload/orphan or inconsistent job is not a checkpoint.
+          if (normalOwned && (this.job.issues.length || this.job.orphan_files.length)) throw new AppError('resume_position_required');
           // Ready records the store transition, not consent for a later preview.
           // Retained images always need comparison against this preview again.
           if ((this.job.manifest.images.length || this.job.manifest.state !== 'ready') && input.resumeConfirmed !== true) throw new AppError('resume_confirmation_required');
           if (this.job.manifest.images.length && (!this.resumePlan || this.resumePlan.mode === 'blocked')) throw new AppError('resume_position_required');
+          if (normalOwned && this.job.manifest.images.length && this.resumePlan?.mode !== 'advance') throw new AppError('resume_position_required');
           const owner = this.job.manifest.images.find(image => image.book)?.book;
           if (owner && owner.identity !== this.previewBook?.identity) throw new AppError('book_identity_changed');
-          if (this.job.manifest.state !== 'ready') {
-            await this.store.call('resume_confirm', { last_capture_id: this.job.manifest.last_capture_id, target_confirmed: true });
-          }
           if (this.epoch !== epoch) throw new AppError('cancelled');
+          if (normalOwned && (this.reader.ownedSessionGuard !== normalGuard || normalGuard.singleRunBudget !== budget)) throw new AppError('target_changed');
+          if (normalOwned) budget.approve(maxCaptures, { resumeAdvance: this.resumePlan?.mode === 'advance' });
+          try {
+            if (this.job.manifest.state !== 'ready') {
+              await this.store.call('resume_confirm', { last_capture_id: this.job.manifest.last_capture_id, target_confirmed: true });
+            }
+            if (this.epoch !== epoch) throw new AppError('cancelled');
+            if (normalOwned && (this.reader.ownedSessionGuard !== normalGuard || normalGuard.singleRunBudget !== budget)) throw new AppError('target_changed');
+            if (!normalOwned) budget?.approve(maxCaptures);
+          } catch (error) { if (normalOwned) budget.fail(); throw error; }
+          this.approvedNormalGuard = normalOwned ? normalGuard : null;
+          this.approvedNormalBudget = normalOwned ? budget : null;
+          this.approvedMaxCaptures = maxCaptures;
           this.previewApproved = true;
           this.state = 'Ready';
           break;
         }
         case 'start': {
+          this.assertNormalReaderBinding();
           const epoch = this.epoch;
           if (this.state !== 'Ready' || !this.previewApproved || input.confirmed !== true) throw new AppError('explicit_start_required');
+          // Omission inherits the approval; it must never remove a finite limit.
+          const maxCaptures = this.approvedMaxCaptures;
+          const budget = this.reader.ownedSessionGuard?.singleRunBudget;
+          const refuseNormalChange = () => {
+            this.approvedNormalBudget?.fail(); this.invalidate('target_changed'); throw new AppError('target_changed');
+          };
+          if ((this.approvedNormalGuard || this.reader.ownedSessionGuard?.normal === true)
+              && (this.reader.ownedSessionGuard !== this.approvedNormalGuard || budget !== this.approvedNormalBudget
+                || !isNormalCaptureBudget(budget))) refuseNormalChange();
+          if (this.reader.ownedSessionGuard?.limited) {
+            this.job = (await this.store.call('job_info')).snapshot;
+            assertPortableLimitedSettings(this.job);
+            if (this.job.manifest.images.length || this.job.manifest.state !== 'ready') throw new AppError('portable_limited_claim_consumed');
+          }
+          const revokeChangedLimit = () => {
+            // The GUI budget is per explicit approval. A rejected change must
+            // not leave that older approval usable by a later omitted limit.
+            if (budget?.revokeApproval) {
+              budget.revokeApproval(); this.previewApproved = false; this.approvedMaxCaptures = null;
+              this.approvedNormalGuard = null; this.approvedNormalBudget = null; this.state = 'Preview';
+            }
+          };
+          if (Object.hasOwn(input, 'maxCaptures')) {
+            let requested;
+            try { requested = captureLimit(input.maxCaptures); }
+            catch (error) { revokeChangedLimit(); throw error; }
+            if (requested !== maxCaptures) { revokeChangedLimit(); throw new AppError('capture_limit_changed'); }
+          }
           try { await this.reader.requireBound(); }
-          catch (error) { this.invalidate(error.code ?? 'target_changed'); throw error; }
+          catch (error) { this.reader.ownedSessionGuard?.singleRunBudget?.fail(); this.invalidate(error.code ?? 'target_changed'); throw error; }
           const owner = this.job.manifest.images.find(image => image.book)?.book;
           if (owner && owner.identity !== this.reader.bound?.book?.identity) throw new AppError('book_identity_changed');
           if (this.epoch !== epoch) throw new AppError('cancelled');
-          await this.store.call('capture_start');
-          if (this.epoch !== epoch) { await this.store.call('capture_pause'); throw new AppError('cancelled'); }
+          if (this.approvedNormalGuard && this.reader.ownedSessionGuard !== this.approvedNormalGuard) refuseNormalChange();
+          if (this.reader.ownedSessionGuard?.normal === true) {
+            if (this.reader.ownedSessionGuard !== this.approvedNormalGuard || budget !== this.approvedNormalBudget
+                || !isNormalCaptureBudget(budget)) refuseNormalChange();
+            this.job = (await this.store.call('job_info')).snapshot;
+            if (this.job.issues.length || this.job.orphan_files.length
+                || this.job.manifest.images.length && this.planResume({ png: this.previewImage, position: this.previewPosition }).mode !== 'advance')
+              throw new AppError('resume_position_required');
+            if (this.epoch !== epoch || this.reader.ownedSessionGuard !== this.approvedNormalGuard
+                || this.reader.ownedSessionGuard.singleRunBudget !== budget) refuseNormalChange();
+            budget.start(maxCaptures, { resumeAdvance: this.resumePlan?.mode === 'advance' });
+          } else budget?.start(maxCaptures);
+          let normalResultRun = null;
+          try {
+            if (this.fixture?.normal === true) {
+              try { normalResultRun = await beginPortableNormalResult(this.dataDir, this.job, this.portableNormalSession, maxCaptures); }
+              catch { this.portableNormalResultUncertainJob = this.job.manifest.job_id; throw new AppError('portable_normal_result_write_failed'); }
+              if (this.epoch !== epoch) throw new AppError('cancelled');
+            }
+            await this.store.call('capture_start');
+            if (this.epoch !== epoch) { await this.store.call('capture_pause'); throw new AppError('cancelled'); }
+          } catch (error) { budget?.fail(); this.invalidate(error.code ?? 'capture_or_advance_failed'); throw error; }
           this.lastFailure = null;
+          this.captureCancelReason = null;
           this.state = 'Capturing';
           this.reason = null;
-          const acquisition = this.acquire(epoch, input.progressKey, this.resumePlan?.mode === 'advance');
+          const acquisition = this.acquire(epoch, input.progressKey, this.resumePlan?.mode === 'advance', maxCaptures, normalResultRun);
           const tracked = acquisition.finally(() => { if (this.loop === tracked) this.loop = null; });
           this.loop = tracked;
           break;
         }
         case 'review': {
           if (!this.job) throw new AppError('job_required');
-          const info = (await this.store.call('job_info')).snapshot;
-          await this.store.call('set_review_order', { capture_ids: input.ids ?? info.manifest.selected_capture_ids });
+          // Limited review is inspection only, including recovered legacy jobs.
+          // Even writing the same order would change their preserved manifest.
+          if (await this.isPortableLimitedJob() && !await this.canPortableArchiveEdit()) {
+            // Review ends the trial even if requested before its first preview.
+            const budget = this.reader?.ownedSessionGuard?.singleRunBudget;
+            if (budget?.snapshot().phase !== 'finished') budget?.fail();
+          } else {
+            const info = (await this.store.call('job_info')).snapshot;
+            await this.store.call('set_review_order', { capture_ids: input.ids ?? info.manifest.selected_capture_ids });
+          }
           this.state = 'Review';
           this.invalidate(null);
           break;
@@ -548,15 +916,19 @@ export class Application {
         case 'export': {
           if (!this.job) throw new AppError('job_required');
           const destination = path.resolve(input.destination);
-          if (typeof input.rangeConfirmed === 'boolean') await this.store.call('confirm_range', { confirmed: input.rangeConfirmed });
-          progress.detail = '対象全体の原本照合・保存対象数の確認待ち（総量未確定）';
-          lastExport = { ...(await this.store.call('export', { destination, format: input.format ?? 'zip' }, update => {
-            if (this.progress !== progress || progress.status !== 'pending') return;
-            progress.total = update.total;
-            progress.done = update.done;
-            progress.unit = '保存作業（全画像の書込み＋再読検証＋全体検証＋確定）';
-            progress.detail = { write: '画像をZIPへ書込み中', verify: 'ZIP内の画像を再読検証中', publish: '全体検証済み。非上書き公開・保存履歴の確定待ち' }[update.stage];
-          })).export, destination };
+          this.pendingExportDestination = destination;
+          try {
+            if (typeof input.rangeConfirmed === 'boolean') await this.store.call('confirm_range', { confirmed: input.rangeConfirmed });
+            progress.detail = '対象全体の原本照合・保存対象数の確認待ち（総量未確定）';
+            lastExport = { ...(await this.store.call('export', { destination, format: input.format ?? 'zip' }, update => {
+              if (this.progress !== progress || progress.status !== 'pending') return;
+              progress.total = update.total;
+              progress.done = update.done;
+              progress.unit = '保存作業（原本照合＋出力準備＋書込み＋再読検証＋確定）';
+              progress.detail = { inspect: '原本を1枚ずつ照合中', prepare: '保存する画像と順序を確認中',
+                write: '画像をZIPへ書込み中', verify: 'ZIP内の画像を再読検証中', publish: '全体検証済み。非上書き公開・保存履歴の確定待ち' }[update.stage];
+            })).export, destination };
+          } finally { this.pendingExportDestination = null; }
           break;
         }
         default: throw new AppError('unknown_action');
@@ -577,6 +949,7 @@ export class Application {
     const progress = this.beginProgress('chooseDestination', input.progressKey, null, '保存先選択');
     let destination;
     try {
+      await this.enforcePortableLimitedCommand('chooseDestination', input);
       this.advanceProgress(progress, 1, '選択条件確認済み。保存先ダイアログの本人入力待ち（保存は開始しません）');
       destination = await this.saveDialog({ destination: path.resolve(input.destination || (await this.snapshot()).suggestedDestination), format: input.format, signal: controller.signal });
     } catch (error) {
@@ -593,6 +966,28 @@ export class Application {
     return result;
   }
 
+  async isPortableLimitedJob() {
+    if (process.platform !== 'linux' || !this.job) return false;
+    if (await portableLimitedClaimState(this.dataDir, this.job.manifest.job_id) === 'this-job') return true;
+    return await portableLimitedOriginClaimState(this.job, this.dataDir) === 'this-job';
+  }
+
+  async canPortableArchiveEdit() {
+    return Boolean(this.job && portableLimitedAvailable(this.dataDir) && !this.reader && !this.fixture && !this.profile
+      && !this.readerReleasePending && !this.quiescenceRequired && !this.storageUncertain
+      && await portableArchiveEditable(this.dataDir, this.job));
+  }
+
+  assertNormalReaderBinding() {
+    if (this.fixture?.normal === true && (!this.reader || this.reader.ownedSessionGuard?.normal !== true
+        || !isPortableNormalGuard(this.fixture, this.reader, this.reader.ownedSessionGuard)
+        || !isNormalCaptureBudget(this.reader.ownedSessionGuard.singleRunBudget))) {
+      this.approvedNormalBudget?.fail();
+      this.invalidate('target_changed');
+      throw new AppError('target_changed');
+    }
+  }
+
   planResume(preview) {
     const manifest = this.job.manifest;
     if (!manifest.images.length) return null;
@@ -601,6 +996,12 @@ export class Application {
     const samePixels = last?.sha256 === createHash('sha256').update(preview.png).digest('hex');
     const samePosition = checkpoint?.capture_id === last?.capture_id && checkpoint.position === preview.position;
     let mode = 'capture';
+    if (this.reader?.ownedSessionGuard?.normal === true) {
+      mode = samePixels && samePosition && checkpoint?.dispatch === 'not_sent'
+        && !last.blank_candidate && !last.duplicate_candidate ? 'advance' : 'blocked';
+      return { mode, imageMatches: samePixels, lastCaptureId: last?.capture_id, lastPosition: checkpoint?.position ?? null,
+        currentPosition: preview.position, dispatch: checkpoint?.dispatch ?? 'unknown' };
+    }
     if (samePixels || samePosition) {
       mode = samePixels && samePosition && checkpoint.dispatch === 'not_sent'
         && !last.blank_candidate && !last.duplicate_candidate ? 'advance' : 'blocked';
@@ -609,16 +1010,40 @@ export class Application {
       currentPosition: preview.position, dispatch: checkpoint?.dispatch ?? 'unknown' };
   }
 
-  async acquire(epoch, progressKey, advanceFirst = false) {
+  async acquire(epoch, progressKey, advanceFirst = false, maxCaptures = null, normalResultRun = null) {
     const job = this.job;
     const reader = this.reader;
+    const budget = reader.ownedSessionGuard?.singleRunBudget;
     const generation = this.bookGeneration;
     let pendingCaptureId = null;
     let stage = 'capture';
     let advanceDispatch = 'not_sent';
     let failure = null;
+    let committed = 0, limitReached = false, endReached = false;
+    let stoppedReason = null;
+    let resultWritten = false, resultWriteFailed = false;
+    const normal = this.fixture?.normal === true;
+    const startedAt = performance.now();
+    let savedBytes = job.manifest.images.reduce((sum, image) => sum + image.bytes, 0);
     const ownsJob = () => this.job === job && this.reader === reader && this.bookGeneration === generation;
     const cancelled = () => !ownsJob() || this.epoch !== epoch || this.state !== 'Capturing';
+    const resultStages = new Set(['capture', 'capture_begin', 'capture_upload', 'target_recheck_before_commit', 'capture_commit',
+      'image_review', 'advance_preflight', 'advance_dispatch', 'advance_confirmation', 'advance_confirmed',
+      'advance_bound_check', 'advance_next_check', 'advance_handle_check', 'advance_trial_check', 'advance_recheck',
+      'capture_limit_stop', 'end_stop', 'resource_stop']);
+    const resultReasons = new Set(['end_candidate', 'capture_limit_reached', 'capture_time_limit_reached',
+      'capture_byte_limit_reached', 'capture_free_space_limit_reached', 'capture_storage_check_failed',
+      'image_review_required', 'target_changed', 'browser_target_changed', 'store_disconnected', 'application_closed',
+      'user_paused', 'user_stopped', 'interrupted']);
+    const persistResult = async (reason, dispatch = advanceDispatch) => {
+      if (!normalResultRun || resultWritten) return;
+      try {
+        await finishPortableNormalResult(this.dataDir, job, normalResultRun,
+          resultReasons.has(reason) ? reason : 'capture_or_advance_failed',
+          resultStages.has(stage) ? stage : 'unknown', ['not_sent', 'sent', 'unknown', 'confirmed'].includes(dispatch) ? dispatch : 'unknown');
+        resultWritten = true;
+      } catch { resultWriteFailed = true; this.portableNormalResultUncertainJob = job.manifest.job_id; throw new AppError('portable_normal_result_write_failed'); }
+    };
     const progress = this.beginProgress('start', progressKey, null, '取得画像');
     const advance = async captureId => {
       await reader.advance(cancelled, async update => {
@@ -629,23 +1054,86 @@ export class Application {
         });
       });
     };
+    const stopInReview = async reason => {
+      stage = reason === 'capture_limit_reached' ? 'capture_limit_stop' : reason === 'end_candidate' ? 'end_stop' : 'resource_stop';
+      await this.store.call('capture_stop');
+      if (cancelled()) return false;
+      const info = (await this.store.call('job_info')).snapshot;
+      if (cancelled()) return false;
+      await this.store.call('set_review_order', { capture_ids: info.manifest.selected_capture_ids });
+      if (cancelled()) return false;
+      if (committed) budget?.finish();
+      else budget?.fail(); // Resuming at an already reached end spends no new original.
+      if (this.portableArchiveJob === job.manifest.job_id) {
+        const current = (await this.store.call('job_info')).snapshot;
+        const previewDigest = createHash('sha256').update(this.previewImage).digest('hex');
+        await recordPortableArchiveCapture(this.dataDir, current, budget?.snapshot(), previewDigest);
+        this.portableArchiveResult = { budget: budget.snapshot(), previewMatches: true };
+      }
+      await persistResult(reason, info.manifest.checkpoint?.dispatch ?? 'not_sent');
+      if (cancelled()) return false;
+      this.invalidate(reason);
+      this.state = 'Review';
+      limitReached = true;
+      endReached = reason === 'end_candidate';
+      stoppedReason = reason;
+      return true;
+    };
+    const resourceStop = async (additional = 0) => {
+      if (!normal) return false;
+      this.assertNormalReaderBinding();
+      let reason = performance.now() - startedAt >= normalRunMilliseconds ? 'capture_time_limit_reached'
+        : !Number.isSafeInteger(savedBytes) || savedBytes < 0 || savedBytes + additional > normalJobBytes ? 'capture_byte_limit_reached' : null;
+      if (!reason) {
+        let free;
+        try { const fs = await statfs(job.job_path, { bigint: true }); free = fs.bavail * fs.bsize; }
+        catch { throw new AppError('capture_storage_check_failed'); }
+        if (free < BigInt(normalFreeBytes + additional)) reason = 'capture_free_space_limit_reached';
+      }
+      if (!reason) return false;
+      if (!committed) throw new AppError(reason);
+      await stopInReview(reason);
+      return true;
+    };
     try {
+      this.assertNormalReaderBinding();
+      let firstPreview = null;
+      if (budget) {
+        if (advanceFirst && !reader.ownedSessionGuard?.normal || !this.previewImage || this.previewPosition !== reader.bound?.position
+            || this.previewBook?.identity !== reader.bound?.book?.identity) throw new AppError('target_changed');
+        if (!advanceFirst) firstPreview = Buffer.from(this.previewImage);
+      }
       // Only the identical last image at its checkpoint with a durable
       // not-sent record may advance without saving it twice. Position labels
       // alone can collide across different, not-yet-captured images.
       if (advanceFirst && !cancelled()) {
-        const current = await reader.capture();
+        // An owned normal run has already taken the explicit preview under its
+        // budget. Recheck the bound display without spending a second capture.
+        const currentState = reader.ownedSessionGuard?.normal ? await reader.requireBound() : null;
+        const current = reader.ownedSessionGuard?.normal ? this.previewImage : await reader.capture();
         await this.inspectLayout(current); // Preserve black/invalid PNG guards even without another commit.
         if (cancelled()) return;
         if (!this.previewImage || createHash('sha256').update(current).digest('hex') !== createHash('sha256').update(this.previewImage).digest('hex')) {
           throw new AppError('resume_position_required');
         }
+        if (normal && (currentState.nextDisabled || await reader.ownedSessionGuard.atEnd?.(currentState))) {
+          await stopInReview('end_candidate');
+          return;
+        }
+        if (await resourceStop()) return;
         await advance(job.manifest.last_capture_id);
       }
       while (!cancelled()) {
+        if (await resourceStop()) break;
         progress.detail = '総数・残数・割合は未確定。次の画像の取得待ち';
         stage = 'capture';
-        const png = await reader.capture();
+        let png;
+        if (firstPreview) {
+          await reader.requireBound();
+          png = firstPreview;
+          firstPreview = null;
+        } else png = await reader.capture();
+        if (await resourceStop(png.length)) break;
         this.advanceProgress(progress, 1, '現在画像の取得完了。原本の保存準備待ち');
         if (cancelled()) break;
         stage = 'capture_begin';
@@ -660,18 +1148,36 @@ export class Application {
         if (cancelled()) break;
         this.advanceProgress(progress, 2, '画像転送完了。確定前の対象照合待ち');
         stage = 'target_recheck_before_commit';
+        if (reader.ownedSessionGuard?.limited) assertPortableLimitedSettings((await this.store.call('job_info')).snapshot);
         await reader.requireBound();
         if (cancelled()) break;
         this.advanceProgress(progress, 3, '対象照合完了。原本の確定待ち');
         stage = 'capture_commit';
         const { capture } = await this.store.call('capture_commit', { book: reader.bound?.book ?? null, position: reader.bound?.position });
+        committed += 1;
+        savedBytes += capture.bytes;
         if (this.progress === progress) progress.done += 1;
         pendingCaptureId = null;
         if (ownsJob()) this.pending = false;
+        budget?.commit();
         if (cancelled()) break;
         this.advanceProgress(progress, 4, '原本確定済み。画像の安全点検待ち');
         stage = 'image_review';
         if (capture.blank_candidate || capture.duplicate_candidate) throw new AppError('image_review_required');
+        if (maxCaptures !== null && committed >= maxCaptures) {
+          // Stop at the last committed display. Leave its checkpoint not_sent
+          // so explicit, re-approved resume can advance it without recapture.
+          await stopInReview('capture_limit_reached');
+          break;
+        }
+        if (budget) {
+          const current = await reader.requireBound();
+          if (current.nextDisabled || await reader.ownedSessionGuard.atEnd?.(current)) {
+            await stopInReview('end_candidate');
+            break;
+          }
+        }
+        if (await resourceStop()) break;
         this.advanceProgress(progress, 5, '画像点検完了。安全な送り・位置変化の確認待ち（不明な送りは再送しません）');
         await advance(capture.capture_id);
         if (this.progress === progress && !cancelled()) progress.detail = '総数・残数・割合は未確定。次画像の準備待ち';
@@ -679,22 +1185,41 @@ export class Application {
         await sleep(200);
       }
     } catch (error) {
-      if (!cancelled() && ownsJob()) {
-        const code = error instanceof AppError ? error.code : 'capture_or_advance_failed';
+      budget?.fail();
+      // A storage error observer invalidates the epoch before StoreClient
+      // rejects. Preserve that failure rather than treating it as user cancel.
+      if (ownsJob() && (!cancelled() || this.storageUncertain || this.captureCancelReason
+          && !['user_paused', 'user_stopped', 'application_closed'].includes(this.captureCancelReason))) {
+        const code = this.captureCancelReason || (error instanceof AppError ? error.code : 'capture_or_advance_failed');
         failure = { stage, code, detail: error instanceof AppError ? error.detail ?? null : null, advanceDispatch };
         this.invalidate(code);
       }
     } finally {
-      if (pendingCaptureId && ownsJob()) {
+      if (budget && !limitReached) budget.fail();
+      // Invalidation can be seen at a loop boundary without throwing at all.
+      if (!failure && !limitReached && ownsJob() && this.captureCancelReason
+          && !['user_paused', 'user_stopped', 'application_closed'].includes(this.captureCancelReason)) {
+        failure = { stage, code: this.captureCancelReason, detail: null, advanceDispatch };
+      }
+      if (pendingCaptureId && ownsJob() && !this.storageUncertain && !reader.ownedSessionGuard?.limited) {
         await this.store.call('capture_abort').catch(() => { this.reason = 'pending_preserved_for_inspection'; });
         pendingCaptureId = null;
         this.pending = false;
       }
       if (ownsJob()) {
         const info = await this.store.call('job_info').catch(() => null);
-        if (info?.snapshot.manifest.state === 'capturing') await this.store.call('capture_pause').catch(() => {});
+        if (!this.storageUncertain && info?.snapshot.manifest.state === 'capturing') await this.store.call('capture_pause').catch(() => {});
         const progress = await this.store.call('job_progress').catch(() => null);
         if (progress?.manifest && ownsJob()) job.manifest = progress.manifest;
+        if (normalResultRun && !resultWritten && !resultWriteFailed) {
+          try { await persistResult(failure?.code ?? this.captureCancelReason ?? 'interrupted',
+            job.manifest.checkpoint?.dispatch ?? advanceDispatch); }
+          catch {
+            failure = { stage: 'unknown', code: 'portable_normal_result_write_failed', detail: null, advanceDispatch: 'unknown' };
+            this.reason = failure.code;
+            this.state = 'NeedsAttention';
+          }
+        }
         if (failure && ownsJob()) {
           this.lastFailure = {
             ...failure,
@@ -703,7 +1228,23 @@ export class Application {
         }
         if (this.state === 'Capturing') this.state = 'NeedsAttention';
       }
-      if (this.progress === progress) { progress.status = failure ? 'failure' : 'cancelled'; progress.detail = failure ? '安全停止。確定原本は保持しています' : '取得を停止しました'; }
+      if (this.progress === progress) {
+        progress.status = failure ? 'failure' : limitReached ? 'success' : 'cancelled';
+        progress.detail = failure ? '安全停止。確定原本は保持しています' : limitReached
+          ? endReached ? '終端候補で停止。全冊完了ではありません' : stoppedReason === 'capture_limit_reached'
+            ? '承認した最大取得画面数で停止。全冊完了ではありません' : '時間または容量の安全境界で停止。全冊完了ではありません'
+          : '取得を停止しました';
+      }
+      if (limitReached && this.portableArchiveJob === job.manifest.job_id && ownsJob() && !this.storageUncertain) {
+        this.portableArchiveClosing = true;
+        try { await this.closeBrowser(); this.state = 'Review'; this.reason = null; }
+        catch {
+          this.readerReleasePending = true; this.state = 'NeedsAttention';
+          this.lastFailure = { stage: 'reader_close', code: 'reader_close_failed', committedImages: committed, advanceDispatch };
+          if (this.progress === progress) { progress.status = 'failure'; progress.detail = 'Reader終了未確認。原本と記録を保全しています'; }
+        }
+        finally { this.portableArchiveClosing = false; }
+      }
     }
   }
 
@@ -717,9 +1258,23 @@ export class Application {
 
   async cancel(action) {
     if (!this.job) throw new AppError('job_required');
+    const wasCapturing = this.state === 'Capturing' || Boolean(this.loop);
+    if (wasCapturing) this.captureCancelReason ??= action === 'pause' ? 'user_paused' : 'user_stopped';
     this.invalidate(null);
     this.selectionCancelEpoch = (this.selectionCancelEpoch ?? 0) + 1;
     if (this.reader?.pickField) await this.reader.cancelPick();
+    if (await this.isPortableLimitedJob()) {
+      const guard = this.reader?.ownedSessionGuard;
+      // A recovered or already closed trial cannot be mutated by stop/pause.
+      if (!guard?.limited) throw new AppError('portable_limited_claim_consumed');
+      if (!wasCapturing) {
+        // An explicit stop before/after capture ends the active budget without
+        // writing a stopped/review state over an already preserved manifest.
+        guard.singleRunBudget?.fail();
+        this.state = action === 'pause' ? 'Paused' : 'Review';
+        return this.snapshot();
+      }
+    }
     this.state = action === 'pause' ? 'Paused' : 'Review';
     await this.loop;
     const info = await this.store.call('job_info');
@@ -767,9 +1322,15 @@ export class Application {
       await this.waitForOperations(active, 'safe_stop_timeout');
       this.advanceProgress(progress, 2, '操作応答の静止確認済み。画像書込み・送りの停止待ち');
       if (this.loop) await this.waitForOperations([this.loop], 'safe_stop_timeout');
-      if (this.job) { await this.cancel('stop'); writerQuiescent = true; }
+      if (this.job) {
+        // A stopped limited job is already immutable. Closing it must not
+        // rewrite its manifest merely to move on to a different trial.
+        if (this.loop || !await this.isPortableLimitedJob()) await this.cancel('stop');
+        writerQuiescent = true;
+      }
       this.advanceProgress(progress, 3, '画像書込み停止確認済み。専用ブラウザの通常終了待ち');
-      if (this.reader || this.fixture || this.profile) await this.closeBrowser();
+      if (this.reader || this.fixture || this.profile || this.readerReleasePending
+          || this.readerLifecycle?.state === 'close_unconfirmed') await this.closeBrowser();
       this.advanceProgress(progress, 4, 'ブラウザ終了確認済み。ジョブを閉じる処理待ち（原本保持）');
       if (this.job) {
         writerQuiescent = false;
@@ -797,7 +1358,8 @@ export class Application {
       // are different resources. Keep export/review available only in the
       // former case; an unconfirmed writer still blocks all mutation.
       this.quiescenceRequired = !writerQuiescent;
-      this.readerReleasePending = writerQuiescent && Boolean(this.reader || this.fixture || this.profile);
+      this.readerReleasePending = writerQuiescent && Boolean(this.reader || this.fixture || this.profile
+        || this.readerReleasePending || this.readerLifecycle?.state === 'close_unconfirmed');
       this.state = this.job ? 'NeedsAttention' : 'Idle';
       this.reason = error.code ?? 'safe_stop_failed';
       this.endingBook = false;
@@ -807,7 +1369,23 @@ export class Application {
 
   async ensureOwnedDirectory(directory) {
     const info = await lstat(directory);
-    if (!info.isDirectory() || info.isSymbolicLink() || path.resolve(await realpath(directory)).toLowerCase() !== path.resolve(directory).toLowerCase()) throw new AppError('unsafe_directory');
+    if (!info.isDirectory() || info.isSymbolicLink() || !privateMetadata(info, true) || !samePath(await realpath(directory), directory)) throw new AppError('unsafe_directory');
+  }
+
+  async ensureGenericSession(directory) {
+    await this.ensureOwnedDirectory(directory);
+    if (await portableLinuxSessionProtected(directory)) throw new AppError('portable_login_session_protected');
+  }
+
+  async resolvePortableKindle(id) {
+    // The separate Portable login entry currently opens the Japan store only.
+    // Do not silently reuse that account for a different selected region.
+    if (this.kindleRegion !== 'jp') throw new AppError('portable_kindle_region_unsupported');
+    try { return await resolveExistingPortableLinuxSession(this.dataDir, id); }
+    catch (error) {
+      const code = ['select_saved_session', 'login_in_use_or_unknown'].includes(error.code) ? error.code : 'portable_session_unavailable';
+      throw new AppError(code);
+    }
   }
 
   async image(id, original = false, side = null) {
@@ -823,35 +1401,94 @@ export class Application {
     } else item = original || !image.crop ? image : image.crop;
     const filename = path.join(this.job.job_path, item.path);
     const info = await lstat(filename);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > 32 * 1024 * 1024
-      || path.resolve(await realpath(filename)).toLowerCase() !== path.resolve(filename).toLowerCase()) throw new AppError('unsafe_image');
+    if (!info.isFile() || info.isSymbolicLink() || !privateMetadata(info) || info.size > 32 * 1024 * 1024
+      || !samePath(await realpath(filename), filename)) throw new AppError('unsafe_image');
     const png = await readFile(filename);
     if (createHash('sha256').update(png).digest('hex') !== item.sha256) throw new AppError('image_integrity_failed');
     return png;
   }
 
-  async closeBrowser() {
+  holdPortablePilotStop(outcome) {
+    if (this.portablePilotStopPromise) return this.portablePilotStopPromise;
+    // Fence every public command synchronously before awaiting an in-flight
+    // inspection. The consumed job and claim remain untouched.
+    const result = projectPortablePilotStop(outcome);
+    this.portablePilotStop = Object.freeze({ ...result, readerClose: 'pending' });
+    this.reader?.ownedSessionGuard?.singleRunBudget?.fail();
     this.invalidate(null);
-    if (this.reader) {
+    const active = [...this.commands, ...(this.loop ? [this.loop] : [])];
+    return this.portablePilotStopPromise = (async () => {
+      let readerClose = 'unconfirmed';
+      try {
+        await this.waitForOperations(active, 'safe_stop_timeout');
+        await this.closeBrowser(); // Existing normal close/join; unknown stays unknown.
+        readerClose = 'confirmed';
+      } catch { this.readerReleasePending = true; }
+      this.portablePilotStop = Object.freeze({ ...result, readerClose });
+      return this.portablePilotStop;
+    })();
+  }
+
+  async closeBrowser({ retainProfile = false } = {}) {
+    const archiveJob = this.job;
+    const archiveRelease = archiveJob && this.portableArchiveJob === archiveJob.manifest.job_id
+      && this.reader?.ownedSessionGuard?.singleRunBudget?.snapshot().phase === 'finished'
+      && !this.lastFailure && !this.storageUncertain && !this.quiescenceRequired;
+    this.invalidate(null);
+    const errors = [];
+    const lifecycle = this.readerLifecycle;
+    const unconfirmed = error => {
+      if (lifecycle) { lifecycle.state = 'close_unconfirmed'; lifecycle.failure ??= error; }
+      this.readerReleasePending = true;
+      const failure = new AppError('reader_close_failed');
+      failure.cause = lifecycle?.failure ?? error;
+      errors.push(failure);
+    };
+    if (lifecycle?.state === 'close_unconfirmed' || lifecycle?.state === 'starting'
+      || lifecycle?.state === 'active' && !this.reader) {
+      unconfirmed(lifecycle.failure);
+    } else if (this.reader) {
       const reader = this.reader;
-      try { await reader.close(); }
-      catch { this.readerReleasePending = true; throw new AppError('reader_close_failed'); }
-      if (this.reader === reader) this.reader = null;
-      this.readerReleasePending = false;
+      try {
+        if (lifecycle && reader.lifecycle !== lifecycle) throw new Error('reader_identity_changed');
+        await reader.close();
+        if (this.reader !== reader || this.readerLifecycle !== lifecycle) throw new Error('reader_identity_changed');
+        if (lifecycle && lifecycle.state !== 'closed_confirmed') throw new Error('reader_close_unconfirmed');
+        this.reader = null;
+      } catch (error) { unconfirmed(error); }
     }
-    if (this.fixture) { await this.fixture.close(); this.fixture = null; }
-    if (this.profile && !this.profilePersistent && path.basename(this.profile).startsWith('temporary-')) {
+    // The fixture is independent of the browser/profile. Its normal close is
+    // still attempted, but cannot turn an unknown browser into a success.
+    if (this.fixture && !(this.ownedPipeFixture && errors.length)) {
+      try { await this.fixture.close(); this.fixture = null; }
+      catch (error) { errors.push(error); }
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length) throw new AggregateError(errors, 'browser_cleanup_failed', { cause: errors[0] });
+    if (this.profile && !retainProfile && !this.profilePersistent && path.basename(this.profile).startsWith('temporary-')) {
       await this.ensureOwnedDirectory(this.profile);
       await rm(this.profile, { recursive: true });
     }
     this.profile = null;
     this.profilePersistent = false;
+    this.portableNormalSession = null;
+    this.readerLifecycle = null;
+    this.ownedPipeFixture = false;
     this.readerReleasePending = false;
     this.state = this.job ? 'ResumeCheck' : 'Idle';
+    if (archiveRelease && this.job === archiveJob) {
+      this.job = (await this.store.call('job_info')).snapshot;
+      for (const image of this.job.manifest.images) await this.image(image.capture_id, true);
+      await releasePortableArchive(this.dataDir, this.job);
+      this.portableArchiveReaderLifecycle = lifecycle;
+      this.portableArchiveResult = { ...this.portableArchiveResult, readerClosed: true };
+      this.portableArchiveJob = null;
+    }
   }
 
   close() {
     if (this.closePromise) return this.closePromise;
+    if (this.state === 'Capturing') this.captureCancelReason ??= 'application_closed';
     this.closed = true;
     this.invalidate(null);
     this.selectionCancelEpoch = (this.selectionCancelEpoch ?? 0) + 1;
@@ -859,11 +1496,15 @@ export class Application {
       // UI commands can still own a browser that Reader.open has not returned
       // yet. Settle those commands before deleting its profile or closing Rust.
       this.destinationDialog?.abort();
-      await this.reader?.cancelPick();
+      const errors = [];
+      try { await this.reader?.cancelPick(); } catch (error) { errors.push(error); }
       await Promise.allSettled([...this.commands]);
-      await this.loop;
-      try { await this.closeBrowser(); }
-      finally { await this.store.close(); }
+      try { await this.loop; } catch (error) { errors.push(error); }
+      await this.portablePilotStopPromise;
+      try { await this.closeBrowser(); } catch (error) { errors.push(error); }
+      try { await this.store.close(); } catch (error) { errors.push(error); }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length) throw new AggregateError(errors, 'application_cleanup_failed', { cause: errors[0] });
     })();
     return this.closePromise;
   }
