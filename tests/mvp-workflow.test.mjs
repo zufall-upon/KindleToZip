@@ -1646,6 +1646,90 @@ test('保存済みReview案内: 通常jobの切替・入力保持と旧画像応
   t.diagnostic(`匿名のjob切替後UI（固定試料のみ、私有画像・パスなし）: ${evidence}`);
 });
 
+test('停止確定境界: 保存中は編集を拒否し完了後の採用順を上書きしない', { timeout: 30_000 }, async t => {
+  const evidence = await mkdtemp(path.join(root, 'stop-review-ui-'));
+  t.diagnostic(`匿名の停止確定・採用順UI: ${evidence}`);
+  for (const boundary of ['capture_stop', 'set_review_order']) await t.test(boundary, async t => {
+    let control;
+    const r = await setup(t, { controlFirst: { control: () => control } });
+    await r.request('create');
+    await r.app.store.call('capture_start');
+    const image = new PNG({ width: 8, height: 8 }); image.data.fill(180);
+    for (let i = 0; i < 3; i++) {
+      const begun = await r.app.store.call('capture_begin');
+      await r.app.store.call('capture_chunk', { capture_id: begun.capture_id, data_base64: PNG.sync.write(image).toString('base64') });
+      await r.app.store.call('capture_commit');
+    }
+    await r.app.store.call('capture_pause');
+    r.app.state = 'Paused';
+    control = await openControlWindow(r.url, { headless: true });
+    const page = control.page;
+    let entered, release;
+    const reached = new Promise(resolve => { entered = resolve; });
+    const held = new Promise(resolve => { release = resolve; });
+    const call = r.app.store.call.bind(r.app.store);
+    r.app.store.call = async (kind, input) => {
+      if (kind === boundary) { entered(); await held; }
+      return call(kind, input);
+    };
+    const stopping = r.request('stop');
+    try {
+      await reached;
+      const during = await r.app.snapshot();
+      assert.equal(during.busy, true, '停止の保存確定までbusyを維持する');
+      for (const action of ['review', 'crop', 'export', 'resetImages', 'closeJob', 'chooseDestination', 'stop', 'pause']) {
+        await assert.rejects(r.app.command(action, { ids: [2, 1] }), { code: 'operation_busy' }, action);
+      }
+      await page.waitForFunction(() => document.querySelector('#operationStatus').getAttribute('aria-busy') === 'true');
+      assert.equal(await page.locator('#decisionButton').isDisabled(), true);
+      if (boundary === 'capture_stop') await page.screenshot({ path: path.join(evidence, 'stop-pending.png') });
+      assert.deepEqual(during.job.manifest.selected_capture_ids, [1, 2, 3]);
+    } finally { release(); await stopping; r.app.store.call = call; }
+    assert.equal((await r.app.snapshot()).busy, false);
+    await page.locator('#orderDetails > summary').click();
+    await page.locator('#order').fill('2,1');
+    await page.locator('#saveOrder').click();
+    const reviewed = await waitFor(r.app, s => !s.busy && s.job.manifest.selected_capture_ids.join(',') === '2,1');
+    assert.deepEqual(reviewed.job.manifest.excluded_capture_ids, [3]);
+    assert.equal(reviewed.job.manifest.images.length, 3);
+    for (const item of reviewed.job.manifest.images) assert.deepEqual(await r.app.image(item.capture_id, true), PNG.sync.write(image));
+    if (boundary === 'capture_stop') await page.screenshot({ path: path.join(evidence, 'review-saved.png') });
+    // An edit accepted first owns the boundary too; stop cannot retain an old
+    // selection while that edit's durable write is still pending.
+    let editing;
+    const editReached = new Promise(resolve => { editing = resolve; });
+    let finishEdit;
+    const editHeld = new Promise(resolve => { finishEdit = resolve; });
+    r.app.store.call = async (kind, input) => {
+      if (kind === 'set_review_order') { editing(); await editHeld; }
+      return call(kind, input);
+    };
+    const edit = r.request('review', { ids: [1, 2] });
+    try {
+      await editReached;
+      await assert.rejects(r.app.command('stop'), { code: 'operation_busy' });
+    } finally { finishEdit(); await edit; r.app.store.call = call; }
+    assert.deepEqual((await r.app.snapshot()).job.manifest.selected_capture_ids, [1, 2]);
+  });
+  await t.test('停止保存失敗は未確定を保持し安全終了で回復する', async t => {
+    const r = await setup(t); await r.request('create');
+    const call = r.app.store.call.bind(r.app.store);
+    r.app.store.call = (kind, input) => {
+      if (kind === 'capture_stop') throw new Error('fixture_stop_unconfirmed');
+      return call(kind, input);
+    };
+    await assert.rejects(r.app.command('stop'), /fixture_stop_unconfirmed/);
+    r.app.store.call = call;
+    const failed = await r.app.snapshot();
+    assert.equal(failed.busy, false);
+    assert.equal(failed.recoveryRequired, true);
+    assert.equal(failed.state, 'NeedsAttention');
+    await assert.rejects(r.app.command('review', { ids: [] }), { code: 'safe_stop_incomplete' });
+    await r.request('finishBook');
+    assert.equal((await r.app.snapshot()).recoveryRequired, false);
+  });
+});
+
 test('公開MVP画面: 試料プレビュー・明示開始・一時停止/復帰・点検順序・クロップ・ZIP/CBZ・中断データ再表示', async t => {
   const r = await setup(t);
   const control = await openControlWindow(r.url, { headless: true });

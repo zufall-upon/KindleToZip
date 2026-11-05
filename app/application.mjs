@@ -178,7 +178,7 @@ export class Application {
       captureSettings: job?.manifest.capture_settings ?? { capture_scale: 1, page_output_mode: 'single_image', reading_direction: 'right_to_left', image_format: 'png', jpeg_quality: 85 },
       previewInfo: this.previewInfo ?? null,
       resumePlan: this.resumePlan ?? null,
-      busy: Boolean(this.busy || this.loop || this.endingBook || this.destinationDialog),
+      busy: Boolean(this.busy || this.loop || this.cancelling || this.endingBook || this.destinationDialog),
       activeOperation: this.destinationDialog ? 'chooseDestination' : this.activeOperation ?? null,
       operationProgress: this.progress ?? null,
       endingBook: Boolean(this.endingBook),
@@ -223,7 +223,7 @@ export class Application {
   }
 
   async exclusive(actionName, action, progressKey) {
-    if (this.endingBook || this.quiescenceRequired || this.busy || this.loop || this.destinationDialog) {
+    if (this.endingBook || this.quiescenceRequired || this.busy || this.loop || this.cancelling || this.destinationDialog) {
       throw new AppError(this.quiescenceRequired ? 'safe_stop_incomplete' : 'operation_busy');
     }
     if (this.readerReleasePending && !['review', 'crop', 'resetCrop', 'detectCrop', 'applyAutoCrop', 'export', 'closeBrowser'].includes(actionName)) {
@@ -234,7 +234,7 @@ export class Application {
     let result;
     try { result = await this.trackOperation(actionName, action, progressKey); }
     finally { this.busy = false; this.activeOperation = null; }
-    if (result && typeof result === 'object') result.busy = Boolean(this.loop);
+    if (result && typeof result === 'object') result.busy = Boolean(this.loop || this.cancelling);
     return result;
   }
 
@@ -244,7 +244,7 @@ export class Application {
     const inspecting = ['preview', 'quickPreview'].includes(action);
     // Report only completed inspection evidence, never infer login success
     // from a selected tab or from four non-empty selectors.
-    if (!this.busy && ['preview', 'quickPreview', 'pick', 'pickAll', 'expandReader', 'selectReaderTab', 'closeBrowser'].includes(action)) {
+    if (!this.busy && !this.cancelling && ['preview', 'quickPreview', 'pick', 'pickAll', 'expandReader', 'selectReaderTab', 'closeBrowser'].includes(action)) {
       this.displayInspection = inspecting ? { status: 'checking' } : null;
     }
     const pending = this.dispatchCommand(action, input);
@@ -297,7 +297,13 @@ export class Application {
     if (['cancelBack', 'finishBook', 'closeJob'].includes(action)) this.destinationDialog?.abort();
     if (action === 'chooseDestination') return this.chooseDestination(input);
     // Cancellation is observed locally before any queued Rust request.
-    if (action === 'pause' || action === 'stop') return this.trackOperation(action, () => this.cancel(action), input.progressKey);
+    if (action === 'pause' || action === 'stop') {
+      // Do not let a late stop snapshot race an already accepted edit/export.
+      const cancelable = ['preview', 'quickPreview', 'pick', 'pickAll', 'expandReader', 'selectReaderTab'].includes(this.activeOperation)
+        || this.activeOperation === 'start' && Boolean(this.loop);
+      if (this.cancelling || this.endingBook || this.busy && !cancelable) throw new AppError('operation_busy');
+      return this.trackOperation(action, () => this.cancel(action), input.progressKey);
+    }
     if (action === 'cancelBack') return this.trackOperation(action, () => this.cancelBack(), input.progressKey);
     if (action === 'finishBook') return this.trackOperation(action, p => this.finishBook(p), input.progressKey);
     if (action === 'cancelPick') return this.trackOperation(action, async () => { this.selectionCancelEpoch = (this.selectionCancelEpoch ?? 0) + 1; await this.reader?.cancelPick(); return this.snapshot(); }, input.progressKey);
@@ -940,7 +946,7 @@ export class Application {
 
   async chooseDestination(input) {
     if (!this.job) throw new AppError('job_required');
-    if (this.busy || this.loop || this.endingBook || this.quiescenceRequired || this.destinationDialog) throw new AppError('operation_busy');
+    if (this.busy || this.loop || this.cancelling || this.endingBook || this.quiescenceRequired || this.destinationDialog) throw new AppError('operation_busy');
     if (!['zip', 'cbz'].includes(input.format) || typeof input.destination !== 'string'
       || input.destination.length > 32760 || input.destination.includes('\0')) throw new AppError('invalid_destination');
     const generation = this.bookGeneration;
@@ -1257,6 +1263,29 @@ export class Application {
   }
 
   async cancel(action) {
+    if (this.cancelling) throw new AppError('operation_busy');
+    // The capture loop can finish before stop's durable Review/order writes.
+    // Keep edits excluded through those writes and the final snapshot so an
+    // old stop snapshot cannot overwrite a newly accepted review selection.
+    this.cancelling = true;
+    let result;
+    try { result = await this.cancelCapture(action); }
+    catch (error) {
+      if (this.job && error.code !== 'portable_limited_claim_consumed') {
+        // Releasing the in-flight fence is not confirmation of a failed stop.
+        // Keep the existing recovery boundary until safe finish/reopen.
+        this.quiescenceRequired = true;
+        this.state = 'NeedsAttention';
+        this.reason = error.code ?? 'safe_stop_failed';
+      }
+      throw error;
+    }
+    finally { this.cancelling = false; }
+    result.busy = Boolean(this.busy || this.loop || this.endingBook || this.destinationDialog);
+    return result;
+  }
+
+  async cancelCapture(action) {
     if (!this.job) throw new AppError('job_required');
     const wasCapturing = this.state === 'Capturing' || Boolean(this.loop);
     if (wasCapturing) this.captureCancelReason ??= action === 'pause' ? 'user_paused' : 'user_stopped';
