@@ -89,6 +89,10 @@ body { padding-bottom: max(260px, 46vh); }
   #reason { margin: 0; }
 }
 .language-selector { float: right; display: flex; align-items: center; gap: .5rem; margin: .25rem; }
+/* Leave room for guidance above progress details and actions on short windows. */
+@media (max-height: 500px) {
+  .workflow-bar { max-height: 70vh; }
+}
 .language-selector select { width: auto; }
 .saved-workspace { border: 1px solid #b8c7d6; border-radius: .5rem; padding: 1rem; margin: 1rem 0; }
 /* The one-shot result is read-only. Retain original-image inspection, never

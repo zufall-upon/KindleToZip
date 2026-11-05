@@ -163,7 +163,7 @@ export async function runDiagnostic({ command, args, cwd = root, env = process.e
 
 async function main() {
   const mode = process.argv[2];
-  const name = '^Kindle地域公開UI: Linuxでは実Kindle起動を拒否する$';
+  const name = '^Kindle地域公開UI: 保存sessionの準備と安全停止による副作用前拒否$';
   let command, args, outerMs;
   if (mode === 'single') {
     command = 'xvfb-run'; args = ['-a', process.execPath, '--test', '--test-concurrency=1', `--test-name-pattern=${name}`, 'tests/mvp-workflow.test.mjs']; outerMs = 150_000;

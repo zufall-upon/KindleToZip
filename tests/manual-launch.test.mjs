@@ -632,7 +632,7 @@ if (process.platform === 'linux') test('Ubuntu Portable: 別入口の所有profi
       const ownedEntries = await readdir(path.join(selected.root, 'owned'));
       const jobBefore = JSON.stringify((await running.app.snapshot()).job.manifest);
       assert.deepEqual(await request('openBrowser', { mode: 'kindle', session: selected.id }), {
-        status: 400, body: { code: 'browser_open_failed' },
+        status: 400, body: { code: 'linux_kindle_permission_required' },
       });
       assert.equal(openedProfile, undefined);
       const held = await running.app.snapshot();
