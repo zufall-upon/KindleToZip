@@ -1314,7 +1314,7 @@ test('MVP位置入力欄: 表示中の現在値を文字列で照合し自動非
   assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
 });
 
-test('保存済みReview案内: 限定jobの読取停止と通常jobの編集・保存を混同しない', { skip: process.platform !== 'linux' }, async t => {
+if (process.platform === 'linux') test('保存済みReview案内: 限定jobの読取停止と通常jobの編集・保存を混同しない', async t => {
   for (const limited of [true, false]) await t.test(limited ? '限定job' : '通常job', async t => {
     // 既存Storeの匿名保存画像だけを用意する。Reader・取得browserは開かない。
     const r = await setup(t);
@@ -1862,7 +1862,9 @@ test('Ubuntu通常取得: 正の有限予算は承認時の上限・復帰方式
   assert.equal(autoResume.snapshot().committed, 1);
 });
 
-test('Ubuntu通常取得: 停止記録は通常jobに結び付き途中・旧限定・異常を不明として保全する', async t => {
+// Portable job records use Linux-only claim identity and directory durability.
+// Shared capture-budget/API regressions below remain registered on both OSes.
+if (process.platform === 'linux') test('Ubuntu通常取得: 停止記録は通常jobに結び付き途中・旧限定・異常を不明として保全する', async t => {
   const { markPortableNormalJob, bindPortableNormalJob, readPortableNormalResult,
     beginPortableNormalResult, finishPortableNormalResult } = await import('../app/portable-normal-job.mjs');
   const session = 'saved-00000000-0000-0000-0000-000000000001';
