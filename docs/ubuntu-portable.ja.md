@@ -16,12 +16,12 @@ Snap起動ファイルと権限構成を検査します。検証した構成と�
 
 ## 展開・起動
 
-リリースの `KindleToZip-Portable-v0.2.0-linux-x64.tar.gz` と `SHA256SUMS-linux.txt`
+[v0.2.1リリース](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.1)の `KindleToZip-Portable-v0.2.1-linux-x64.tar.gz` と `SHA256SUMS-linux.txt`
 を同じフォルダーへ保存し、照合します。
 
 ```sh
 sha256sum --check SHA256SUMS-linux.txt
-tar -xzf KindleToZip-Portable-v0.2.0-linux-x64.tar.gz -C "$HOME"
+tar -xzf KindleToZip-Portable-v0.2.1-linux-x64.tar.gz -C "$HOME"
 cd "$HOME/KindleToZip"
 ./start-linux-bundle.sh --login
 ```
@@ -59,7 +59,8 @@ cd "$HOME/KindleToZip"
 
 2026-11-05、開発PCの配置版で、本人指定の1冊・161画像の点検、ZIP内の全画像の
 内容・順序照合、進捗100%と正常終了まで確認しました。途中停止からの復帰・修正を含みます。
-この実本結果と、公開タグから新しくビルドする配布物の自動検査は別の記録です。
+v0.2.1は両OSの正式リリース検査・実asset/metadata/checksum/provenance照合・匿名download確認後に同時公開しました。
+この配布物の匿名試料検査と、開発配置での実本161画像の結果は別の記録です。
 headless検査はWayland/SnapやAmazon認証の確認ではありません。
 
 Windows版は同じリリースのWindows x64 ZIPと[Portableガイド](portable.md)を参照してください。

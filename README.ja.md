@@ -6,16 +6,18 @@
 
 **取得して、整えて、アーカイブ。**
 
-WindowsでKindle Webの表示画面をPNG／JPEG画像として取得。点検・見開き分割・並べ替えをして、順序付きの **ZIP / CBZ** に保存できます。
+Windows・UbuntuでKindle Webの表示画面をPNG／JPEG画像として取得。点検・見開き分割・並べ替えをして、順序付きの **ZIP / CBZ** に保存できます。
 
 **スクショ取得はバックグラウンドで。待ち時間も、ほかの作業に。**
 
-**完全無料・オープンソース · Windows x64 · 独自アカウント登録不要 · 有料DLCなし**
+**完全無料・オープンソース · Windows / Ubuntu x64 · 独自アカウント登録不要 · 有料DLCなし**
 
-> **Windows x64用Portable v0.1.6を公開しています。**
-> 必須のソース検査・配布版の自作試料検査は成功済みです。利用者は今回のローカルcrop・地域選択候補を確認済みですが、確認範囲の詳細は不明です。従来のクリーンWindows・全冊取得報告はv0.1.2に対するもので、このホスト版EXEの結果ではありません。
+> **Windows x64・Ubuntu x64用Portable v0.2.1を同時公開しました。**
+> 両OSの必須ソース検査・配布試料検査が成功し、実ダウンロード・チェックサム・provenanceを照合済みです。Ubuntuの実本161画像の実績は開発配置の結果で、新しい配布物の検証とは区別します。
 
-**[Portable ZIPをダウンロード](https://github.com/zufall-upon/KindleToZip/releases/download/v0.1.6/KindleToZip-Portable-v0.1.6-win-x64.zip)** · [Portable版の使い方](docs/portable.md) · [ソースから試す](docs/getting-started.ja.md)
+**[Windows ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.2.1/KindleToZip-Portable-v0.2.1-win-x64.zip)** · **[Ubuntu tar.gz](https://github.com/zufall-upon/KindleToZip/releases/download/v0.2.1/KindleToZip-Portable-v0.2.1-linux-x64.tar.gz)** · [リリースとチェックサム](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.1)
+
+[Windowsガイド](docs/portable.md) · [Ubuntuガイド](docs/ubuntu-portable.ja.md) · [ソースから試す](docs/getting-started.ja.md)
 
 [![公開状況：リリース済み](https://img.shields.io/badge/status-released-16a34a?style=flat-square)](docs/validation.md) [![mainブランチの最新ソース検査](https://img.shields.io/github/actions/workflow/status/zufall-upon/KindleToZip/ci.yml?branch=main&style=flat-square&label=source%20checks)](https://github.com/zufall-upon/KindleToZip/actions/workflows/ci.yml) [![GitHubスター数](https://img.shields.io/github/stars/zufall-upon/KindleToZip?style=flat-square&label=stars)](https://github.com/zufall-upon/KindleToZip/stargazers) [![リポジトリの最終コミット](https://img.shields.io/github/last-commit/zufall-upon/KindleToZip?style=flat-square)](https://github.com/zufall-upon/KindleToZip/commits/main/)
 
@@ -62,23 +64,23 @@ WindowsでKindle Webの表示画面をPNG／JPEG画像として取得。点検�
 
 **v0.1.6の追加機能：** 点検画面で画像を選び「選択画像の余白を検出」を押すと、連続した白・黒の端余白の候補を原本と比較できます。候補の表示や取消だけでは保存状態は変わりません。本文・枠・ページ番号を確認したうえで明示的に適用し、必要なら手動クロップや「全原寸へ戻す」を使えます。内容を認識する機能ではなく、安全な候補が見つからない場合もあります。JPEGの適用時は取得時の画質で再圧縮され、原本は保持されます。
 
-v0.1.6では、専用ブラウザを開く前に **「Kindle利用地域」から日本・米国・英国** を選べます。表示言語とは独立し、起動ごとの初期値は日本です。地域を変えるときは専用ブラウザを閉じ、対象タブの選択・プレビュー・承認をやり直します。地域ごとの実アカウント・実書籍は未検証です。ストア固有部分と共通画像処理の[拡張基盤・将来計画](docs/store-adapters.md)も追加していますが、BOOK☆WALKER・ebookjapan・コミックシーモアは**未対応**です。規約・複製条件と許可試料での確認は各社対応時に別途行います。これらの機能は下記のv0.1.6 Portable ZIPに含まれます。
+v0.1.6では、専用ブラウザを開く前に **「Kindle利用地域」から日本・米国・英国** を選べます。表示言語とは独立し、起動ごとの初期値は日本です。地域を変えるときは専用ブラウザを閉じ、対象タブの選択・プレビュー・承認をやり直します。地域ごとの実アカウント・実書籍は未検証です。ストア固有部分と共通画像処理の[拡張基盤・将来計画](docs/store-adapters.md)も追加していますが、BOOK☆WALKER・ebookjapan・コミックシーモアは**未対応**です。規約・複製条件と許可試料での確認は各社対応時に別途行います。これらの機能は下記の現行Windows Portable ZIPにも含まれます。
 
 ## 使い始める
 
-**Portable版：** [v0.1.6のリリースZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.6)を取得し、`SHA256SUMS.txt` と照合してZIP全体を書き込み可能なフォルダへ展開し、`KindleToZip-Portable.exe` を起動します。Node.js・専用ブラウザは同梱済みで、開発環境は不要です。[3言語のPortableガイド](docs/portable.md)を参照してください。
+**Windows Portable版：** [v0.2.1のWindows ZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.1)を取得し、`SHA256SUMS.txt` と照合してZIP全体を書き込み可能なフォルダへ展開し、`KindleToZip-Portable.exe` を起動します。Node.js・専用ブラウザは同梱済みで、開発環境は不要です。[3言語のPortableガイド](docs/portable.md)を参照してください。
 
 **ソースから：** **Windows x64・Git・Node.js 22以降・PowerShell 7** が必要です。[入門ガイド](docs/getting-started.ja.md)で専用のRust環境とブラウザを導入し、`npm start` で起動します。まずはAmazonへのログインも実書籍も不要な自作サンプルから試せます。
 
 **Ubuntu試験段階のソース版：** 通常の `npm start` では、取得元に「匿名の自作試料」を明示選択して、プレビュー・有限画面数の承認・別の開始操作から点検・編集を試せます。旧headless試料や明示的な `npm start -- --sample-headed` の動作も残ります。実Kindleを確認した選択済みPortableの状況は次項、ソース開発は[Ubuntu向け手順](docs/getting-started.ja.md#ubuntu-source)を参照してください。導入済みの `/usr/bin/zenity` は任意の保存先選択機能で、手入力も残ります。選択だけでは保存・取得しません。
 
-**Ubuntu x64ローカルPortable：** 2026-11-05、このPCの選択済み配置で、本人が指定した実Kindleの1冊・161画像を点検し、ZIP保存・内容と順序の照合・正常終了まで確認しました。途中停止からの復帰と修正を含む結果です。Ubuntu版は未公開で、別PCやクリーンUbuntuの確認、今回の修正を含むWindows実機確認とリリース検査は残っています。Wayland・対応Chromium Snap等の既存環境が必要です。[現在の状況と起動手順](docs/ubuntu-portable.ja.md)を参照してください。
+**Ubuntu x64 Portable：** v0.2.1のLinuxアーカイブを `SHA256SUMS-linux.txt` と照合してホーム内に展開します。初回ログインは `./start-linux-bundle.sh --login`、通常起動は `./start-linux-bundle.sh`。実KindleにはWayland・対応Chromium Snapが必要です。2026-11-05の開発配置では本人指定の1冊・161画像を、中断復帰・ZIP内容と順序の照合・正常終了まで確認しました。この実績は新配布物の匿名試料検査とは別です。[起動手順](docs/ubuntu-portable.ja.md)と[リリース検証](docs/releasing.md)を参照してください。
 
 Ubuntu 26.04では、導入済みZenityで匿名のZIP/CBZ保存先選択・取消を本人操作で確認し、表示も正常との本人目視報告を受領しました。nativeダイアログの画像は未提供・独立検査なしです。選択だけでは書き出されないことを確認したもので、ZIP/CBZ出力・内容照合は別の統合検査です。native pickerでの実出力や実Kindleの受入成功は意味しません。
 
 ## 利用前に知っておきたいこと
 
-- **品質：** v0.1.6は正確なソースcommitの必須CIとタグ付きリリースの全ゲートを通過し、公開ソースUI・配備・配布版の公開選択／出力回帰検査も成功しています。過去の失敗は履歴として残しています。利用者のローカル改善確認と、従来のv0.1.2のクリーンWindows・実書籍全冊報告は、このホスト版EXEの自動試料検査とは別です。[検証履歴とリリース記録](docs/validation.md)（英語）を参照してください。
+- **品質：** v0.2.1は両OSの確定ソースCI・タグ付きリリースの必須ゲートと配布版の取得／出力検査を通過しました。実asset・metadata・checksum・4対象のprovenanceを照合し、匿名ダウンロードも確認済みです。初回失敗は履歴に保持。Ubuntu開発配置の161画像と従来のv0.1.2のクリーンWindows・全冊報告は新配布物の試料検査とは別です。[検証履歴とリリース記録](docs/validation.md)（英語）を参照してください。
 - **ログインと保存データ：** ログインは公式画面だけで行います。**ログイン状態は既定で保存します。** 保存をOFFにすると別の一時プロファイルを使い、通常終了で削除しますが、異常終了では残る場合があります。プロファイル・Cookie・書籍情報・取得画像は共有しないでください。[プライバシーと保存先](docs/security-and-trust.md)（英語）に詳細があります。
 - **通信と信頼：** アプリ独自の認証サーバー・テレメトリ・自動更新確認はありません。公式読書・認証サービス、ブラウザ、導入時の通信は発生します。ソース公開は**安全性の保証ではありません**。[通信先と信頼境界](docs/security-and-trust.md)（英語）を参照してください。
 - **動作範囲：** v0.1.6では表示言語とは別に日本・米国・英国のKindle入口を選べますが、各地域の実書籍、全レイアウト、ZIP64、すべてのCBZビューアは未検証です。利用者側で確認したクリーンWindows・実書籍の動作は、全環境・全書籍を保証するものではありません。標準・2倍の描画密度には **画像ごとに16メガピクセル・32 MiB** の上限があり、元の表示にない細部は復元できません。
