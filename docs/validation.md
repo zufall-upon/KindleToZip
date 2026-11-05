@@ -1,5 +1,33 @@
 # Initial source validation
 
+## v0.2.1 public release — 2026-11-05 UTC
+
+**Published:** [v0.2.1 — Windows x64 and Ubuntu x64 Portable](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.1), **2026-11-05T17:41:43Z** (2026-11-06 JST), as one normal Release + **Latest**, titled **v0.2.1**. The public API and repository Releases sidebar both identify v0.2.1 as Latest. Annotated tag object `459cc48e4cbaacccc46f373d88fa788158c54f72` points to source **`4518f9f7426419ddf1e11b3f67478204dc18b9f5`**. Earlier tags and assets are retained.
+
+| Gate | Actual result |
+| --- | --- |
+| [Candidate source CI 42060255226](https://github.com/zufall-upon/KindleToZip/actions/runs/42060255226) and [package preflight 42060263527](https://github.com/zufall-upon/KindleToZip/actions/runs/42060263527) | Both OSes and transferred checksums passed at `3b15b13`; merged main has the identical tree |
+| [Exact-main CI 42064111440](https://github.com/zufall-upon/KindleToZip/actions/runs/42064111440) | Windows and Ubuntu passed before tagging |
+| [Tagged release 42068348259, attempt 2](https://github.com/zufall-upon/KindleToZip/actions/runs/42068348259/attempts/2) | Windows initial success retained; Ubuntu single failed-job rerun passed 440 source tests, supervisor `forced:0`, `remaining:0`, child exit 0; 48 Linux bundle tests, package and extracted capture/crop/ZIP passed; draft job actually completed |
+| Actual draft | Five asset sizes/API digests/checksum lists and both metadata tag/source/run matched. Windows payload: 901 entries and 95 source files (Windows checkout CRLF normalized); Ubuntu: 877 receipt files, 76 source files and 71 notice files verified |
+| Provenance | Both archives, extracted Windows EXE and Ubuntu controller verified with exact source/signer SHA, `refs/heads/main`, `release.yml`, GitHub-hosted runners and run 42068348259/attempt 2 |
+| Public download | All five assets downloaded anonymously with HTTP 200; sizes and SHA-256 matched the inspected draft |
+
+| File | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `KindleToZip-Portable-v0.2.1-win-x64.zip` | 382,579,736 | `31cd0274759030ac6fc7a26379b6c2521c6d233a3e47cc61b200f98ca1b204c5` |
+| Windows EXE inside ZIP | 865,066,316 | `bd7afb4de846571bc4b0be8774ccad82ee09594e75126eed4b0874734583d32c` |
+| `KindleToZip-Portable-v0.2.1-linux-x64.tar.gz` | 350,510,114 | `b3737f2ae44da29ddd15e6aa77ff3093da9c7460e0b2a1d8ddc335e574f4cdec` |
+| Ubuntu controller inside archive | — | `2a4c161de9fca41a0c643f65891ea123d6ad1db355d0af4337cb2d77b8a5a3ae` |
+
+Companion assets are `SHA256SUMS.txt`, `SHA256SUMS-linux.txt` and `KindleToZip-build.sigstore.json`. Archives contain immutable application/runtime payload and notices, not used login profiles, captured books or private job data. The frozen Ubuntu guide still has v0.2.0 filename examples; the Release notes and current online guide give the correct v0.2.1 extraction command. Build metadata and application versions agree on 0.2.1.
+
+The initial tagged Ubuntu attempt had all 440 assertions pass and child exit 0, but its supervisor reported `forced:1`, so that mandatory gate **failed** and packaging/draft were skipped. The count includes process signals and residual fixture/runtime cleanup; its exact type remains unknown. One unchanged failed-job rerun passed with `forced:0`; the first failure is not reclassified. No third attempt or success-condition relaxation occurred.
+
+The earlier **v0.2.0** tag remains at `8e68d785ceaf4081e10c786a476f17d6e8da3d5b` (tag object `84b03cefa6d6288ae9fbae1a4f1b7f4e661e08fc`). Its [release run 42050740171](https://github.com/zufall-upon/KindleToZip/actions/runs/42050740171) failed without publication and was not rerun. v0.2.1 fixes a shared stop/review persistence race that could overwrite a newly accepted selection with the old order. It also injects Windows junctions into an exact, never-executed runtime copy and closes the public-MVP test control before its polling server. Earlier candidate 5517f6c's Windows teardown failure is retained in [run 42057638063](https://github.com/zufall-upon/KindleToZip/actions/runs/42057638063); final 3b15b13 gates passed after the test-only cleanup fix.
+
+Hosted verification uses anonymous self-authored fixtures. The user-selected Ubuntu development installation completed one real book/161 images, interrupted recovery, ZIP content/order verification and normal shutdown on 2026-11-05; this is **not** a real-book acceptance of the new archive. Clean-machine Windows/Ubuntu and Snap/Wayland authentication are not inferred from fixture success. Original images, profiles, existing ZIPs and research files were preserved. UI simplification and コミックウォーカー/コミックシーモア support are separate future work.
+
 ## v0.1.6 public release — 2026-10-29
 
 **Published:** [v0.1.6 — Windows x64 Portable](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.6), **2026-10-29T10:45:35Z**, as a normal Release + **Latest**, titled **v0.1.6**. The actual desktop TOP-right Releases component showed the complete title and Latest badge without an experimental label. The annotated tag, package/lock/launcher version and workflow source agree at **`50bde1f1561eb40b19022097b6ca5f61fc3cda59`**, with Author/Committer/tagger `zufall-upon`. Earlier tags and public releases/assets are unchanged.

@@ -132,8 +132,8 @@ Follow the included Ubuntu README for extraction, login and normal launch.
 Only use release assets from [zufall-upon/KindleToZip](https://github.com/zufall-upon/KindleToZip/releases). Download the ZIP and `SHA256SUMS.txt` from the same release.
 
 ```powershell
-Get-FileHash .\KindleToZip-Portable-v0.1.6-win-x64.zip -Algorithm SHA256
-gh attestation verify .\KindleToZip-Portable-v0.1.6-win-x64.zip --repo zufall-upon/KindleToZip --signer-workflow zufall-upon/KindleToZip/.github/workflows/release.yml
+Get-FileHash .\KindleToZip-Portable-v0.2.1-win-x64.zip -Algorithm SHA256
+gh attestation verify .\KindleToZip-Portable-v0.2.1-win-x64.zip --repo zufall-upon/KindleToZip --signer-workflow zufall-upon/KindleToZip/.github/workflows/release.yml
 ```
 
 Compare the hash with the matching line in `SHA256SUMS.txt`. The attestation verification must succeed, and its source commit, repository, and workflow must match the release you intend to use. The detached `.sigstore.json` bundle is also attached for inspection and offline-verification workflows; consult the current GitHub CLI documentation before relying on offline verification.
