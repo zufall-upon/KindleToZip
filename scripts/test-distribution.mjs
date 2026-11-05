@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createReadStream } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFile, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { selectLatestPortable } from './portable-reports.mjs';
@@ -21,6 +21,19 @@ async function sha256(filename) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(filename)) hash.update(chunk);
   return hash.digest('hex');
+}
+
+async function treeHashes(directory, relative = '') {
+  const entries = [];
+  for (const item of await readdir(path.join(directory, relative), { withFileTypes: true })) {
+    const name = path.join(relative, item.name);
+    if (item.isDirectory()) entries.push(...await treeHashes(directory, name));
+    else {
+      assert.equal(item.isFile(), true, 'the pre-injection runtime contains only regular files/directories');
+      entries.push([name, await sha256(path.join(directory, name))]);
+    }
+  }
+  return entries.sort(([a], [b]) => a.localeCompare(b));
 }
 
 const selected = latestRequested
@@ -42,6 +55,7 @@ await mkdir(runDirectory);
 const sourcePortable = path.join(runDirectory, 'Portable 試験 with spaces');
 const movedPortable = path.join(runDirectory, '移動後 Portable with spaces');
 const deniedPortable = path.join(runDirectory, '書込拒否 Portable with spaces');
+const junctionPortable = path.join(runDirectory, 'junction Portable');
 const redirect = path.join(runDirectory, '外部保存先は禁止');
 const legacyHome = path.join(redirect, 'legacy-portable-home');
 const legacyData = path.join(redirect, 'legacy-user-data');
@@ -279,15 +293,25 @@ try {
   await assertPrivatePortablePaths(movedPortable);
   await assertRedirectsUnused();
 
+  // Inject reparse points into a complete, never-executed runtime copy. Do not
+  // rename Node's just-executed directory to prepare a security fixture: Windows
+  // can still hold it open after the launcher and its streams have closed.
+  const junctionExe = path.join(junctionPortable, path.basename(executable));
+  const junctionRuntime = path.join(junctionPortable, 'runtime', runtimeVersion);
+  await mkdir(path.dirname(junctionRuntime), { recursive: true });
+  await copyFile(movedExe, junctionExe);
+  assert.equal(await sha256(junctionExe), executableHash);
+  await cp(movedRuntime, junctionRuntime, { recursive: true, errorOnExist: true, force: false });
+  assert.deepEqual(await treeHashes(junctionRuntime), await treeHashes(movedRuntime), 'the unexecuted copy includes the exact complete runtime and receipt');
   for (const directory of ['node', 'app', 'node_modules/playwright-core/lib']) {
-    const inside = path.join(movedRuntime, directory);
+    const inside = path.join(junctionRuntime, directory);
     const outside = path.join(runDirectory, 'junction-target');
     await rename(inside, outside);
     const marker = path.join(outside, 'untouched-security-fixture.txt');
     await writeFile(marker, 'outside remains untouched');
     await symlink(outside, inside, 'junction');
     try {
-      const rejected = await run(movedExe, ['--distribution-lock-probe']);
+      const rejected = await run(junctionExe, ['--distribution-lock-probe']);
       assert.notEqual(rejected.code, 0, `runtime ${directory} junction must be rejected before running Node`);
       assert.match(rejected.stderr, /安全でない既存パス/);
       assert.match(rejected.stderr, /通常フォルダへEXEと付随フォルダごと移/);
@@ -394,7 +418,7 @@ try {
     if (acl !== 0 && succeeded) throw new Error('Unable to remove the test-only write-denial ACL.');
   }
   if (succeeded) {
-    for (const directory of [sourcePortable, movedPortable, deniedPortable, redirect]) await rm(directory, { recursive: true, force: true });
+    for (const directory of [sourcePortable, movedPortable, deniedPortable, junctionPortable, redirect]) await rm(directory, { recursive: true, force: true });
   } else {
     console.error(`Portable test workspace retained for diagnosis: ${path.relative(root, runDirectory).replaceAll('\\', '/')}`);
   }
