@@ -103,6 +103,12 @@ test('日英中の簡易切替: 公開選択・動的残数・隣接エラー・
     assert.equal(await ui.locator('#start').isEnabled(), true);
     assert.equal((await r.app.snapshot()).job.manifest.images.length, 0, 'switching language never starts capture');
   }
+  // Localizing a stopped acquisition needs a deterministic failure, not a
+  // race between the dynamic fixture's valid page turns and this test's wait.
+  // Use the same changed range contract as the public recovery regression.
+  await r.app.reader.page.locator('#next').evaluate(button => button.addEventListener('click', () => {
+    document.querySelector('#position').max = '13';
+  }, { once: true }));
   await ui.locator('#decisionButton').click();
   await wait(r.app, s => s.state === 'NeedsAttention' && !s.busy);
   const snapshot = await r.app.snapshot();

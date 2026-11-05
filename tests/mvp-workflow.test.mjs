@@ -3038,8 +3038,12 @@ test('MVP高解像度: スクロール後も選択した可視範囲の画素を
 });
 
 test('MVP画像軽量化: 匿名の片側表紙とボタン重なりを公開選択して取得する', { timeout: 40_000 }, async t => {
-  const r = await setup(t);
-  const control = await openControlWindow(r.url, { headless: true }); t.after(() => control.close());
+  let control, controlFailure;
+  // Close the polling HTTP caller before the server, as the public launcher
+  // does. Independent after hooks run in registration order, not reverse order.
+  const r = await setup(t, { controlFirst: { control: () => control, controlFailure: () => controlFailure } });
+  try { control = await openControlWindow(r.url, { headless: true }); }
+  catch (error) { controlFailure = { error }; throw error; }
   const ui = control.page;
   await ui.locator('#create').click();
   await ui.locator('#sampleFixture').selectOption('image-review');
