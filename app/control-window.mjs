@@ -26,7 +26,10 @@ export async function openControlWindow(url, { headless = false, onClose, handle
   // A rejected launch can still have partially created resources. Only a
   // failure before this point proves that no browser was started.
   if (lifecycle) lifecycle.state = 'ownership_unknown';
-  const browser = await chromium.launch({ headless, ...(browserEnvironment ? { env: browserEnvironment } : {}),
+  // Make the owned Linux control window's accessible document available to
+  // assistive technologies; this changes no shared desktop setting.
+  const browser = await chromium.launch({ headless, ...(process.platform === 'linux' ? { args: ['--force-renderer-accessibility'] } : {}),
+    ...(browserEnvironment ? { env: browserEnvironment } : {}),
     ...(handleSignals ? {} : { handleSIGINT: false, handleSIGTERM: false }) });
   try {
     const context = await browser.newContext({

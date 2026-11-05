@@ -1,4 +1,4 @@
-name: Draft Windows release
+name: Draft Windows and Ubuntu release
 
 on:
   workflow_dispatch:
@@ -40,7 +40,7 @@ jobs:
           if ($env:RELEASE_TAG -ne "v$($package.version)") { throw 'Tag and package version differ' }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '22.14.0'
+          node-version: '22.22.1'
           cache: npm
       - name: Install locked dependencies
         run: |
@@ -74,8 +74,66 @@ jobs:
           compression-level: 0
           retention-days: 14
 
+  build-linux:
+    if: github.repository == 'zufall-upon/KindleToZip' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      CARGO_TARGET_DIR: ${{ github.workspace }}/artifacts/rust-target
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/artifacts/browsers
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate source tag and version
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")" = "$GITHUB_SHA"
+          test "$RELEASE_TAG" = "v$(node -p "require('./package.json').version")"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.22.1'
+          cache: npm
+      - name: Install locked dependencies
+        run: |
+          npm ci --ignore-scripts --no-fund --no-audit
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup default 1.99.1
+          echo "CARGO_HOME=$HOME/.cargo" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$HOME/.rustup" >> "$GITHUB_ENV"
+          cargo fetch --manifest-path poc/controller/Cargo.toml --locked
+          npx playwright install-deps chromium
+          sudo apt-get install -y xvfb
+          node scripts/install-browser.mjs
+          node scripts/install-browser.mjs --headed
+      - name: Rust and IPC tests
+        run: |
+          cargo test --manifest-path poc/controller/Cargo.toml --locked --offline
+          cargo build --manifest-path poc/controller/Cargo.toml --locked --offline
+          npm run test:store
+      - name: Public source UI regressions
+        run: node scripts/diagnose-test-lifetime.mjs full
+      - name: Linux bundle regressions
+        run: npm run test:linux
+      - name: Build and package Ubuntu portable
+        run: |
+          node scripts/build-linux-distribution.mjs --output "$RUNNER_TEMP/ktz-bundle" --ubuntu-portable
+          node scripts/package-linux-release.mjs "$RUNNER_TEMP/ktz-bundle" "$RELEASE_TAG" "$GITHUB_SHA" "$GITHUB_RUN_ID"
+      - name: Extracted public capture and export regression
+        run: node scripts/test-linux-distribution.mjs "release-linux/KindleToZip-Portable-$RELEASE_TAG-linux-x64.tar.gz" "$GITHUB_SHA"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-release-candidate
+          path: release-linux/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
   draft:
-    needs: build
+    needs: [build, build-linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -93,12 +151,21 @@ jobs:
       - name: Verify transferred files
         working-directory: release
         run: sha256sum --check SHA256SUMS.txt
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-release-candidate
+          path: release-linux
+      - name: Verify transferred Linux archive
+        working-directory: release-linux
+        run: sha256sum --check SHA256SUMS-linux.txt
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         id: provenance
         with:
           subject-path: |
             release/*.zip
             release/package/KindleToZip-Portable.exe
+            release-linux/*.tar.gz
+            release-linux/ktz-g02-controller
       - name: Create draft without publishing or replacing assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -106,14 +173,14 @@ jobs:
         run: |
           cp "$ATTESTATION_BUNDLE" release/KindleToZip-build.sigstore.json
           cat > release-notes.md <<'NOTES'
-          Experimental Windows x64 portable candidate. No independent security or legal clearance is claimed.
+          Windows x64 and Ubuntu x64 portable packages.
 
-          Built from this repository's tagged source in GitHub Actions. Review build-metadata.json inside the ZIP, SHA256SUMS.txt, provenance, third-party notices, and workflow logs before publication.
+          Built from the same tagged source on GitHub Actions Windows and Ubuntu runners. Windows: ZIP and SHA256SUMS.txt. Ubuntu: tar.gz and SHA256SUMS-linux.txt. Build metadata and notices are included in each archive.
 
-          Outstanding gates: terms/legal review, third-party redistribution obligations, clean-Windows acceptance, and current Kindle compatibility. Fixture success does not close these gates.
+          Ubuntu real-reader use requires a supported Chromium Snap and Wayland desktop. Hosted Linux checks cover the bundled anonymous reader, capture, crop and ZIP, not Snap authentication or all books. See docs/ubuntu-portable.ja.md.
 
           The ZIP includes license and notice files. Login profiles and captured book content are not included. Keep runtime/, data/, and temp/ private after launch.
 
           Verification instructions: docs/releasing.md at the tagged source revision.
           NOTES
-          gh release create "$RELEASE_TAG" --verify-tag --draft --title "KindleToZip $RELEASE_TAG" --notes-file release-notes.md release/*.zip release/SHA256SUMS.txt release/KindleToZip-build.sigstore.json
+          gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" --notes-file release-notes.md release/*.zip release/SHA256SUMS.txt release/KindleToZip-build.sigstore.json release-linux/*.tar.gz release-linux/SHA256SUMS-linux.txt

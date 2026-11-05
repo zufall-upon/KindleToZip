@@ -26,7 +26,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '22.14.0'
+          node-version: '22.22.1'
           cache: npm
       - name: Install locked dependencies
         run: |
@@ -52,6 +52,8 @@ jobs:
         run: node scripts/diagnose-windows-test-lifetime.mjs full
       - name: Deployment regressions
         run: npm run test:distribution
+      - name: Bundle dependency closure
+        run: node --test tests/linux-distribution.test.mjs
 
   ubuntu-source:
     runs-on: ubuntu-24.04
@@ -65,7 +67,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '22.14.0'
+          node-version: '22.22.1'
           cache: npm
       - name: Install locked dependencies on the disposable runner
         run: |
@@ -82,7 +84,9 @@ jobs:
           cargo test --manifest-path poc/controller/Cargo.toml --bin ktz-g02-controller --locked
           cargo build --manifest-path poc/controller/Cargo.toml --locked
       - name: Node IPC and local store
-        run: npm run test:store
+        run: |
+          npm run test:store
+          npm run test:linux
       - name: Lifetime supervisor safety regressions
         run: node --test tests/lifetime-watchdog.test.mjs
       - name: Bounded region lifetime diagnostic on Xvfb

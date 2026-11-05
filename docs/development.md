@@ -5,7 +5,7 @@ Looking for the current way to try the app? The [official Releases page](https:/
 ## Requirements
 
 - Windows x64 with PowerShell 7 (`pwsh`) and Node.js 22 or later.
-- Portable packaging requires Node.js 22.14.0 exactly.
+- Portable packaging requires Node.js 22.22.1 exactly.
 - Rust 1.99.1 is installed locally under `artifacts/toolchains/`; setup does not change the global PATH.
 - npm dependencies are pinned in `package-lock.json`; Rust dependencies and checksums are pinned in both `Cargo.lock` files.
 

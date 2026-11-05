@@ -162,7 +162,8 @@ async function openManualOptions(ui) {
 async function openSampleThroughPublicUi(ui) {
   await ui.waitForFunction(() => document.querySelector('#state').textContent === '待機');
   await ui.locator('#create').click();
-  await ui.waitForFunction(() => document.querySelector('#state').textContent === '手動ログイン・1冊選択待ち');
+  await ui.waitForFunction(expected => document.querySelector('#state').textContent === expected,
+    process.platform === 'linux' ? '取得元選択待ち' : '手動ログイン・1冊選択待ち');
   await ui.locator('#openSample').click();
   await selectVisibleReaderTab(ui);
 }
@@ -349,7 +350,7 @@ test('Kindle地域境界: 同じ明示リストをタブ・picker・取得前後
   });
 });
 
-test(process.platform === 'linux' ? 'Kindle地域公開UI: Linuxでは実Kindle起動を拒否する' : 'Kindle地域公開UI: 言語と独立して選択し実際の開始URLへ渡し開いた間は変更しない', async t => {
+test(process.platform === 'linux' ? 'Kindle地域公開UI: 保存sessionの準備と安全停止による副作用前拒否' : 'Kindle地域公開UI: 言語と独立して選択し実際の開始URLへ渡し開いた間は変更しない', async t => {
   const r = await trace.step(t, 'region.setup', () => setup(t));
   const control = await trace.step(t, 'region.control', () => observeControlWindow(trace, t, chromium,
     () => openControlWindow(r.url, { headless: true })));
@@ -384,17 +385,51 @@ test(process.platform === 'linux' ? 'Kindle地域公開UI: Linuxでは実Kindle�
   }
   await assert.rejects(r.app.command('setKindleRegion', { id: 'cn' }), /invalid_kindle_region/);
   if (process.platform === 'linux') {
+    const { resolvePortableLinuxSession } = await import('../app/portable-linux-session.mjs');
+    const selected = await resolvePortableLinuxSession(r.app.dataDir);
+    const { prepareLinuxLoginProfile } = await import('../app/linux-login-core.mjs');
+    const secondId = 'saved-00000000-0000-0000-0000-000000000000';
+    await prepareLinuxLoginProfile(path.join(r.app.dataDir, secondId));
+    const regionState = await r.app.command('setKindleRegion', { id: 'jp' });
+    // The public preparation control fences stale UI snapshots. Wait for the
+    // region change to reach that same control before asking it to create.
+    await ui.waitForFunction(({ epoch, generation }) => document.body.dataset.preparationEpoch === String(epoch)
+      && document.body.dataset.preparationGeneration === String(generation),
+    { epoch: regionState.operationRevision, generation: regionState.bookGeneration });
     await ui.locator('#create').click();
     await waitFor(r.app, s => Boolean(s.job) && !s.busy);
     await ui.waitForFunction(() => document.querySelector('#kindleUnsupported').hidden === false);
     assert.equal(await ui.locator('#openKindle').isDisabled(), true);
+    assert.equal(await ui.locator('#captureSource').inputValue(), '', '匿名sourceは明示的に選ぶ');
+    assert.equal(await ui.locator('#decisionButton').isDisabled(), true, '未選択では自動起動しない');
+    assert.equal((await r.app.snapshot()).linuxOwnedSourceAvailable, true);
+    await ui.locator('#captureSource').selectOption('kindle');
+    await ui.waitForFunction(id => [...document.querySelector('#portableKindleSession').options].some(option => option.value === id), selected.id);
+    assert.equal(await ui.locator('#decisionButton').isDisabled(), true, '保存sessionの明示選択が必要');
+    await ui.locator('#portableKindleSession').selectOption(selected.id);
+    await ui.waitForFunction(() => !document.querySelector('#decisionButton').disabled);
+    await ui.locator('#decisionButton').click();
+    await ui.waitForFunction(() => document.querySelector('#portableKindleStatus').textContent.includes('実Kindle接続・取得は未許可'));
+    assert.equal(await ui.locator('#decisionButton').isDisabled(), true, 'ソース直起動では接続準備まで');
+    assert.equal(await ui.locator('#openPreparedPortable').isDisabled(), true);
+    await r.app.command('preparePortableKindle', { session: selected.id });
+    assert.equal(r.app.reader, undefined, '準備はReaderを作成しない');
+    await ui.locator('#portableKindleSession').selectOption(secondId);
+    await r.app.command('preparePortableKindle', { session: secondId });
+    await ui.locator('#portableKindleSession').selectOption(selected.id);
+    await r.app.command('preparePortableKindle', { session: selected.id });
+    assert.equal(await ui.locator('#decisionButton').isDisabled(), true);
     const before = (await r.app.snapshot()).sessions;
     const response = await fetch(`${r.origin}/api/command`, { method: 'POST', headers: {
       Authorization: `Bearer ${r.token}`, 'Content-Type': 'application/json', Origin: r.origin,
-    }, body: JSON.stringify({ action: 'openBrowser', input: { mode: 'kindle' } }) });
+    }, body: JSON.stringify({ action: 'openBrowser', input: { mode: 'kindle', session: selected.id } }) });
     assert.equal(response.status, 400);
-    assert.equal((await response.json()).code, 'linux_kindle_unsupported');
-    await assert.rejects(r.app.command('openBrowser', { mode: 'kindle' }), { code: 'linux_kindle_unsupported' });
+    assert.equal((await response.json()).code, 'linux_kindle_permission_required');
+    await assert.rejects(r.app.command('openBrowser', { mode: 'kindle', session: selected.id }), { code: 'linux_kindle_permission_required' });
+    await assert.rejects(r.app.command('openBrowser', { mode: 'kindle' }), { code: 'select_saved_session' });
+    for (const extra of [{ url: 'http://127.0.0.1:9/' }, { profile: '/tmp/not-allowed' }, { keep: true }]) {
+      await assert.rejects(r.app.command('openBrowser', { mode: 'kindle', session: selected.id, ...extra }), { code: 'invalid_browser_mode' });
+    }
     assert.deepEqual((await r.app.snapshot()).sessions, before);
     assert.equal(r.app.reader, undefined);
     // The unsupported entrypoint cannot be followed by a successful preview,
@@ -630,7 +665,8 @@ test('ローカル画面再読込: 接続キーをURLへ残さず同じタブの
   await page.reload();
   await page.waitForFunction(() => document.querySelector('#state').textContent === '待機', null, { timeout: 2000 });
   await page.locator('#create').click();
-  await page.waitForFunction(() => document.querySelector('#state').textContent === '手動ログイン・1冊選択待ち', null, { timeout: 2000 });
+  await page.waitForFunction(expected => document.querySelector('#state').textContent === expected,
+    process.platform === 'linux' ? '取得元選択待ち' : '手動ログイン・1冊選択待ち', { timeout: 2000 });
   assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
 });
 
@@ -1278,6 +1314,338 @@ test('MVP位置入力欄: 表示中の現在値を文字列で照合し自動非
   assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
 });
 
+test('保存済みReview案内: 限定jobの読取停止と通常jobの編集・保存を混同しない', { skip: process.platform !== 'linux' }, async t => {
+  for (const limited of [true, false]) await t.test(limited ? '限定job' : '通常job', async t => {
+    // 既存Storeの匿名保存画像だけを用意する。Reader・取得browserは開かない。
+    const r = await setup(t);
+    const job = (await r.app.store.call('create_job', { base_dir: r.app.dataDir })).snapshot;
+    const claim = path.join(r.app.dataDir, `portable-reader-limited-${job.manifest.job_id}.claim`);
+    if (limited) await writeFile(claim, `${JSON.stringify({ version: 2, job: job.manifest.job_id,
+      session: 'saved-00000000-0000-0000-0000-000000000001', consumed: true,
+      scope: 'preview-1-displays-2-turn-1-png-review' })}\n`, { flag: 'wx', mode: 0o600 });
+    const image = new PNG({ width: 80, height: 120 });
+    for (let i = 0; i < image.data.length; i += 4) {
+      image.data[i] = 80; image.data[i + 1] = 150; image.data[i + 2] = i % 251; image.data[i + 3] = 255;
+    }
+    await r.app.store.call('capture_start'); await r.app.store.call('capture_begin');
+    await r.app.store.call('capture_chunk', { capture_id: 1, data_base64: PNG.sync.write(image).toString('base64') });
+    await r.app.store.call('capture_commit'); await r.app.store.call('capture_pause'); await r.app.store.call('close_job');
+    const preserved = [path.join(job.job_path, 'originals/000001.png'),
+      ...(limited ? [path.join(job.job_path, 'manifest.json'), claim] : [])];
+    const before = await Promise.all(preserved.map(file => readFile(file)));
+    const control = await openControlWindow(r.url, { headless: true });
+    t.after(() => control.close());
+    const page = control.page;
+    await page.waitForFunction(() => document.querySelector('#state').textContent === '待機');
+    assert.equal(await page.locator('#recover').isVisible(), true, '保存済み作業の入口は補助設定を開かず見つかる');
+    assert.equal(await page.locator('#recoverPath').evaluate(element => element.closest('details')), null);
+    await page.locator('#recoverPath').fill(job.job_path); await page.locator('#recover').click();
+    await page.waitForFunction(() => {
+      const image = document.querySelector('#images article img');
+      return image?.complete && image.naturalWidth === 80;
+    });
+    assert.equal((await r.app.snapshot()).portableLimitedJob, limited);
+    if (limited) {
+      assert.equal(await page.locator('#decisionButton').textContent(), '保存済み画像を確認');
+      assert.equal(await page.locator('#decisionButton').isEnabled(), true);
+      assert.equal(await page.locator('.workflow-actions #newLimitedTrialButton').count(), 0);
+      assert.equal(await page.locator('#newLimitedTrialButton').isVisible(), false, '停止画面の主要操作に新試行を出さない');
+    }
+    const guidance = limited ? /読取専用.*再開・再取得・編集・ZIP\/CBZ保存はできません/ : /採用画像1枚を保存できます/;
+    assert.match(await page.locator('#exportHelp').textContent(), guidance);
+    await page.locator('#stageTools > summary').click();
+    await page.locator('#stageTools [data-stage-target="setup"]').click();
+    await page.waitForFunction(() => document.querySelector('#decisionButton').dataset.action === 'inspect'
+      && !document.querySelector('#decisionButton').disabled);
+    assert.match(await page.locator('#nextAction').textContent(), limited ? guidance : /確定画像を点検します/);
+    await page.locator('#decisionButton').click();
+    await page.waitForFunction(() => !document.querySelector('[data-stage="review"]').hidden);
+    assert.equal((await r.app.snapshot()).state, 'Review');
+    assert.equal(await page.locator('#decisionButton').isEnabled(), true);
+    assert.match(await page.locator('#nextAction').textContent(), limited ? guidance : /ZIP保存へ進みます/);
+    if (limited) {
+      await page.locator('#decisionButton').click();
+      assert.equal((await r.app.snapshot()).state, 'Review', 'もう一度確認しても保存工程へ進まない');
+    }
+    await page.locator('#stageTools [data-stage-target="export"]').click();
+    assert.equal(await page.locator('#decisionButton').isEnabled(), true);
+    assert.equal(await page.locator('#export').isDisabled(), limited, '補助の保存画面でも限定jobの実出力は封じる');
+    assert.match(await page.locator('#nextAction').textContent(), guidance);
+    assert.equal(await page.getByText('停止・プレビュー失敗後も、保存済みの採用画像をZIPにできます。', { exact: true }).isVisible(), !limited,
+      '通常job用の保存可能説明を限定jobには表示しない');
+    if (!limited) {
+      // Exercise the main save caller with the same rejection used by the
+      // editing helper, then let the real Application/Store handle retries.
+      const destination = path.join(r.directory, 'saved-review.zip');
+      await page.locator('#destination').fill(destination);
+      let release, entered, settled, exportsRequested = 0;
+      const held = new Promise(resolve => { release = resolve; });
+      const enteredExport = new Promise(resolve => { entered = resolve; });
+      const settledExport = new Promise(resolve => { settled = resolve; });
+      const rejectExport = async route => {
+        if (route.request().postDataJSON()?.action !== 'export') return route.continue();
+        exportsRequested += 1; entered(); await held;
+        try { await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ code: 'image_review_required' }) }); }
+        finally { settled(); }
+      };
+      await page.route('**/api/command', rejectExport);
+      try {
+        const request = page.waitForRequest(req => req.url().endsWith('/api/command') && req.postDataJSON()?.action === 'export', { timeout: 10_000 });
+        await page.locator('#decisionButton').click(); await request; await enteredExport;
+        await page.waitForFunction(() => document.querySelector('#operationStatus').getAttribute('aria-busy') === 'true'
+          && document.querySelector('#decisionButton').disabled && document.querySelector('#export').disabled);
+        await page.evaluate(() => { document.querySelector('#decisionButton').click(); document.querySelector('#export').click(); });
+        assert.equal(exportsRequested, 1, '保存処理中の連打は追加要求を送らない');
+      } finally {
+        release(); if (exportsRequested) await settledExport;
+        await page.unroute('**/api/command', rejectExport);
+      }
+      await page.waitForFunction(() => document.querySelector('#operationStatus').dataset.status === 'failure'
+        && !document.querySelector('#decisionButton').disabled);
+      assert.match(await page.locator('#message').textContent(), /画像点検してください/);
+      assert.equal(await page.locator('#exportResult').textContent(), '');
+      assert.equal((await r.app.snapshot()).job.manifest.exports.length, 0);
+      await assert.rejects(readFile(destination), { code: 'ENOENT' });
+
+      await page.locator('#decisionButton').click();
+      await page.waitForFunction(() => document.querySelector('#exportResult').textContent.includes('保存・再読検証済み')
+        && document.querySelector('#operationStatus').dataset.status === 'success'
+        && document.querySelector('#operationStatus').getAttribute('aria-busy') === 'false'
+        && document.querySelector('#decisionButton').disabled);
+      const firstArchive = await readFile(destination), firstEntries = readStoredEntries(firstArchive);
+      assert.deepEqual(firstEntries.map(entry => entry.name), ['000001.png']);
+      assert.deepEqual(firstEntries[0].bytes, await r.app.image(1));
+      assert.equal((await r.app.snapshot()).job.manifest.exports.length, 1);
+      assert.equal(await page.locator('[data-stage="export"]').isVisible(), true, '保存完了は同じ画面の結果表示で知らせる');
+
+      await page.locator('#exportOptions > summary').click();
+      await page.locator('#export').click();
+      await page.waitForFunction(() => document.querySelector('#operationStatus').dataset.status === 'failure'
+        && document.querySelector('#message').textContent.includes('既存ファイル'));
+      assert.deepEqual(await readFile(destination), firstArchive, '同名への再保存は上書きしない');
+      assert.equal((await r.app.snapshot()).job.manifest.exports.length, 1);
+      const secondDestination = path.join(r.directory, 'saved-review-again.zip');
+      await page.locator('#destination').fill(secondDestination);
+      await page.waitForFunction(() => !document.querySelector('#decisionButton').disabled);
+      await page.locator('#decisionButton').click();
+      await page.waitForFunction(destination => document.querySelector('#exportResult').dataset.destination === destination
+        && document.querySelector('#operationStatus').dataset.status === 'success'
+        && document.querySelector('#operationStatus').getAttribute('aria-busy') === 'false'
+        && document.querySelector('#decisionButton').disabled, secondDestination);
+      const secondEntries = readStoredEntries(await readFile(secondDestination));
+      assert.deepEqual(secondEntries.map(entry => entry.name), ['000001.png']);
+      assert.deepEqual(secondEntries[0].bytes, await r.app.image(1));
+      assert.equal((await r.app.snapshot()).job.manifest.exports.length, 2, '別名での明示的な再保存は可能');
+    }
+    if (limited) {
+      for (const [action, input] of [['export', { destination: path.join(r.directory, 'forbidden.zip') }],
+        ['crop', { id: 1, x: 0, y: 0, width: 40, height: 60 }],
+        ['review', { ids: [] }]]) {
+        const response = await fetch(`${r.origin}/api/command`, { method: 'POST', headers: {
+          Authorization: `Bearer ${r.token}`, 'Content-Type': 'application/json', Origin: r.origin,
+        }, body: JSON.stringify({ action, input }) });
+        assert.equal(response.status, 400);
+        assert.equal((await response.json()).code, 'portable_limited_review_only');
+      }
+      // 既存jobを持つクライアントで終了未確認を投影する。closeは送らず保全する。
+      r.app.readerReleasePending = true;
+      try {
+        await page.waitForFunction(() => document.querySelector('#cancelBackButton').disabled
+          && document.querySelector('#nextAction').textContent.includes('ブラウザ資源の終了は未確認'));
+        assert.equal(await page.locator('#decisionButton').isEnabled(), true, '終了未確認でも原本の読取確認だけは残す');
+      } finally { r.app.readerReleasePending = false; }
+      await page.waitForFunction(() => !document.querySelector('#cancelBackButton').disabled);
+      for (const [language, copy, label] of [['en', /read-only.*ZIP\/CBZ export are unavailable/, 'Inspect saved images'],
+        ['zh-CN', /只读.*不能继续、重新获取、编辑或导出 ZIP\/CBZ/, '检查已保存的图像']]) {
+        await page.locator('#language').selectOption(language);
+        assert.match(await page.locator('#nextAction').textContent(), copy);
+        assert.match(await page.locator('#exportHelp').textContent(), copy);
+        assert.equal(await page.locator('#decisionButton').isEnabled(), true);
+        assert.equal(await page.locator('#decisionButton').textContent(), label);
+      }
+      await page.locator('#language').selectOption('ja');
+      await page.locator('#decisionButton').click();
+      await page.locator('#images article').getByRole('button', { name: '原本を点検', exact: true }).click();
+      await page.locator('#inspectImage').waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#inspectImage').evaluate(image => image.naturalWidth), 80);
+      const evidence = await mkdtemp(path.join(root, 'readonly-review-ui-'));
+      await page.locator('.workflow-bar').screenshot({ path: path.join(evidence, 'limited-saved-review.png') });
+      assert.equal(await page.locator('#cancelBackButton').textContent(), '作業を閉じる（原本保持）');
+      await page.locator('#cancelBackButton').click();
+      await page.waitForFunction(() => !document.querySelector('#recover').disabled);
+      assert.equal(await page.locator('#inspectImage').getAttribute('src'), null, 'closeで原本URLを解放する');
+      for (const id of ['cropId', 'cropX', 'cropY', 'cropWidth', 'cropHeight'])
+        assert.equal(await page.locator(`#${id}`).inputValue(), '', `closeで${id}の一時状態を解除する`);
+      assert.equal((await r.app.snapshot()).job, null, '非変更closeは空ジョブを自動作成しない');
+      assert.equal(await page.locator('#decisionButton').textContent(), '決定・次へ');
+      await page.locator('#recoverPath').fill('');
+      await page.locator('[data-stage="setup"]').screenshot({ path: path.join(evidence, 'saved-workspace-entry.png') });
+      t.diagnostic(`匿名の読取専用案内画像（私有画像・パスなし）: ${evidence}`);
+      // 同一app・同一controlの限定→通常切替で、以前のdisabledが残らないことを検査。
+      const normal = (await r.app.store.call('create_job', { base_dir: r.app.dataDir })).snapshot;
+      await r.app.store.call('capture_start'); await r.app.store.call('capture_begin');
+      await r.app.store.call('capture_chunk', { capture_id: 1, data_base64: PNG.sync.write(image).toString('base64') });
+      await r.app.store.call('capture_commit'); await r.app.store.call('capture_pause'); await r.app.store.call('close_job');
+      const normalOriginal = await readFile(path.join(normal.job_path, 'originals/000001.png'));
+      await page.locator('#recoverPath').fill(normal.job_path); await page.locator('#recover').click();
+      await page.waitForFunction(() => document.body.dataset.limited === 'false' && !document.querySelector('#decisionButton').disabled);
+      assert.equal(await page.locator('#inspectImage').isVisible(), false,
+        '別jobのReviewへ切り替えたとき、前jobで開いた原本点検画像を表示しない');
+      await page.locator('#decisionButton').click();
+      await page.waitForFunction(() => !document.querySelector('#crop').disabled);
+      for (const id of ['restoreOrder', 'detectCrop', 'crop', 'resetCrop', 'applyAutoCrop'])
+        assert.equal(await page.locator(`#${id}`).isEnabled(), true, `同じ画面で通常jobの${id}を復帰`);
+      await page.locator('#images article').getByRole('button', { name: '原本を点検・クロップ', exact: true }).click();
+      await page.locator('#inspectImage').waitFor({ state: 'visible' });
+      await page.waitForFunction(() => !document.querySelector('#crop').disabled);
+      await page.locator('#cropWidth').fill('40'); await page.locator('#cropHeight').fill('60');
+      await page.locator('#crop').click();
+      await waitFor(r.app, s => s.job.manifest.images[0].crop?.width === 40 && !s.busy);
+      await page.waitForFunction(() => !document.querySelector('#inspectImage').hidden
+        && document.querySelector('#inspectImage').naturalWidth === 40
+        && document.querySelector('#inspectCaption').textContent === '適用後のクロップ結果');
+      assert.deepEqual(await readFile(path.join(normal.job_path, 'originals/000001.png')), normalOriginal,
+        '復帰した明示cropは通常jobの派生画像だけを変更');
+    }
+    assert.deepEqual(await Promise.all(preserved.map(file => readFile(file))), before);
+    if (!limited) assert.equal((await r.app.snapshot()).job.manifest.exports.length, 2);
+    assert.equal(r.app.reader, undefined);
+  });
+});
+
+test('保存済みReview案内: 通常jobの切替・入力保持と旧画像応答の失効', { timeout: 60_000 }, async t => {
+  const r = await setup(t);
+  const jobs = [];
+  for (let jobIndex = 0; jobIndex < 2; jobIndex++) {
+    const job = (await r.app.store.call('create_job', { base_dir: r.app.dataDir })).snapshot;
+    await r.app.store.call('capture_start');
+    for (const [width, height] of [[80, 120], [64, 96]]) {
+      const image = new PNG({ width, height });
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 4, edge = x < 12 || y < 12 || x >= width - 12 || y >= height - 12;
+        image.data[i] = edge ? 255 : 60 + jobIndex * 100; image.data[i + 1] = edge ? 255 : 120;
+        image.data[i + 2] = edge ? 255 : 180; image.data[i + 3] = 255;
+      }
+      const begun = await r.app.store.call('capture_begin');
+      await r.app.store.call('capture_chunk', { capture_id: begun.capture_id, data_base64: PNG.sync.write(image).toString('base64') });
+      await r.app.store.call('capture_commit');
+    }
+    await r.app.store.call('capture_pause'); await r.app.store.call('close_job'); jobs.push(job);
+  }
+  const files = jobs.flatMap(job => ['manifest.json', 'originals/000001.png', 'originals/000002.png'].map(name => path.join(job.job_path, name)));
+  const before = await Promise.all(files.map(file => readFile(file)));
+  const control = await openControlWindow(r.url, { headless: true }); t.after(() => control.close());
+  const ui = control.page;
+  const recover = async job => {
+    await r.request('recover', { path: job.job_path });
+    await ui.waitForFunction(id => document.body.dataset.preparationJob === id, job.manifest.job_id);
+    await ui.locator('#images article[data-capture-id="2"]').waitFor();
+  };
+  const close = async () => {
+    await r.request('closeJob');
+    await ui.waitForFunction(() => document.body.dataset.preparationJob === '');
+    assert.equal(await ui.locator('#inspectImage').getAttribute('src'), null);
+    assert.equal(await ui.locator('#cropId').inputValue(), '');
+  };
+  const inspect = async id => {
+    await ui.locator(`#images article[data-capture-id="${id}"] .limited-inspect`).click();
+    await ui.waitForFunction(width => {
+      const image = document.querySelector('#inspectImage');
+      return !image.hidden && image.naturalWidth === width;
+    }, id === 1 ? 80 : 64);
+  };
+  await recover(jobs[0]); await inspect(1);
+  await ui.locator('#cropX').fill('7'); await ui.locator('#cropWidth').fill('55');
+  await r.request('review'); // 同jobのsnapshotを更新しても下書きを失わない。
+  await ui.locator('#language').selectOption('en'); await ui.locator('#language').selectOption('ja');
+  await ui.locator('#stageTools > summary').click();
+  await ui.locator('#stageTools [data-stage-target="export"]').click();
+  await ui.locator('#stageTools [data-stage-target="review"]').click();
+  assert.equal(await ui.locator('#cropX').inputValue(), '7');
+  assert.equal(await ui.locator('#cropWidth').inputValue(), '55');
+  assert.equal(await ui.locator('#inspectImage').isVisible(), true);
+  await inspect(2);
+  assert.equal(await ui.locator('#cropX').inputValue(), '0');
+  assert.equal(await ui.locator('#cropWidth').inputValue(), '64', '別画像はその画像の初期寸法を使う');
+  await r.request('crop', { id: 1, x: 3, y: 4, width: 50, height: 70 });
+  await ui.waitForFunction(() => document.querySelector('#images article[data-capture-id="1"]')?.textContent.includes('クロップあり'));
+  await inspect(1);
+  assert.equal(await ui.locator('#cropX').inputValue(), '3');
+  assert.equal(await ui.locator('#cropWidth').inputValue(), '50', '再選択は既存cropの値を使う');
+  await r.request('resetCrop', { id: 1 });
+  // 明示編集を元に戻した後のmanifestを、以降の読取操作の不変基準とする。
+  let baseline = await Promise.all(files.map(file => readFile(file)));
+  await close(); await recover(jobs[1]);
+  assert.equal(await ui.locator('#inspectImage').isVisible(), false, '通常job同士でも旧原本を表示しない');
+  await inspect(1); await close(); await recover(jobs[0]);
+
+  // 既存公開画像APIの応答を保持し、close→B→Aの後に古いAを返す。
+  let releaseResponse, responseHeld;
+  const released = new Promise(resolve => { releaseResponse = resolve; });
+  const held = new Promise(resolve => { responseHeld = resolve; });
+  const routeImage = async route => {
+    const response = await route.fetch(); responseHeld(); await released; await route.fulfill({ response });
+  };
+  await ui.route('**/api/image/1?original=1', routeImage, { times: 1 });
+  try {
+    await ui.locator('#images article[data-capture-id="1"] .limited-inspect').click(); await held;
+    await close(); await recover(jobs[1]); await close(); await recover(jobs[0]); await inspect(2);
+  } finally { releaseResponse(); }
+  await ui.waitForFunction(() => document.querySelector('#message').textContent.includes('以前の検査結果'));
+  assert.equal(await ui.locator('#inspectImage').evaluate(image => image.naturalWidth), 64);
+  assert.equal(await ui.locator('#inspectImage').isVisible(), true, '旧応答は現在の画像を隠さない');
+  assert.equal(await ui.locator('#cropId').inputValue(), '2');
+
+  // decode済みだが反映前の派生画像も、同じAに戻っただけでは再採用しない。
+  await ui.evaluate(() => {
+    const image = document.querySelector('#inspectImage'), decode = image.decode.bind(image);
+    image.decode = async () => {
+      image.decode = decode;
+      await decode(); window.inspectionDecodeHeld = true;
+      await new Promise(resolve => { window.releaseInspectionDecode = resolve; });
+    };
+  });
+  await ui.locator('#cropWidth').fill('40'); await ui.locator('#cropHeight').fill('60');
+  await ui.locator('#crop').click();
+  await ui.waitForFunction(() => window.inspectionDecodeHeld === true);
+  baseline = await Promise.all(files.map(file => readFile(file)));
+  await close(); await recover(jobs[1]); await close(); await recover(jobs[0]); await inspect(1);
+  await ui.evaluate(() => window.releaseInspectionDecode());
+  await ui.waitForFunction(() => document.querySelector('#message').textContent.includes('以前の検査結果'));
+  assert.equal(await ui.locator('#inspectImage').isVisible(), true);
+  assert.equal(await ui.locator('#inspectImage').evaluate(image => image.naturalWidth), 80);
+  assert.equal(await ui.locator('#inspectCaption').textContent(), '原本');
+  assert.equal(await ui.locator('#cropWidth').inputValue(), '80');
+
+  // 遅延したcrop候補も別job・別画像の候補や寸法として復活させない。
+  let releaseCandidate, candidateHeld;
+  const candidateReleased = new Promise(resolve => { releaseCandidate = resolve; });
+  const candidateReady = new Promise(resolve => { candidateHeld = resolve; });
+  const routeCandidate = async route => {
+    if (route.request().postDataJSON().action !== 'detectCrop') return route.continue();
+    const response = await route.fetch(); candidateHeld(); await candidateReleased; await route.fulfill({ response });
+  };
+  await ui.route('**/api/command', routeCandidate);
+  try {
+    await ui.locator('#detectCrop').click(); await candidateReady;
+    await close(); await recover(jobs[1]); await close(); await recover(jobs[0]); await inspect(1);
+  } finally { releaseCandidate(); }
+  await ui.waitForFunction(() => document.querySelector('#message').textContent.includes('以前の検査結果'));
+  await ui.unroute('**/api/command', routeCandidate);
+  assert.equal(await ui.locator('#autoCropFigure').isVisible(), false);
+  assert.equal(await ui.locator('#autoCropBounds').textContent(), '');
+  assert.equal(await ui.locator('#cropId').inputValue(), '1');
+  assert.equal(await ui.locator('#cropWidth').inputValue(), '80');
+  assert.deepEqual(await Promise.all(files.map(file => readFile(file))), baseline);
+  assert.deepEqual(await Promise.all(files.filter(file => file.endsWith('.png')).map(file => readFile(file))),
+    before.filter((_, index) => files[index].endsWith('.png')), '明示cropも原本を変更しない');
+  const evidence = await mkdtemp(path.join(root, 'workspace-switch-ui-'));
+  await ui.locator('[data-stage="review"]').screenshot({ path: path.join(evidence, 'current-job-original.png') });
+  await close(); await recover(jobs[1]);
+  await ui.locator('[data-stage="review"]').screenshot({ path: path.join(evidence, 'switched-job-unselected.png') });
+  t.diagnostic(`匿名のjob切替後UI（固定試料のみ、私有画像・パスなし）: ${evidence}`);
+});
+
 test('公開MVP画面: 試料プレビュー・明示開始・一時停止/復帰・点検順序・クロップ・ZIP/CBZ・中断データ再表示', async t => {
   const r = await setup(t);
   const control = await openControlWindow(r.url, { headless: true });
@@ -1391,7 +1759,7 @@ test('公開MVP画面: 試料プレビュー・明示開始・一時停止/復�
   assert.deepEqual(await readFile(path.join(jobPath, 'originals', '000001.png')), original);
   assert.deepEqual(foreign, []);
   await page.locator('.steps [data-stage-target="browser"]').click();
-  await page.locator('[data-stage="browser"] details > summary').click();
+  await page.locator('[data-stage="browser"] > details > summary').click();
   await page.locator('#closeBrowser').click();
   await waitFor(r.app, s => !s.browserOpen && !s.busy);
   assert.equal((await r.app.snapshot()).sessions.length, 0, '一時プロファイルを通常終了時に削除');
@@ -1427,6 +1795,594 @@ test('公開MVP画面: 試料プレビュー・明示開始・一時停止/復�
   assert.equal(reopened.job.manifest.images.length, stopped.job.manifest.images.length);
   assert.deepEqual(reopened.job.manifest.selected_capture_ids, [2, 1]);
   assert.equal(reopened.job.manifest.images[0].crop.width, 300);
+});
+
+test('Ubuntu通常取得: 正の有限予算は承認時の上限・復帰方式を固定し不明な送りを再送しない', async () => {
+  const { createNormalCaptureBudget, isNormalCaptureBudget } = await import('../app/expected-capture-budget.mjs');
+  const { createGuiCaptureBudget, createExpectedCaptureBudget } = await import('../app/expected-capture-budget.mjs');
+  const { appFiles } = await import('../scripts/linux-distribution.mjs');
+  assert.ok(appFiles.includes('app/expected-capture-budget.mjs'), '通常budgetを含む既存moduleも固定bundle入力に入る');
+  assert.ok(appFiles.includes('app/portable-normal-job.mjs'), '通常job identityも固定bundle入力に入る');
+  const budget = createNormalCaptureBudget();
+  assert.equal(isNormalCaptureBudget(budget), true);
+  assert.equal(isNormalCaptureBudget(createGuiCaptureBudget()), false);
+  assert.equal(isNormalCaptureBudget(createExpectedCaptureBudget()), false);
+  await budget.screenshot('preview', async () => 'preview');
+  for (const limit of [0, -1, 1.5, '3']) {
+    assert.throws(() => budget.approve(limit, { resumeAdvance: false }), { code: 'expected_capture_budget_exhausted' });
+  }
+  budget.approve(3, { resumeAdvance: false });
+  assert.throws(() => budget.start(4, { resumeAdvance: false }), { code: 'expected_capture_budget_exhausted' });
+  assert.throws(() => budget.start(3, { resumeAdvance: true }), { code: 'expected_capture_budget_exhausted' });
+  budget.start(3, { resumeAdvance: false });
+  budget.commit();
+  await budget.advance(async () => 'sent'); budget.confirmAdvance();
+  await budget.screenshot('capture', async () => 'second'); budget.commit();
+  await budget.advance(async () => 'sent'); budget.confirmAdvance();
+  await budget.screenshot('capture', async () => 'third'); budget.commit();
+  let unexpected = 0;
+  await assert.rejects(budget.advance(async () => { unexpected++; }), { code: 'expected_capture_budget_exhausted' });
+  budget.finish();
+  assert.equal(unexpected, 0);
+  assert.deepEqual(budget.snapshot(), { phase: 'finished', screenshots: 3, sends: 2, committed: 3, approved: 3, resumeAdvance: false });
+
+  const resumed = createNormalCaptureBudget();
+  await resumed.screenshot('preview', async () => 'last-original');
+  resumed.approve(1, { resumeAdvance: true }); resumed.start(1, { resumeAdvance: true });
+  assert.throws(() => resumed.commit(), { code: 'expected_capture_budget_exhausted' });
+  await resumed.advance(async () => 'sent'); resumed.confirmAdvance();
+  await resumed.screenshot('capture', async () => 'new-original'); resumed.commit(); resumed.finish();
+  assert.deepEqual(resumed.snapshot(), { phase: 'finished', screenshots: 2, sends: 1, committed: 1, approved: 1, resumeAdvance: true });
+
+  const lost = createNormalCaptureBudget();
+  await lost.screenshot('preview', async () => 'preview');
+  lost.approve(2, { resumeAdvance: false }); lost.start(2, { resumeAdvance: false }); lost.commit();
+  await assert.rejects(lost.advance(async () => { throw new Error('anonymous_response_loss'); }), /anonymous_response_loss/);
+  await assert.rejects(lost.advance(async () => { unexpected++; }), { code: 'expected_capture_budget_exhausted' });
+  assert.equal(unexpected, 0); assert.equal(lost.snapshot().phase, 'failed');
+
+  const automatic = createNormalCaptureBudget();
+  await automatic.screenshot('preview', async () => 'preview');
+  automatic.approve(null, { resumeAdvance: false });
+  assert.throws(() => automatic.start(3, { resumeAdvance: false }), { code: 'expected_capture_budget_exhausted' });
+  automatic.start(null, { resumeAdvance: false });
+  automatic.commit();
+  for (let i = 0; i < 2; i++) {
+    await automatic.advance(async () => 'sent'); automatic.confirmAdvance();
+    await automatic.screenshot('capture', async () => 'next'); automatic.commit();
+  }
+  automatic.finish();
+  assert.deepEqual(automatic.snapshot(), { phase: 'finished', screenshots: 3, sends: 2, committed: 3, approved: null, resumeAdvance: false });
+
+  const autoResume = createNormalCaptureBudget();
+  await autoResume.screenshot('preview', async () => 'last-original');
+  autoResume.approve(null, { resumeAdvance: true }); autoResume.start(null, { resumeAdvance: true });
+  await autoResume.advance(async () => 'sent'); autoResume.confirmAdvance();
+  await autoResume.screenshot('capture', async () => 'new-original'); autoResume.commit(); autoResume.finish();
+  assert.equal(autoResume.snapshot().committed, 1);
+});
+
+test('Ubuntu通常取得: 停止記録は通常jobに結び付き途中・旧限定・異常を不明として保全する', async t => {
+  const { markPortableNormalJob, bindPortableNormalJob, readPortableNormalResult,
+    beginPortableNormalResult, finishPortableNormalResult } = await import('../app/portable-normal-job.mjs');
+  const session = 'saved-00000000-0000-0000-0000-000000000001';
+  await t.test('通常jobと中断途中', async sub => {
+    const r = await setup(sub); await r.request('create');
+    const job = r.app.job, data = r.app.dataDir, id = job.manifest.job_id;
+    assert.equal(await readPortableNormalResult(data, job), null, '旧記録なしから理由を後付けしない');
+    await markPortableNormalJob(data, job); await bindPortableNormalJob(data, job, session);
+    const first = await beginPortableNormalResult(data, job, session, null);
+    assert.deepEqual(await readPortableNormalResult(data, job), { status: 'unknown', mode: 'auto', limit: null, reason: null, stage: null, dispatch: null });
+    await assert.rejects(beginPortableNormalResult(data, job, session, 3), { code: 'portable_normal_job_unavailable' });
+    await finishPortableNormalResult(data, job, first, 'end_candidate', 'end_stop', 'not_sent');
+    const old = path.join(data, `portable-normal-${id}.result-000000000001.stop`), oldBytes = await readFile(old);
+    assert.deepEqual(await readPortableNormalResult(data, job), { status: 'stopped', mode: 'auto', limit: null, reason: 'end_candidate', stage: 'end_stop', dispatch: 'not_sent' });
+    const second = await beginPortableNormalResult(data, job, session, 2);
+    await finishPortableNormalResult(data, job, second, 'capture_limit_reached', 'capture_limit_stop', 'not_sent');
+    assert.deepEqual(await readPortableNormalResult(data, job), { status: 'stopped', mode: 'manual', limit: 2, reason: 'capture_limit_reached', stage: 'capture_limit_stop', dispatch: 'not_sent' });
+    assert.deepEqual(await readFile(old), oldBytes, '先行結果を上書きしない');
+    const pending = path.join(data, `portable-normal-${id}.result-000000000003.start.pending`);
+    await writeFile(pending, 'incomplete', { flag: 'wx', mode: 0o600 });
+    assert.deepEqual(await readPortableNormalResult(data, job), { status: 'unknown', mode: null, limit: null, reason: null, stage: null, dispatch: null });
+    await assert.rejects(beginPortableNormalResult(data, job, session, null), { code: 'portable_normal_job_unavailable' });
+    assert.equal(await readFile(pending, 'utf8'), 'incomplete'); assert.deepEqual(await readFile(old), oldBytes);
+  });
+  await t.test('旧限定claimを通常記録へ昇格しない', async sub => {
+    const r = await setup(sub); await r.request('create');
+    const job = r.app.job, data = r.app.dataDir, id = job.manifest.job_id;
+    const claim = path.join(data, `portable-reader-limited-${id}.claim`);
+    const record = JSON.stringify({ version: 2, job: id, session, scope: 'preview-1-displays-2-turn-1-png-review', consumed: true });
+    await writeFile(claim, record, { flag: 'wx', mode: 0o600 });
+    await assert.rejects(markPortableNormalJob(data, job), { code: 'portable_normal_job_unavailable' });
+    await assert.rejects(beginPortableNormalResult(data, job, session, null), { code: 'portable_normal_job_unavailable' });
+    assert.equal(await readPortableNormalResult(data, job), null);
+    assert.equal(await readFile(claim, 'utf8'), record);
+    assert.equal((await readdir(data)).some(file => file.startsWith(`portable-normal-${id}.`)), false);
+  });
+});
+
+test('Ubuntu通常取得: 共通APIの通常budget基盤は確定位置だけ復帰し原本と出力を保持', { timeout: 90000 }, async t => {
+  const { createNormalCaptureBudget } = await import('../app/expected-capture-budget.mjs');
+  const r = await setup(t);
+  await r.request('create');
+  // Anonymous test-only guard on the existing sample. This verifies the shared
+  // Application/Reader contract, not the still-unconnected Linux site/owner.
+  const open = Reader.open;
+  Reader.open = async options => {
+    const reader = await open.call(Reader, options);
+    let budget = createNormalCaptureBudget();
+    reader.ownedSessionGuard = { normal: true, get singleRunBudget() { return budget; },
+      async preparePreview() { budget = createNormalCaptureBudget(); },
+      validateConfig() {}, validateTransition() {}, async assertIdentity() {}, async observe() { return 'anonymous'; }, async dispose() {} };
+    return reader;
+  };
+  try { await r.request('openBrowser', { mode: 'sample' }); }
+  finally { Reader.open = open; }
+  await r.request('preview', { config: sampleConfig });
+  await r.request('approve', { confirmed: true, maxCaptures: 1 });
+  const approvedGuard = r.app.reader.ownedSessionGuard;
+  r.app.reader.ownedSessionGuard = { ...approvedGuard };
+  await assert.rejects(r.app.command('start', { confirmed: true }), { code: 'target_changed' });
+  assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
+  assert.equal((await r.app.snapshot()).previewApproved, false);
+  r.app.reader.ownedSessionGuard = approvedGuard;
+  await assert.rejects(r.app.command('start', { confirmed: true }), { code: 'explicit_start_required' });
+  await r.request('preview', { config: sampleConfig });
+  await r.request('approve', { confirmed: true, maxCaptures: 1 });
+  await r.request('start', { confirmed: true });
+  let stopped = await waitFor(r.app, s => s.state === 'Review' && !s.busy);
+  assert.equal(stopped.reason, 'capture_limit_reached');
+  assert.equal(stopped.job.manifest.checkpoint.dispatch, 'not_sent');
+  assert.equal(stopped.job.manifest.range_confirmed, false);
+  const original = await r.app.image(1, true);
+  await r.request('preview', { config: sampleConfig });
+  assert.equal((await r.app.snapshot()).resumePlan.mode, 'advance');
+  await assert.rejects(r.app.command('approve', { confirmed: true, maxCaptures: 4 }), { code: 'resume_confirmation_required' });
+  const pending = path.join(stopped.job.job_path, 'pending', '999999.upload');
+  await writeFile(pending, 'anonymous incomplete upload', { flag: 'wx', mode: 0o600 });
+  const beforeRefusal = (await r.app.snapshot()).job.manifest;
+  await assert.rejects(r.app.command('approve', { confirmed: true, resumeConfirmed: true, maxCaptures: 4 }), { code: 'resume_position_required' });
+  assert.deepEqual((await r.app.snapshot()).job.manifest, beforeRefusal);
+  assert.deepEqual(await readFile(pending, 'utf8'), 'anonymous incomplete upload');
+  await rm(pending); // This test created this anonymous file, and its owner is still live.
+  await r.request('approve', { confirmed: true, resumeConfirmed: true, maxCaptures: 4 });
+  let sends = 0;
+  const reader = r.app.reader, click = reader.page.mouse.click.bind(reader.page.mouse);
+  reader.page.mouse.click = async (...args) => {
+    await click(...args); sends++;
+    if (sends === 2) await reader.page.locator('#next').evaluate(node => { node.disabled = true; });
+  };
+  await r.request('start', { confirmed: true });
+  stopped = await waitFor(r.app, s => ['Review', 'NeedsAttention'].includes(s.state) && !s.busy);
+  assert.equal(stopped.state, 'Review', JSON.stringify(stopped.lastFailure));
+  assert.equal(stopped.reason, 'end_candidate');
+  assert.equal(stopped.job.manifest.images.length, 3); assert.equal(sends, 2);
+  assert.equal(stopped.job.manifest.range_confirmed, false);
+  assert.equal(stopped.job.manifest.images.some(image => image.duplicate_candidate), false);
+  assert.deepEqual(await r.app.image(1, true), original);
+  await r.request('review', { ids: [3, 1] });
+  await r.request('crop', { id: 1, x: 0, y: 0, width: 300, height: 200 });
+  const expected = [await r.app.image(3), await r.app.image(1)];
+  for (const format of ['zip', 'cbz']) {
+    const destination = path.join(r.directory, `normal-foundation.${format}`);
+    await r.request('export', { destination, format, rangeConfirmed: false });
+    assert.deepEqual(readStoredEntries(await readFile(destination)).map(item => item.bytes), expected);
+  }
+  assert.deepEqual(await r.app.image(1, true), original);
+  assert.equal((await r.app.snapshot()).job.manifest.exports.every(item => item.range_confirmed === false), true);
+});
+
+test('Ubuntu通常取得: 共通APIの通常budget基盤は送り応答不明を別位置でも復帰させない', { timeout: 45000 }, async t => {
+  const { createNormalCaptureBudget } = await import('../app/expected-capture-budget.mjs');
+  const r = await setup(t);
+  await r.request('create');
+  const open = Reader.open;
+  Reader.open = async options => {
+    const reader = await open.call(Reader, options);
+    let budget = createNormalCaptureBudget();
+    reader.ownedSessionGuard = { normal: true, get singleRunBudget() { return budget; },
+      async preparePreview() { budget = createNormalCaptureBudget(); }, validateConfig() {}, validateTransition() {},
+      async assertIdentity() {}, async observe() { return 'anonymous'; }, async dispose() {} };
+    return reader;
+  };
+  try { await r.request('openBrowser', { mode: 'sample' }); }
+  finally { Reader.open = open; }
+  await r.request('preview', { config: sampleConfig });
+  await r.request('approve', { confirmed: true, maxCaptures: 3 });
+  const reader = r.app.reader, click = reader.page.mouse.click.bind(reader.page.mouse);
+  let sends = 0;
+  reader.page.mouse.click = async (...args) => { sends++; await click(...args); throw new Error('anonymous_response_loss'); };
+  await r.request('start', { confirmed: true });
+  const stopped = await waitFor(r.app, s => s.state === 'NeedsAttention' && !s.busy);
+  assert.equal(stopped.job.manifest.images.length, 1);
+  assert.equal(stopped.job.manifest.checkpoint.dispatch, 'unknown');
+  assert.equal(sends, 1);
+  const original = await r.app.image(1, true);
+  await r.request('preview', { config: sampleConfig });
+  const before = await r.app.snapshot();
+  assert.equal(before.resumePlan.mode, 'blocked');
+  assert.notEqual(before.resumePlan.currentPosition, before.resumePlan.lastPosition);
+  await assert.rejects(r.app.command('approve', { confirmed: true, resumeConfirmed: true, maxCaptures: 2 }), { code: 'resume_position_required' });
+  assert.deepEqual((await r.app.snapshot()).job.manifest, before.job.manifest);
+  assert.deepEqual(await r.app.image(1, true), original);
+  assert.equal(sends, 1);
+});
+
+test('MVP有限取得: 単回予算は撮影・送りの応答不明を消費し再実行しない', async () => {
+  const { createExpectedCaptureBudget } = await import('../app/expected-capture-budget.mjs');
+  for (const failure of ['preview', 'advance', 'capture']) {
+    const budget = createExpectedCaptureBudget(); let calls = 0;
+    const success = async () => { calls++; return 'ok'; };
+    const lost = async () => { calls++; throw new Error('anonymous_response_loss'); };
+    if (failure === 'preview') {
+      await assert.rejects(budget.screenshot('preview', lost), /anonymous_response_loss/);
+    } else {
+      assert.equal(await budget.screenshot('preview', success), 'ok');
+      budget.approve(2);
+      budget.start(2);
+      budget.commit();
+      if (failure === 'advance') await assert.rejects(budget.advance(lost), /anonymous_response_loss/);
+      else {
+        await budget.advance(success);
+        budget.confirmAdvance();
+        await assert.rejects(budget.screenshot('capture', lost), /anonymous_response_loss/);
+      }
+    }
+    const count = calls;
+    await assert.rejects(budget.screenshot('preview', success), { code: 'expected_capture_budget_exhausted' });
+    await assert.rejects(budget.screenshot('capture', success), { code: 'expected_capture_budget_exhausted' });
+    await assert.rejects(budget.advance(success), { code: 'expected_capture_budget_exhausted' });
+    assert.equal(calls, count);
+    assert.equal(budget.snapshot().phase, 'failed');
+    assert.ok(budget.snapshot().screenshots <= 2);
+    assert.ok(budget.snapshot().sends <= 1);
+  }
+  const budget = createExpectedCaptureBudget();
+  let release;
+  const pending = budget.screenshot('preview', () => new Promise(resolve => { release = resolve; }));
+  assert.equal(budget.snapshot().phase, 'previewing');
+  await assert.rejects(budget.screenshot('preview', async () => 'second'), { code: 'expected_capture_budget_exhausted' });
+  budget.fail();
+  release('late');
+  await assert.rejects(pending, { code: 'expected_capture_budget_exhausted' });
+  assert.equal(budget.snapshot().phase, 'failed');
+  assert.equal(budget.snapshot().screenshots, 1);
+  const confirmation = createExpectedCaptureBudget();
+  await confirmation.screenshot('preview', async () => 'first');
+  confirmation.approve(2); confirmation.start(2); confirmation.commit();
+  await confirmation.advance(async () => 'sent');
+  await assert.rejects(confirmation.screenshot('capture', async () => 'too early'), { code: 'expected_capture_budget_exhausted' });
+  confirmation.confirmAdvance();
+  assert.equal(await confirmation.screenshot('capture', async () => 'second'), 'second');
+  confirmation.commit(); confirmation.finish();
+  assert.deepEqual(confirmation.snapshot(), { phase: 'finished', screenshots: 2, sends: 1, committed: 2, approved: 2 });
+});
+
+test('MVP有限取得: 匿名公開APIの単回予算はpreviewを原本に再利用し終端・異常で停止', { timeout: 90_000 }, async t => {
+  const { bindExpectedIdentity } = await import('../app/expected-identity.mjs');
+  const { createExpectedCaptureBudget } = await import('../app/expected-capture-budget.mjs');
+  const { anonymousExpectedBook, anonymousExpectedRoute } = await import('../app/owned-sample-identity.mjs');
+  for (const mode of ['normal', 'terminal', 'response-loss', 'before-commit-change', 'before-preview-error']) await t.test(mode, async t => {
+    const r = await setup(t);
+    await r.request('create');
+    const open = Reader.open;
+    Reader.open = async options => {
+      const url = `${options.sampleUrl}?asin=${anonymousExpectedBook.asin}`;
+      const reader = await open.call(Reader, { ...options, sampleUrl: url });
+      const identity = await bindExpectedIdentity(reader, new URL(url).origin, anonymousExpectedBook, anonymousExpectedRoute, 'h1');
+      reader.ownedSessionGuard = { ...identity, singleRunBudget: createExpectedCaptureBudget(), allowsIdentityRedraw: true,
+        validateConfig() {}, validateTransition() {}, async observe() { await identity.assertIdentity(); return 'anonymous-paint'; } };
+      return reader;
+    };
+    try { await r.request('openBrowser', { mode: 'sample' }); }
+    finally { Reader.open = open; }
+    const reader = r.app.reader, budget = reader.ownedSessionGuard.singleRunBudget;
+    let screenshots = 0, sends = 0, aborts = 0;
+    const send = reader.scaleSession.send.bind(reader.scaleSession);
+    reader.scaleSession.send = (method, ...args) => { if (method === 'Page.captureScreenshot') screenshots++; return send(method, ...args); };
+    const click = reader.page.mouse.click.bind(reader.page.mouse);
+    reader.page.mouse.click = async (...args) => {
+      sends++;
+      const result = await click(...args);
+      if (mode === 'response-loss') throw new Error('anonymous_response_loss');
+      return result;
+    };
+    if (mode === 'before-preview-error') {
+      await assert.rejects(r.app.command('preview', { config: {} }), { code: 'reader_configuration_required' });
+      assert.equal(budget.snapshot().phase, 'failed');
+      await assert.rejects(r.app.command('preview', { config: sampleConfig }), { code: 'expected_capture_budget_exhausted' });
+      assert.equal(screenshots, 0); assert.equal(sends, 0);
+      return;
+    }
+    if (mode === 'terminal') await reader.page.locator('#next').evaluate(node => { node.disabled = true; });
+    await r.request('preview', { config: sampleConfig });
+    const previewHash = createHash('sha256').update(r.app.previewImage).digest('hex');
+    assert.equal(screenshots, 1);
+    await assert.rejects(r.app.command('start', { confirmed: true }), { code: 'explicit_start_required' });
+    await assert.rejects(r.app.command('approve', { confirmed: true }), { code: 'invalid_capture_limit' });
+    await assert.rejects(r.app.command('approve', { confirmed: true, maxCaptures: 3 }), { code: 'expected_capture_budget_exhausted' });
+    // Same contents are not a new book, even when the title element redraws.
+    if (mode === 'normal') await reader.page.locator('h1').evaluate(node => node.replaceWith(node.cloneNode(true)));
+    await r.request('approve', { confirmed: true, maxCaptures: 2 });
+    await assert.rejects(r.app.command('start', { confirmed: true, maxCaptures: 1 }), { code: 'capture_limit_changed' });
+    if (mode === 'before-commit-change') {
+      let injected = false;
+      const call = r.app.store.call.bind(r.app.store);
+      r.app.store.call = async (kind, input, ...args) => {
+        const result = await call(kind, input, ...args);
+        if (kind === 'capture_abort') aborts++;
+        if (kind === 'capture_chunk' && !injected) {
+          injected = true;
+          await reader.page.evaluate(() => {
+            const title = document.querySelector('h1'), old = title.textContent;
+            title.textContent = '別の匿名本'; title.textContent = old;
+          });
+        }
+        return result;
+      };
+    }
+    await r.request('start', { confirmed: true });
+    await waitFor(r.app, s => !s.busy && ['Review', 'NeedsAttention'].includes(s.state));
+    await r.app.loop;
+    const result = await r.app.snapshot();
+    const images = result.job.manifest.images;
+    const expectedImages = mode === 'normal' ? 2 : mode === 'before-commit-change' ? 0 : 1;
+    assert.equal(images.length, expectedImages);
+    assert.equal(screenshots, mode === 'normal' ? 2 : 1);
+    assert.equal(sends, ['normal', 'response-loss'].includes(mode) ? 1 : 0);
+    assert.deepEqual(result.job.manifest.exports, []);
+    if (expectedImages) assert.equal(createHash('sha256').update(await r.app.image(1, true)).digest('hex'), previewHash);
+    for (const item of images) {
+      const bytes = await r.app.image(item.capture_id, true);
+      const decoded = PNG.sync.read(bytes);
+      assert.equal(createHash('sha256').update(bytes).digest('hex'), item.sha256);
+      assert.deepEqual([decoded.width, decoded.height], [item.width, item.height]);
+    }
+    if (images.length === 2) assert.notEqual(images[0].sha256, images[1].sha256);
+    if (mode === 'normal' || mode === 'terminal') {
+      assert.equal(result.state, 'Review');
+      assert.equal(result.reason, mode === 'normal' ? 'capture_limit_reached' : 'end_candidate');
+      assert.equal(result.job.manifest.checkpoint.dispatch, 'not_sent');
+      assert.equal(budget.snapshot().phase, 'finished');
+      if (mode === 'terminal') assert.match(result.operationProgress.detail, /終端候補/);
+    } else {
+      assert.equal(result.state, 'NeedsAttention');
+      assert.equal(budget.snapshot().phase, 'failed');
+      if (mode === 'response-loss') assert.equal(result.job.manifest.checkpoint.dispatch, 'unknown');
+      else { assert.equal(result.lastFailure.stage, 'target_recheck_before_commit'); assert.equal(aborts, 1); }
+    }
+    assert.equal(budget.snapshot().screenshots, screenshots);
+    assert.equal(budget.snapshot().sends, sends);
+    await assert.rejects(r.app.command('start', { confirmed: true }), { code: 'explicit_start_required' });
+  });
+});
+
+test('MVP有限取得: 単回予算では既存ジョブを再開せず原本と状態を保持', async t => {
+  const { createExpectedCaptureBudget } = await import('../app/expected-capture-budget.mjs');
+  const r = await setup(t);
+  await r.request('create'); await r.request('openBrowser', { mode: 'sample' });
+  await r.request('preview', { config: sampleConfig });
+  await r.request('approve', { confirmed: true, maxCaptures: 1 });
+  await r.request('start', { confirmed: true });
+  await waitFor(r.app, state => state.state === 'Review' && !state.busy);
+  const original = await r.app.image(1, true), prior = (await r.app.snapshot()).job.manifest;
+  const budget = createExpectedCaptureBudget();
+  r.app.reader.ownedSessionGuard = { singleRunBudget: budget, validateConfig() {}, validateTransition() {},
+    async assertIdentity() {}, async observe() { return 'anonymous-paint'; }, async dispose() {} };
+  await r.request('preview', { config: sampleConfig });
+  await assert.rejects(r.app.command('approve', { confirmed: true, resumeConfirmed: true, maxCaptures: 2 }),
+    { code: 'expected_capture_new_job_required' });
+  assert.equal(budget.snapshot().phase, 'failed');
+  assert.deepEqual((await r.app.snapshot()).job.manifest, prior);
+  assert.deepEqual(await r.app.image(1, true), original);
+});
+
+test('MVP有限取得: 期待本sessionの一時変更は原本確定前にabortし送りを止める', async t => {
+  const { bindExpectedIdentity } = await import('../app/expected-identity.mjs');
+  const { anonymousExpectedBook, anonymousExpectedRoute } = await import('../app/owned-sample-identity.mjs');
+  const r = await setup(t);
+  await r.request('create');
+  // Anonymous headless control fixture only: the actual public Snap path is
+  // independently tested in the owned-session suite. No capability is minted.
+  const open = Reader.open;
+  Reader.open = async options => {
+    const url = `${options.sampleUrl}?asin=${anonymousExpectedBook.asin}`;
+    const reader = await open.call(Reader, { ...options, sampleUrl: url });
+    const identity = await bindExpectedIdentity(reader, new URL(url).origin, anonymousExpectedBook, anonymousExpectedRoute, 'h1');
+    reader.ownedSessionGuard = { ...identity, allowsIdentityRedraw: true, validateConfig() {}, validateTransition() {},
+      async observe() { await identity.assertIdentity(); return 'anonymous-paint'; } };
+    return reader;
+  };
+  try { await r.request('openBrowser', { mode: 'sample' }); }
+  finally { Reader.open = open; }
+  await r.request('preview', { config: sampleConfig });
+  await r.request('approve', { confirmed: true, maxCaptures: 1 });
+  let injected = false, commits = 0, aborts = 0, sends = 0;
+  const reader = r.app.reader, advance = reader.advance.bind(reader);
+  reader.advance = (...args) => { sends++; return advance(...args); };
+  const call = r.app.store.call.bind(r.app.store);
+  r.app.store.call = async (kind, input, ...args) => {
+    const result = await call(kind, input, ...args);
+    if (kind === 'capture_commit') commits++;
+    if (kind === 'capture_abort') aborts++;
+    if (kind === 'capture_chunk' && !injected) {
+      injected = true;
+      await reader.page.evaluate(() => {
+        const title = document.querySelector('h1'), old = title.textContent;
+        title.textContent = '別の匿名本'; title.textContent = old;
+      });
+    }
+    return result;
+  };
+  await r.request('start', { confirmed: true });
+  await waitFor(r.app, s => s.state === 'NeedsAttention' && !s.busy);
+  await r.app.loop;
+  const result = await r.app.snapshot();
+  assert.equal(injected, true); assert.equal(result.reason, 'target_changed');
+  assert.equal(result.lastFailure.stage, 'target_recheck_before_commit');
+  assert.equal(result.job.manifest.images.length, 0); assert.equal(commits, 0);
+  assert.equal(aborts, 1); assert.equal(sends, 0); assert.equal(result.previewApproved, false);
+});
+
+test('MVP有限取得: 承認上限を省略で外せず、不正値・拡大・解除を副作用前に拒否する', async t => {
+  const r = await setup(t);
+  await r.request('create'); await r.request('openBrowser', { mode: 'sample' });
+  await r.request('preview', { config: sampleConfig });
+  let captures = 0, advances = 0;
+  const capture = r.app.reader.capture.bind(r.app.reader), advance = r.app.reader.advance.bind(r.app.reader);
+  r.app.reader.capture = (...args) => { captures++; return capture(...args); };
+  r.app.reader.advance = (...args) => { advances++; return advance(...args); };
+  const invalid = [0, -1, 1.5, '2', false, {}, Number.MAX_SAFE_INTEGER + 1];
+  for (const maxCaptures of invalid) {
+    await assert.rejects(r.app.command('approve', { confirmed: true, maxCaptures }), { code: 'invalid_capture_limit' });
+  }
+  await r.request('approve', { confirmed: true, maxCaptures: 2 });
+  for (const maxCaptures of invalid) {
+    await assert.rejects(r.app.command('start', { confirmed: true, maxCaptures }), { code: 'invalid_capture_limit' });
+  }
+  for (const maxCaptures of [1, 3, null]) {
+    await assert.rejects(r.app.command('start', { confirmed: true, maxCaptures }), { code: 'capture_limit_changed' });
+  }
+  const ready = await r.app.snapshot();
+  assert.equal(ready.state, 'Ready'); assert.equal(ready.approvedMaxCaptures, 2);
+  assert.equal(ready.job.manifest.state, 'ready'); assert.equal(ready.job.manifest.images.length, 0);
+  assert.equal(captures, 0); assert.equal(advances, 0);
+  await r.request('start', { confirmed: true }); // omission inherits the approved two-display cap
+  await waitFor(r.app, s => s.state === 'Review' && !s.busy);
+  const ended = await r.app.snapshot();
+  assert.equal(ended.reason, 'capture_limit_reached');
+  assert.equal(ended.job.manifest.state, 'review');
+  assert.equal(ended.job.manifest.images.length, 2);
+  assert.equal(captures, 2); assert.equal(advances, 1);
+  assert.equal(await r.app.reader.page.locator('#position').innerText(), '2 / 12');
+  assert.equal(ended.job.manifest.checkpoint.dispatch, 'not_sent');
+  assert.equal(ended.previewApproved, false); assert.equal(ended.previewReady, false);
+  assert.equal(ended.job.manifest.range_confirmed, false); assert.deepEqual(ended.job.manifest.exports, []);
+  assert.equal(ended.operationProgress.status, 'success');
+  assert.match(ended.operationProgress.detail, /全冊完了ではありません/);
+});
+
+test('MVP有限取得: 分割は加算せず、再照合送りと既存原本を新規上限に数えない', async t => {
+  const r = await setup(t);
+  await r.request('create'); await r.request('openBrowser', { mode: 'sample' });
+  await r.request('selectReaderTab', { id: (await r.app.snapshot()).readerTabs[0].id });
+  await r.request('setCaptureSettings', { capture_scale: 1, page_output_mode: 'split_spread', reading_direction: 'right_to_left', image_format: 'png', jpeg_quality: 85 });
+  let advances = 0;
+  const advance = r.app.reader.advance.bind(r.app.reader);
+  r.app.reader.advance = (...args) => { advances++; return advance(...args); };
+  await r.request('preview', { config: sampleConfig });
+  await r.request('approve', { confirmed: true, maxCaptures: 1 });
+  await r.request('start', { confirmed: true, maxCaptures: 1 });
+  await waitFor(r.app, s => s.state === 'Review' && !s.busy);
+  const first = await r.app.snapshot(), original = await r.app.image(1, true);
+  assert.equal(first.job.manifest.images.length, 1); assert.equal(advances, 0);
+  assert.ok(first.job.manifest.images[0].split?.left); assert.ok(first.job.manifest.images[0].split?.right);
+  await assert.rejects(r.app.command('start', { confirmed: true }), { code: 'explicit_start_required' });
+  await r.request('preview', { config: sampleConfig });
+  assert.equal((await r.app.snapshot()).resumePlan.mode, 'advance');
+  await assert.rejects(r.app.command('approve', { confirmed: true, maxCaptures: 1 }), { code: 'resume_confirmation_required' });
+  await r.request('approve', { confirmed: true, resumeConfirmed: true, maxCaptures: 1 });
+  await r.request('start', { confirmed: true });
+  await waitFor(r.app, s => s.state === 'Review' && !s.busy);
+  const resumed = await r.app.snapshot();
+  assert.equal(resumed.reason, 'capture_limit_reached');
+  assert.equal(resumed.job.manifest.images.length, 2); assert.equal(advances, 1);
+  assert.equal(resumed.job.manifest.images.some(image => image.duplicate_candidate), false);
+  assert.equal(resumed.job.manifest.checkpoint.capture_id, 2);
+  assert.equal(resumed.job.manifest.checkpoint.dispatch, 'not_sent');
+  assert.deepEqual(await r.app.image(1, true), original);
+  assert.equal(resumed.job.manifest.range_confirmed, false); assert.deepEqual(resumed.job.manifest.exports, []);
+});
+
+test('MVP有限取得: 合成白紙の実Rust判定と停止保存失敗を上限到達より優先する', async t => {
+  for (const mode of ['blank', 'stop-failed', 'review-failed']) await t.test(mode, async t => {
+    const r = await setup(t);
+    await r.request('create'); await r.request('openBrowser', { mode: 'sample' });
+    await r.request('preview', { config: sampleConfig });
+    await r.request('approve', { confirmed: true, maxCaptures: 1 });
+    if (mode === 'blank') {
+      // Test the real commit classification/stop priority, not browser white
+      // rendering. The former #blank screenshot included a fractional-clip
+      // border row; the separate Linux匿名白紙 test exercises real rendering.
+      // Replace pixels only, never the Rust classification result.
+      const [width, height] = r.app.reader.bound.dimensions;
+      const white = new PNG({ width, height }); white.data.fill(255);
+      const bytes = PNG.sync.write(white);
+      r.app.reader.capture = async () => bytes;
+    }
+    let advances = 0;
+    r.app.reader.advance = async () => { advances++; throw new Error('unexpected_advance'); };
+    const call = r.app.store.call.bind(r.app.store);
+    r.app.store.call = (kind, ...args) => {
+      if (mode === 'stop-failed' && kind === 'capture_stop' || mode === 'review-failed' && kind === 'set_review_order') {
+        const error = new AppError('storage_durability_uncertain');
+        // StoreClient notifies observers before rejecting. This invalidates
+        // approval and freezes storage, but is a failure, not user cancellation.
+        for (const listener of r.app.store.errorListeners) listener(error);
+        return Promise.reject(error);
+      }
+      return call(kind, ...args);
+    };
+    await r.request('start', { confirmed: true });
+    await waitFor(r.app, s => s.state === 'NeedsAttention' && !s.busy);
+    r.app.store.call = call;
+    const stopped = await r.app.snapshot();
+    assert.equal(stopped.reason, mode === 'blank' ? 'image_review_required' : 'storage_durability_uncertain');
+    assert.equal(stopped.job.manifest.images.length, 1); assert.equal(advances, 0);
+    if (mode === 'blank') assert.equal(stopped.job.manifest.images[0].blank_candidate, true);
+    assert.equal(stopped.job.manifest.checkpoint.dispatch, 'not_sent');
+    assert.equal(stopped.operationProgress.status, 'failure');
+    assert.equal(stopped.lastFailure.stage, mode === 'blank' ? 'image_review' : 'capture_limit_stop');
+    if (mode !== 'blank') {
+      assert.equal(stopped.lastFailure.code, 'storage_durability_uncertain');
+      assert.equal(stopped.lastFailure.committedImages, 1);
+      assert.equal(stopped.storageUncertain.code, 'storage_durability_uncertain');
+      assert.equal(stopped.previewApproved, false); assert.equal(stopped.previewReady, false);
+      const original = await r.app.image(1, true);
+      for (const action of ['approve', 'start', 'review', 'export']) {
+        await assert.rejects(r.app.command(action, { confirmed: true, maxCaptures: 1 }), { code: 'storage_reopen_required' });
+      }
+      assert.deepEqual(await r.app.image(1, true), original);
+      assert.equal((await r.app.snapshot()).job.manifest.images.length, 1);
+      assert.equal(advances, 0);
+    }
+  });
+});
+
+test('MVP有限取得: 公開UIの上限変更は再承認を要求し、別開始後1画面で送りなし停止', async t => {
+  const r = await setup(t);
+  const control = await openControlWindow(r.url, { headless: true }); t.after(() => control.close());
+  const ui = control.page;
+  await openSampleThroughPublicUi(ui);
+  await ui.locator('#quickPreview').click(); await waitForPublicPreview(ui);
+  await ui.locator('#maxCaptures').fill('2');
+  await ui.locator('#previewConfirmed').check(); await ui.locator('#decisionButton').click();
+  await ui.waitForFunction(() => document.querySelector('#decisionButton').dataset.action === 'start' && !document.querySelector('#decisionButton').disabled);
+  assert.equal((await r.app.snapshot()).approvedMaxCaptures, 2);
+  await ui.locator('#maxCaptures').fill('1');
+  assert.equal(await ui.locator('#previewConfirmed').isChecked(), false);
+  assert.equal(await ui.locator('#start').isDisabled(), true);
+  assert.equal(await ui.locator('#decisionButton').getAttribute('data-action'), 'approve');
+  await ui.locator('#previewConfirmed').check(); await ui.locator('#decisionButton').click();
+  await ui.waitForFunction(() => document.querySelector('#decisionButton').dataset.action === 'start' && !document.querySelector('#decisionButton').disabled);
+  assert.equal((await r.app.snapshot()).approvedMaxCaptures, 1);
+  assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
+  for (const [language, label] of [['en', 'Maximum new captures'], ['zh-CN', '本次最多获取画面数']]) {
+    await ui.locator('#language').selectOption(language);
+    assert.match(await ui.locator('label:has(#maxCaptures)').textContent(), new RegExp(label));
+    assert.equal(await ui.locator('#maxCaptures').inputValue(), '1');
+    assert.equal((await r.app.snapshot()).approvedMaxCaptures, 1);
+  }
+  await ui.locator('#language').selectOption('ja');
+  await ui.locator('#approval').screenshot({ path: path.join(root, 'capture-limit-approval.png') });
+  let advances = 0;
+  r.app.reader.advance = async () => { advances++; throw new Error('unexpected_advance'); };
+  await ui.locator('#decisionButton').click();
+  await waitFor(r.app, s => s.state === 'Review' && !s.busy);
+  await ui.waitForFunction(() => document.querySelector('#reason').textContent.includes('最大取得画面数'));
+  assert.match(await ui.locator('#reason').textContent(), /全冊完了ではありません/);
+  assert.equal((await r.app.snapshot()).job.manifest.images.length, 1); assert.equal(advances, 0);
+  assert.equal((await r.app.snapshot()).kindleSupported, process.platform !== 'linux');
 });
 
 test('MVP取得: 12画面後は終端候補で停止し全範囲成功と混同しない', async t => {
@@ -1581,11 +2537,11 @@ test(process.platform === 'linux' ? '専用セッション既定: Linuxでは公
   await ui.locator('#create').click();
   // click/既定チェック/恒常的なLinux無効表示はcreate応答の完了条件ではない。
   await waitFor(r.app, snapshot => snapshot.job && !snapshot.busy);
-  await ui.locator('[data-stage="browser"] details > summary').click();
+  await ui.locator('[data-stage="browser"] > details > summary').click();
   assert.equal(await ui.locator('#keep').isChecked(), true);
   if (process.platform === 'linux') {
     assert.equal(await ui.locator('#openKindle').isDisabled(), true);
-    await assert.rejects(r.app.command('openBrowser', { mode: 'kindle' }), { code: 'linux_kindle_unsupported' });
+    await assert.rejects(r.app.command('openBrowser', { mode: 'kindle' }), { code: 'select_saved_session' });
     assert.deepEqual((await r.app.snapshot()).sessions, []);
     assert.equal(r.app.reader, undefined);
     return;
@@ -1678,7 +2634,7 @@ test(process.platform === 'linux' ? '専用セッション保存寿命: 旧tempo
   await restarted.app.command('create');
   if (process.platform === 'linux') {
     assert.equal((await restarted.app.snapshot()).preferredKindleSession, retained);
-    await assert.rejects(restarted.app.command('openBrowser', { mode: 'kindle' }), { code: 'linux_kindle_unsupported' });
+    await assert.rejects(restarted.app.command('openBrowser', { mode: 'kindle' }), { code: 'select_saved_session' });
     await restarted.app.command('openBrowser', { mode: 'sample', session: retained });
     assert.equal(path.basename(restarted.app.profile), retained);
     await restarted.app.command('closeBrowser');
@@ -2400,7 +3356,7 @@ test('JPEG画像軽量化: 公開設定で実取得し画質・原本・クロ�
   await ui.locator('#language').selectOption('ja');
   const jobPath = (await r.app.snapshot()).job.job_path;
   await ui.locator('[data-stage-target="browser"]').first().click();
-  await ui.locator('[data-stage="browser"] details > summary').click();
+  await ui.locator('[data-stage="browser"] > details > summary').click();
   await ui.locator('#closeBrowser').click(); await waitFor(r.app, s => !s.browserOpen && !s.busy);
   await ui.locator('[data-stage-target="setup"]').first().click();
   await ui.locator('[data-stage="setup"] details > summary').click();
@@ -2448,7 +3404,7 @@ test('MVP単ページ: 片側表紙を保持し点検で左右順を明示修正
   assert.equal(saved.job.manifest.images[0].layout_override, true);
   assert.deepEqual(await r.app.image(1, true), original);
   await ui.locator('[data-stage-target="browser"]').first().click();
-  await ui.locator('[data-stage="browser"] details > summary').click();
+  await ui.locator('[data-stage="browser"] > details > summary').click();
   await ui.locator('#closeBrowser').click();
   await waitFor(r.app, s => !s.browserOpen && !s.busy);
   await ui.locator('[data-stage-target="setup"]').first().click();
@@ -2622,7 +3578,7 @@ test('MVP単ページ: 見開きプレビューの左右順・奇数幅契約・
   const stopped = await waitFor(r.app, s => s.state === 'Review' && !s.busy);
   const savedJobPath = stopped.job.job_path;
   await ui.locator('[data-stage-target="browser"]').first().click();
-  await ui.locator('[data-stage="browser"] details > summary').click();
+  await ui.locator('[data-stage="browser"] > details > summary').click();
   await ui.locator('#closeBrowser').click();
   await waitFor(r.app, s => !s.browserOpen && !s.busy);
   await ui.locator('[data-stage-target="setup"]').first().click();

@@ -226,6 +226,14 @@ pub struct JobSnapshot {
     pub resume_check_required: bool,
 }
 
+// Current open-job identity and filesystem structure, not an integrity report.
+// Contents are still checked by snapshot/review/export and on actual reads.
+#[derive(Debug, Clone, Serialize)]
+pub struct JobBinding {
+    pub job_path: String,
+    pub manifest: Manifest,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CaptureResult {
     pub capture_id: u64,
@@ -427,6 +435,11 @@ impl Store {
 
     pub fn snapshot(&self) -> Result<JobSnapshot, StoreError> {
         self.inspect_internal()
+    }
+
+    pub fn binding(&self) -> Result<JobBinding, StoreError> {
+        let snapshot = self.inspect_internal_with_integrity(false)?;
+        Ok(JobBinding { job_path: snapshot.job_path, manifest: snapshot.manifest })
     }
 
     pub fn manifest(&self) -> &Manifest { &self.manifest }
@@ -904,17 +917,32 @@ impl Store {
         }
         let output_destination = destination.to_string_lossy().into_owned();
         let (destination, file_name) = validate_output_path(destination, format)?;
-        let snapshot = self.inspect_internal()?;
+        let output_count = self.manifest.selected_capture_ids.iter().try_fold(0_usize, |count, id| {
+            let image = self.manifest.images.iter().find(|image| image.capture_id == *id).ok_or(StoreError("invalid_selection"))?;
+            Ok::<_, StoreError>(count + if image.split.is_some() { 2 } else { 1 })
+        })?;
+        if output_count == 0 || output_count >= u16::MAX as usize { return Err(StoreError("archive_entry_count_unsupported")); }
+        let preparation = self.manifest.images.len() + self.manifest.selected_capture_ids.len();
+        let total = preparation + output_count * 2 + 2;
+        progress(0, total, "inspect");
+        let mut inspected = 0;
+        let snapshot = self.inspect_internal_with_progress(true, &mut || {
+            inspected += 1;
+            progress(inspected, total, "inspect");
+        })?;
         if !snapshot.issues.is_empty() {
             return Err(StoreError("job_inconsistent"));
         }
         let mut sources = Vec::<(PathBuf, u32, u32, u64, String, bool)>::with_capacity(self.manifest.selected_capture_ids.len());
-        for id in &self.manifest.selected_capture_ids {
+        for (index, id) in self.manifest.selected_capture_ids.iter().enumerate() {
             let image = self.manifest.images.iter().find(|image| image.capture_id == *id).ok_or(StoreError("invalid_selection"))?;
             if image.split.is_some() { sources.extend(self.split_sources(image)?); }
             else { sources.push(self.selected_source(image)?); }
+            progress(self.manifest.images.len() + index + 1, total, "prepare");
         }
         if sources.is_empty() || sources.len() >= u16::MAX as usize { return Err(StoreError("archive_entry_count_unsupported")); }
+        if sources.len() != output_count { return Err(StoreError("archive_entry_count_unsupported")); }
+        let mut archive_progress = |done, _archive_total, stage| progress(preparation + done, total, stage);
         let inputs: Vec<_> = sources.iter().enumerate().map(|(index, (path, width, height, bytes, digest, allow_black))| ArchiveInput {
             name: format!("{:06}.{}", index + 1, path.extension().and_then(|ext| ext.to_str()).unwrap_or("png")), path, bytes: *bytes, sha256: digest, width: *width, height: *height, allow_black: *allow_black,
         }).collect();
@@ -922,7 +950,7 @@ impl Store {
         #[cfg(target_os = "linux")]
         let (summary, cleanup_warning) = {
             let mut stage = self.mutation(crate::linux_fs::ExportStage::new(&destination), "archive_temp_create_failed")?;
-            let summary: ArchiveSummary = crate::archive::write_and_verify_progress(&mut stage.file, &inputs, progress).map_err(StoreError)?;
+            let summary: ArchiveSummary = crate::archive::write_and_verify_progress(&mut stage.file, &inputs, &mut archive_progress).map_err(StoreError)?;
             if let Err(error) = stage.publish() {
                 let code = if error.applied() {
                     self.durability_uncertain.set(true);
@@ -949,7 +977,7 @@ impl Store {
             }
         }).ok_or(StoreError("archive_temp_create_failed"))?;
         let (temp_path, mut temp_file) = temp_path;
-        let summary: ArchiveSummary = match crate::archive::write_and_verify_progress(&mut temp_file, &inputs, progress) {
+        let summary: ArchiveSummary = match crate::archive::write_and_verify_progress(&mut temp_file, &inputs, &mut archive_progress) {
             Ok(summary) => summary,
             Err(error) => {
                 drop(temp_file);
@@ -1149,6 +1177,14 @@ impl Store {
     }
 
     fn inspect_internal(&self) -> Result<JobSnapshot, StoreError> {
+        self.inspect_internal_with_integrity(true)
+    }
+
+    fn inspect_internal_with_integrity(&self, verify_contents: bool) -> Result<JobSnapshot, StoreError> {
+        self.inspect_internal_with_progress(verify_contents, &mut || {})
+    }
+
+    fn inspect_internal_with_progress(&self, verify_contents: bool, progress: &mut impl FnMut()) -> Result<JobSnapshot, StoreError> {
         ensure_real_directory(&self.path)?;
         let mut issues = Vec::new();
         if self.durability_uncertain.get() { issues.push("storage_durability_uncertain".to_owned()); }
@@ -1162,17 +1198,21 @@ impl Store {
                 return Err(StoreError("manifest_path_invalid"));
             }
             referenced.insert(expected.clone());
-            match self.read_original(image) {
-                Ok(_) => {},
-                Err(error) => issues.push(format!("image_{}:{}", image.capture_id, error.code())),
+            if verify_contents {
+                match self.read_original(image) {
+                    Ok(_) => {},
+                    Err(error) => issues.push(format!("image_{}:{}", image.capture_id, error.code())),
+                }
             }
             if let Some(crop) = &image.crop {
                 let expected = format!("rendered/{:06}-v{}.{}", image.capture_id, crop.version, image.image_format.extension());
                 if crop.path != expected { return Err(StoreError("manifest_path_invalid")); }
                 referenced.insert(expected.clone());
-                match self.read_selected(image) {
-                    Ok(_) => {},
-                    Err(error) => issues.push(format!("crop_{}:{}", image.capture_id, error.code())),
+                if verify_contents {
+                    match self.read_selected(image) {
+                        Ok(_) => {},
+                        Err(error) => issues.push(format!("crop_{}:{}", image.capture_id, error.code())),
+                    }
                 }
             }
             if let Some(split) = &image.split {
@@ -1181,10 +1221,13 @@ impl Store {
                 if split.left.path != left || split.right.path != right { return Err(StoreError("manifest_path_invalid")); }
                 referenced.insert(left);
                 referenced.insert(right);
-                if let Err(error) = self.split_sources(image) {
-                    issues.push(format!("split_{}:{}", image.capture_id, error.code()));
+                if verify_contents {
+                    if let Err(error) = self.split_sources(image) {
+                        issues.push(format!("split_{}:{}", image.capture_id, error.code()));
+                    }
                 }
             }
+            progress();
         }
         if self.manifest.next_capture_id <= latest {
             return Err(StoreError("manifest_invalid"));
@@ -1192,7 +1235,8 @@ impl Store {
         let mut orphan_files = Vec::new();
         for entry in fs::read_dir(&self.path).map_err(|_| StoreError("job_read_failed"))? {
             let entry = entry.map_err(|_| StoreError("job_read_failed"))?;
-            let name = entry.file_name().to_string_lossy().to_string();
+            let actual_name = entry.file_name();
+            let name = actual_name.to_string_lossy().to_string();
             if name == "manifest.json" || name == ".job.lock" || matches!(name.as_str(), "originals" | "pending" | "rendered") {
                 continue;
             }
@@ -1200,6 +1244,11 @@ impl Store {
             let file_type = entry.file_type().map_err(|_| StoreError("job_read_failed"))?;
             if file_type.is_symlink() || is_reparse_point(&item)? {
                 return Err(StoreError("reparse_point_rejected"));
+            }
+            // Binding does not consume orphan classification. Reparse/type and
+            // directory errors above/below remain identical to full snapshot.
+            if file_type.is_file() && (!verify_contents || self.registered_export_matches(&item, &actual_name)) {
+                continue;
             }
             orphan_files.push(name);
         }
@@ -1223,6 +1272,40 @@ impl Store {
         orphan_files.sort();
         let resume_check_required = matches!(self.manifest.state, JobState::Interrupted | JobState::Paused | JobState::NeedsAttention);
         Ok(JobSnapshot { job_path: self.path.to_string_lossy().to_string(), manifest: self.manifest.clone(), orphan_files, issues, resume_check_required })
+    }
+
+    fn registered_export_matches(&self, item: &Path, actual_name: &std::ffi::OsStr) -> bool {
+        let Ok(parent) = fs::canonicalize(&self.path) else { return false; };
+        let canonical_item = parent.join(actual_name);
+        let mut candidate = None;
+        for record in self.manifest.exports.iter().filter(|record| {
+            std::ffi::OsStr::new(&record.file_name) == actual_name
+                || record.destination.as_deref().and_then(|path| Path::new(path).file_name()) == Some(actual_name)
+        }) {
+            let resolved = (|| {
+                let format = ArchiveFormat::parse(&record.format)?;
+                let path = record.destination.as_ref().map(PathBuf::from).unwrap_or_else(|| self.path.join(&record.file_name));
+                let (destination, file_name) = resolve_output_path(&path, format)?;
+                if file_name != record.file_name { return Err(StoreError("manifest_path_invalid")); }
+                Ok(destination)
+            })();
+            match resolved {
+                // An invalid record with this name cannot safely be ruled out.
+                Err(_) => return false,
+                Ok(destination) if destination == canonical_item => {
+                    if candidate.replace(record).is_some() { return false; }
+                }
+                Ok(_) => {}, // A known external destination is not scanned.
+            }
+        }
+        let Some(record) = candidate else { return false; };
+        let Ok(mut file) = open_existing_regular(item) else { return false; };
+        if crate::archive::verify_registered_archive(&mut file, record.bytes, &record.sha256, record.entry_count).is_err() {
+            return false;
+        }
+        // Make sure the name still denotes the exact file that was verified.
+        let Ok(current) = open_existing_regular(item) else { return false; };
+        same_regular_file(&file, &current).unwrap_or(false)
     }
 }
 
@@ -1389,6 +1472,36 @@ pub(crate) fn open_existing_regular(path: &Path) -> Result<File, StoreError> {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn same_regular_file(left: &File, right: &File) -> std::io::Result<bool> {
+    crate::linux_fs::same_inode(left, right)
+}
+
+#[cfg(windows)]
+fn same_regular_file(left: &File, right: &File) -> std::io::Result<bool> {
+    use std::os::windows::io::AsRawHandle;
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileInformation {
+        attributes: u32, creation_low: u32, creation_high: u32, access_low: u32, access_high: u32,
+        write_low: u32, write_high: u32, volume: u32, size_high: u32, size_low: u32,
+        links: u32, index_high: u32, index_low: u32,
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" { fn GetFileInformationByHandle(handle: *mut std::ffi::c_void, info: *mut FileInformation) -> i32; }
+    let information = |file: &File| -> std::io::Result<FileInformation> {
+        let mut info = FileInformation::default();
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+            Err(std::io::Error::last_os_error())
+        } else { Ok(info) }
+    };
+    let (a, b) = (information(left)?, information(right)?);
+    Ok(a.links == 1 && b.links == 1 && a.volume == b.volume && a.index_high == b.index_high && a.index_low == b.index_low)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn same_regular_file(_left: &File, _right: &File) -> std::io::Result<bool> { Ok(false) }
+
 #[cfg(windows)]
 fn is_reparse_point(path: &Path) -> Result<bool, StoreError> {
     use std::os::windows::fs::MetadataExt;
@@ -1478,6 +1591,12 @@ fn replace_file(_source: &Path, _destination: &Path) -> Result<(), StoreError> {
 }
 
 fn validate_output_path(path: &Path, format: ArchiveFormat) -> Result<(PathBuf, String), StoreError> {
+    let (destination, file_name) = resolve_output_path(path, format)?;
+    if fs::symlink_metadata(&destination).is_ok() { return Err(StoreError("output_exists")); }
+    Ok((destination, file_name))
+}
+
+fn resolve_output_path(path: &Path, format: ArchiveFormat) -> Result<(PathBuf, String), StoreError> {
     reject_parent_components(path)?;
     let parent = path.parent().ok_or(StoreError("invalid_output_path"))?;
     ensure_real_directory(parent)?;
@@ -1489,7 +1608,6 @@ fn validate_output_path(path: &Path, format: ArchiveFormat) -> Result<(PathBuf, 
     if !ext.eq_ignore_ascii_case(format.extension()) { return Err(StoreError("output_extension_mismatch")); }
     let parent = fs::canonicalize(parent).map_err(|_| StoreError("invalid_output_path"))?;
     let destination = parent.join(file_name);
-    if fs::symlink_metadata(&destination).is_ok() { return Err(StoreError("output_exists")); }
     Ok((destination, file_name.to_owned()))
 }
 
@@ -1823,26 +1941,148 @@ mod tests {
         let temp = TempDir::new("export-destination");
         let mut store = Store::create(&temp.0).unwrap();
         store.start_capture().unwrap();
-        capture(&mut store, &png(3, 2));
-        store.pause_capture().unwrap();
+        let first_bytes = png(3, 2);
+        let second_bytes = png(4, 2);
+        let first = capture(&mut store, &first_bytes);
+        let second = capture(&mut store, &second_bytes);
+        store.stop_capture().unwrap();
         let external = temp.0.join("chosen-folder");
         fs::create_dir(&external).unwrap();
-        let destination = external.join("same.zip");
+        let destination = external.join("external.zip");
         store.export(&destination, ArchiveFormat::Zip).unwrap();
         let archive = fs::read(&destination).unwrap();
         assert_eq!(store.manifest.exports[0].destination.as_deref(), destination.to_str());
         let job_path = store.path.clone();
+        let local = job_path.join("same.zip");
+        store.export(&local, ArchiveFormat::Zip).unwrap();
+        let original_archive = fs::read(&local).unwrap();
+        let external_same = external.join("same.zip");
+        store.export(&external_same, ArchiveFormat::Zip).unwrap();
+        let external_same_archive = fs::read(&external_same).unwrap();
+        assert_eq!(store.manifest.exports[2].destination.as_deref(), external_same.to_str());
+        assert!(store.snapshot().unwrap().orphan_files.is_empty());
         store.close().unwrap();
         let manifest_path = job_path.join("manifest.json");
         let mut legacy: serde_json::Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
         legacy["exports"][0].as_object_mut().unwrap().remove("destination");
+        legacy["exports"][1].as_object_mut().unwrap().remove("destination");
         fs::write(&manifest_path, serde_json::to_vec(&legacy).unwrap()).unwrap();
         let mut reopened = Store::open(&job_path).unwrap();
         assert!(reopened.manifest.exports[0].destination.is_none());
-        reopened.export(&job_path.join("same.zip"), ArchiveFormat::Zip).unwrap();
+        assert!(reopened.manifest.exports[1].destination.is_none());
+        assert!(reopened.snapshot().unwrap().orphan_files.is_empty());
+        reopened.set_review_order(vec![second, first]).unwrap();
+        let crop = reopened.crop_image(first, 0, 0, 2, 2).unwrap().crop;
+        let cropped_bytes = fs::read(job_path.join(&crop.path)).unwrap();
+        assert!(reopened.snapshot().unwrap().orphan_files.is_empty(), "過去出力は現在の編集結果でなく登録時のrecordに照合する");
+        let edited = job_path.join("edited.cbz");
+        assert_eq!(reopened.export(&edited, ArchiveFormat::Cbz).unwrap().entry_count, 2);
+        let bytes = fs::read(&edited).unwrap();
+        let mut offset = 0;
+        let mut entries = Vec::new();
+        while bytes[offset..offset + 4] == [0x50, 0x4b, 0x03, 0x04] {
+            let size = u32::from_le_bytes(bytes[offset + 18..offset + 22].try_into().unwrap()) as usize;
+            let name_len = u16::from_le_bytes(bytes[offset + 26..offset + 28].try_into().unwrap()) as usize;
+            let extra_len = u16::from_le_bytes(bytes[offset + 28..offset + 30].try_into().unwrap()) as usize;
+            let start = offset + 30 + name_len + extra_len;
+            entries.push((bytes[offset + 30..offset + 30 + name_len].to_vec(), bytes[start..start + size].to_vec()));
+            offset = start + size;
+        }
+        assert_eq!(entries, vec![(b"000001.png".to_vec(), second_bytes.clone()), (b"000002.png".to_vec(), cropped_bytes)]);
         assert_eq!(reopened.export(&destination, ArchiveFormat::Zip).unwrap_err().code(), "output_exists");
-        assert_eq!(fs::read(destination).unwrap(), archive);
-        assert!(reopened.snapshot().unwrap().issues.is_empty());
+        assert_eq!(reopened.export(&external_same, ArchiveFormat::Zip).unwrap_err().code(), "output_exists");
+        assert_eq!(fs::read(&destination).unwrap(), archive);
+        assert_eq!(fs::read(&external_same).unwrap(), external_same_archive);
+        assert_eq!(fs::read(&local).unwrap(), original_archive);
+        assert_eq!(fs::read(job_path.join("originals/000001.png")).unwrap(), first_bytes);
+        assert_eq!(fs::read(job_path.join("originals/000002.png")).unwrap(), second_bytes);
+        let snapshot = reopened.snapshot().unwrap();
+        assert!(snapshot.issues.is_empty());
+        assert!(snapshot.orphan_files.is_empty());
+        reopened.close().unwrap();
+        let reopened = Store::open(&job_path).unwrap();
+        assert!(reopened.snapshot().unwrap().orphan_files.is_empty());
+        assert_eq!(reopened.manifest.selected_capture_ids, vec![second, first]);
+        assert_eq!(fs::read(local).unwrap(), original_archive);
+    }
+
+    #[test]
+    fn export_registered_archive_requires_unique_exact_untampered_record() {
+        let temp = TempDir::new("export-record-checks");
+        let mut store = Store::create(&temp.0).unwrap();
+        store.start_capture().unwrap();
+        capture(&mut store, &png(3, 2));
+        store.stop_capture().unwrap();
+        let local = store.path.join("saved.zip");
+        store.export(&local, ArchiveFormat::Zip).unwrap();
+        let bytes = fs::read(&local).unwrap();
+        let external = temp.0.join("outside");
+        fs::create_dir(&external).unwrap();
+        store.export(&external.join("saved.zip"), ArchiveFormat::Zip).unwrap();
+        let records = store.manifest.exports.clone();
+        let is_orphan = |store: &Store| store.snapshot().unwrap().orphan_files.iter().any(|name| name == "saved.zip");
+        assert!(!is_orphan(&store), "同名の明示外部保存はjob内の登録と曖昧にならない");
+
+        let unregistered = store.path.join("unregistered.zip");
+        let mut unknown = create_file(&unregistered, true).unwrap();
+        unknown.write_all(&bytes).unwrap(); drop(unknown);
+        assert_eq!(store.snapshot().unwrap().orphan_files, vec!["unregistered.zip"]);
+        fs::remove_file(unregistered).unwrap();
+
+        for case in 0..10 {
+            store.manifest.exports = records.clone();
+            match case {
+                0 => store.manifest.exports[0].bytes += 1,
+                1 => store.manifest.exports[0].sha256 = "0".repeat(64),
+                2 => store.manifest.exports[0].entry_count += 1,
+                3 => store.manifest.exports[0].format = "cbz".to_owned(),
+                4 => store.manifest.exports[0].file_name = "SAVED.zip".to_owned(),
+                5 => store.manifest.exports[0].destination = Some(store.path.join("../saved.zip").to_string_lossy().into_owned()),
+                6 => store.manifest.exports[0].destination = Some(store.path.join("different.zip").to_string_lossy().into_owned()),
+                7 => { store.manifest.exports[0].destination = None; store.manifest.exports[1].destination = None; },
+                8 => { store.manifest.exports[0].entry_count = 0; store.manifest.exports[0].destination = None; },
+                9 => { let mut duplicate = records[0].clone(); duplicate.file_name = "different.zip".to_owned(); store.manifest.exports.push(duplicate); },
+                _ => unreachable!(),
+            }
+            assert!(is_orphan(&store), "invalid/ambiguous record case {case}");
+        }
+        store.manifest.exports = records.clone();
+        store.manifest.exports.push(records[0].clone());
+        assert!(is_orphan(&store), "重複した正式登録も曖昧");
+        store.manifest.exports = records.clone();
+        let mut modified = bytes.clone();
+        modified[0] ^= 1;
+        fs::write(&local, &modified).unwrap();
+        assert!(is_orphan(&store), "同じ長さの改変はhashで拒否");
+        store.manifest.exports[0].sha256 = sha256(&modified);
+        assert!(is_orphan(&store), "hashを合わせても不正なZIP構造を拒否");
+        fs::write(&local, &bytes).unwrap();
+        store.manifest.exports = records;
+        assert!(!is_orphan(&store));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn export_registered_archive_rejects_symlink_and_hardlink_without_following() {
+        use std::os::unix::fs::symlink;
+        let temp = TempDir::new("export-link-checks");
+        let mut store = Store::create(&temp.0).unwrap();
+        store.start_capture().unwrap();
+        capture(&mut store, &png(3, 2));
+        store.stop_capture().unwrap();
+        let local = store.path.join("saved.zip");
+        store.export(&local, ArchiveFormat::Zip).unwrap();
+        let bytes = fs::read(&local).unwrap();
+        let outside = temp.0.join("outside.zip");
+        let mut file = create_file(&outside, true).unwrap();
+        file.write_all(&bytes).unwrap(); drop(file);
+        fs::remove_file(&local).unwrap();
+        symlink(&outside, &local).unwrap();
+        assert_eq!(store.snapshot().unwrap_err().code(), "reparse_point_rejected");
+        fs::remove_file(&local).unwrap();
+        fs::hard_link(&outside, &local).unwrap();
+        assert_eq!(store.snapshot().unwrap().orphan_files, vec!["saved.zip"]);
+        assert_eq!(fs::read(&outside).unwrap(), bytes);
     }
 
     #[test]

@@ -30,7 +30,7 @@
 - 首次下载工具与依赖时需要互联网连接。
 - 脚本安装隔离的 **Rust 1.99.1**，使用 **Playwright 1.64.1 / Chromium revision 1248**，不会替换日常浏览器配置目录，也不会修改全局 Rust PATH。
 
-与源代码运行不同，Portable 打包必须使用 **Node.js 22.14.0**。请参阅[开发构建说明](development.md)（英语）。
+与源代码运行不同，Portable 打包必须使用 **Node.js 22.22.1**。请参阅[开发构建说明](development.md)（英语）。
 
 ## 安装并启动
 

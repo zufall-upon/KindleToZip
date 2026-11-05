@@ -25,6 +25,24 @@ function isChromeConfiguration(config) {
     && Object.entries(kindleChromeConfig).every(([key, value]) => config[key] === value));
 }
 
+// Only the established top-level Kindle preset's displayed range marker has
+// this numeric contract. Arbitrary labels or hidden service state do not.
+async function rangePosition(config, position) {
+  if (!isChromeConfiguration(config)) return null;
+  return position.evaluate(element => {
+    if (!element.isConnected || element.tagName !== 'INPUT' || element.type !== 'range') return null;
+    const value = Number(element.value), min = element.min === '' ? 0 : Number(element.min), max = element.max === '' ? 100 : Number(element.max);
+    const step = element.step || '1';
+    if (![value, min, max].every(n => Number.isFinite(n) && Math.abs(n) <= 1e9)
+      || max <= min || value < min || value > max || step !== 'any' && !(Number.isFinite(Number(step)) && Number(step) > 0)) return null;
+    return { value, min, max, step };
+  });
+}
+function rangeAdvanced(before, after) {
+  return Boolean(before && after && before.min === after.min && before.max === after.max && before.step === after.step
+    && after.value > before.value && after.value <= before.max);
+}
+
 async function validateMarkers({ config, region, identity, position, next }) {
   if (config.reader !== kindleChromeConfig.reader) return;
   const handles = await Promise.all([identity, position, next].map(locator => locator.elementHandle()));
@@ -102,7 +120,7 @@ export function createKindleAdapter(regionId = 'jp') {
     identify(url, title, position) {
       return { book: { title, identity: createHash('sha256').update(JSON.stringify([url.origin, title])).digest('hex') }, position };
     },
-    isChromeConfiguration, validateMarkers, revealChrome,
+    isChromeConfiguration, validateMarkers, revealChrome, rangePosition, rangeAdvanced,
     // Shared code owns preflight, bound-node/geometry checks, cancellation,
     // dispatch journaling and post-turn confirmation. No adapter retries.
     async turnPage(page, point) { await page.mouse.click(point.x, point.y); },

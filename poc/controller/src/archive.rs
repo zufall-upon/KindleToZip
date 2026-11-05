@@ -133,7 +133,7 @@ pub fn write_and_verify_progress(file: &mut File, inputs: &[ArchiveInput<'_>], p
     file.flush().map_err(|_| "archive_write_failed")?;
     file.sync_all().map_err(|_| "archive_write_failed")?;
 
-    verify_archive(file, inputs, &central, central_offset, central_size, progress)?;
+    verify_archive(file, Some(inputs), &central, central_offset, central_size, progress)?;
     let bytes = file.metadata().map_err(|_| "archive_verify_failed")?.len();
     let digest = digest_file(file)?;
     progress(inputs.len() * 2 + 1, total, "publish");
@@ -142,18 +142,23 @@ pub fn write_and_verify_progress(file: &mut File, inputs: &[ArchiveInput<'_>], p
 
 fn verify_archive(
     file: &mut File,
-    inputs: &[ArchiveInput<'_>],
+    inputs: Option<&[ArchiveInput<'_>]>,
     central: &[CentralEntry],
     central_offset: u32,
     central_size: u32,
     progress: &mut impl FnMut(usize, usize, &'static str),
 ) -> Result<(), &'static str> {
+    if inputs.is_some_and(|inputs| inputs.len() != central.len()) { return Err("archive_verify_failed"); }
     let file_len = file.metadata().map_err(|_| "archive_verify_failed")?.len();
     let expected_end = u64::from(central_offset) + u64::from(central_size) + 22;
     if file_len != expected_end {
         return Err("archive_verify_failed");
     }
-    for (index, (input, entry)) in inputs.iter().zip(central).enumerate() {
+    let mut next_offset = 0_u64;
+    for (index, entry) in central.iter().enumerate() {
+        if u64::from(entry.local_offset) != next_offset || entry.size as usize > MAX_PNG_BYTES {
+            return Err("archive_verify_failed");
+        }
         file.seek(SeekFrom::Start(u64::from(entry.local_offset))).map_err(|_| "archive_verify_failed")?;
         let mut header = [0_u8; 30];
         file.read_exact(&mut header).map_err(|_| "archive_verify_failed")?;
@@ -171,16 +176,23 @@ fn verify_archive(
         }
         let mut data = vec![0; entry.size as usize];
         file.read_exact(&mut data).map_err(|_| "archive_verify_failed")?;
-        if crc32(&data) != entry.crc || sha256(&data) != input.sha256 || is_jpeg(&data) != input.name.ends_with(".jpg") {
+        if crc32(&data) != entry.crc {
             return Err("archive_verify_failed");
         }
-        let image = if input.allow_black { decode_rendered(&data) } else { decode_stored(&data) }
-            .map_err(|_| "archive_verify_failed")?;
-        if image.width != input.width || image.height != input.height {
-            return Err("archive_verify_failed");
+        if let Some(input) = inputs.map(|inputs| &inputs[index]) {
+            if sha256(&data) != input.sha256 || is_jpeg(&data) != input.name.ends_with(".jpg") {
+                return Err("archive_verify_failed");
+            }
+            let image = if input.allow_black { decode_rendered(&data) } else { decode_stored(&data) }
+                .map_err(|_| "archive_verify_failed")?;
+            if image.width != input.width || image.height != input.height {
+                return Err("archive_verify_failed");
+            }
         }
-        progress(inputs.len() + index + 1, inputs.len() * 2 + 2, "verify");
+        next_offset = file.stream_position().map_err(|_| "archive_verify_failed")?;
+        progress(central.len() + index + 1, central.len() * 2 + 2, "verify");
     }
+    if next_offset != u64::from(central_offset) { return Err("archive_verify_failed"); }
 
     file.seek(SeekFrom::Start(u64::from(central_offset))).map_err(|_| "archive_verify_failed")?;
     for entry in central {
@@ -205,9 +217,57 @@ fn verify_archive(
     let mut eocd = [0_u8; 22];
     file.read_exact(&mut eocd).map_err(|_| "archive_verify_failed")?;
     if get_u32(&eocd, 0)? != 0x0605_4b50 || get_u16(&eocd, 4)? != 0 || get_u16(&eocd, 6)? != 0
-        || get_u16(&eocd, 8)? as usize != inputs.len() || get_u16(&eocd, 10)? as usize != inputs.len()
+        || get_u16(&eocd, 8)? as usize != central.len() || get_u16(&eocd, 10)? as usize != central.len()
         || get_u32(&eocd, 12)? != central_size || get_u32(&eocd, 16)? != central_offset || get_u16(&eocd, 20)? != 0
     {
+        return Err("archive_verify_failed");
+    }
+    Ok(())
+}
+
+// Revalidate the stored ZIP/CBZ written by this module against its historical
+// record, not against today's selection or rendered images. All reads and the
+// digest use the same already-opened file; no external output is enumerated.
+pub(crate) fn verify_registered_archive(file: &mut File, bytes: u64, digest: &str, count: u32) -> Result<(), &'static str> {
+    if bytes < 22 || bytes >= u32::MAX as u64 || count == 0 || count >= u16::MAX as u32
+        || file.metadata().map_err(|_| "archive_verify_failed")?.len() != bytes
+        || digest_file(file)? != digest {
+        return Err("archive_verify_failed");
+    }
+    file.seek(SeekFrom::Start(bytes - 22)).map_err(|_| "archive_verify_failed")?;
+    let mut eocd = [0_u8; 22];
+    file.read_exact(&mut eocd).map_err(|_| "archive_verify_failed")?;
+    let central_size = get_u32(&eocd, 12)?;
+    let central_offset = get_u32(&eocd, 16)?;
+    if get_u32(&eocd, 0)? != 0x0605_4b50 || get_u16(&eocd, 4)? != 0 || get_u16(&eocd, 6)? != 0
+        || u32::from(get_u16(&eocd, 8)?) != count || u32::from(get_u16(&eocd, 10)?) != count
+        || get_u16(&eocd, 20)? != 0 || u64::from(central_offset) + u64::from(central_size) + 22 != bytes {
+        return Err("archive_verify_failed");
+    }
+    file.seek(SeekFrom::Start(u64::from(central_offset))).map_err(|_| "archive_verify_failed")?;
+    let mut central = Vec::with_capacity(count as usize);
+    let mut names = std::collections::HashSet::new();
+    for _ in 0..count {
+        let mut header = [0_u8; 46];
+        file.read_exact(&mut header).map_err(|_| "archive_verify_failed")?;
+        let name_len = get_u16(&header, 28)? as usize;
+        if get_u32(&header, 0)? != 0x0201_4b50 || get_u16(&header, 8)? != 0 || get_u16(&header, 10)? != 0
+            || get_u32(&header, 20)? != get_u32(&header, 24)? || name_len == 0
+            || get_u16(&header, 30)? != 0 || get_u16(&header, 32)? != 0 {
+            return Err("archive_verify_failed");
+        }
+        let mut name = vec![0; name_len];
+        file.read_exact(&mut name).map_err(|_| "archive_verify_failed")?;
+        if name == b"." || name == b".." || name.contains(&b'/') || name.contains(&b'\\') || !names.insert(name.clone()) {
+            return Err("archive_verify_failed");
+        }
+        central.push(CentralEntry { name, crc: get_u32(&header, 16)?, size: get_u32(&header, 24)?, local_offset: get_u32(&header, 42)? });
+    }
+    if file.stream_position().map_err(|_| "archive_verify_failed")? != u64::from(central_offset) + u64::from(central_size) {
+        return Err("archive_verify_failed");
+    }
+    verify_archive(file, None, &central, central_offset, central_size, &mut |_, _, _| {})?;
+    if file.metadata().map_err(|_| "archive_verify_failed")?.len() != bytes || digest_file(file)? != digest {
         return Err("archive_verify_failed");
     }
     Ok(())

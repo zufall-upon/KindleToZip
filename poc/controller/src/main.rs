@@ -20,7 +20,7 @@ enum Command {
     Transition { event: Event }, State {}, Snapshot {},
     WindowForProcess { pid: u32 }, WindowAbove { higher: u64, lower: u64 },
     ObserveStart {}, ObserveStop {}, Close {},
-    CreateJob { base_dir: String }, OpenJob { path: String }, JobInfo {}, JobProgress {}, CloseJob {},
+    CreateJob { base_dir: String }, OpenJob { path: String }, JobInfo {}, JobBinding {}, JobProgress {}, CloseJob {},
     CaptureStart {}, CapturePause {}, CaptureStop {},
     ResetImages {},
     SetCaptureSettings { capture_settings: CaptureSettings },
@@ -123,6 +123,10 @@ fn run(mut input: impl BufRead, mut output: impl Write) -> io::Result<()> {
             }
             Command::JobInfo {} => match store.as_ref() {
                 Some(active) => active.snapshot().map(|snapshot| json!({"snapshot":snapshot})).map_err(|error| error.code()),
+                None => Err("job_not_open"),
+            },
+            Command::JobBinding {} => match store.as_ref() {
+                Some(active) => active.binding().map(|binding| json!({"binding":binding})).map_err(|error| error.code()),
                 None => Err("job_not_open"),
             },
             Command::JobProgress {} => match store.as_ref() {

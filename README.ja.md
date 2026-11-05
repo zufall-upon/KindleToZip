@@ -70,7 +70,9 @@ v0.1.6では、専用ブラウザを開く前に **「Kindle利用地域」か�
 
 **ソースから：** **Windows x64・Git・Node.js 22以降・PowerShell 7** が必要です。[入門ガイド](docs/getting-started.ja.md)で専用のRust環境とブラウザを導入し、`npm start` で起動します。まずはAmazonへのログインも実書籍も不要な自作サンプルから試せます。
 
-**Ubuntu試験段階のソース版：** `linux-port` は**自作試料のみ**が対象です。実Kindle・通常Wayland読書・Linux配布版ではありません。既存の隔離環境を再利用する[Ubuntu向け手順](docs/getting-started.ja.md#ubuntu-source)を参照してください。操作画面は有頭、試料readerは既定でheadlessです。明示的な `npm start -- --sample-headed` はアプリ生成の標準自作試料だけを専用Wayland画面で開き、他サイトや既存profileの認可ではありません。対象内の検査は他アプリ・物理入力への非干渉やOS全体の非遮蔽を保証しません。導入済みの `/usr/bin/zenity` は任意の保存先選択機能で、手入力も残ります。選択だけでは保存・取得しません。デスクトップ／portalの動作は環境ごとの検証が必要で、Linux版リリース済みという意味ではありません。
+**Ubuntu試験段階のソース版：** 通常の `npm start` では、取得元に「匿名の自作試料」を明示選択して、プレビュー・有限画面数の承認・別の開始操作から点検・編集を試せます。旧headless試料や明示的な `npm start -- --sample-headed` の動作も残ります。実Kindleを確認した選択済みPortableの状況は次項、ソース開発は[Ubuntu向け手順](docs/getting-started.ja.md#ubuntu-source)を参照してください。導入済みの `/usr/bin/zenity` は任意の保存先選択機能で、手入力も残ります。選択だけでは保存・取得しません。
+
+**Ubuntu x64ローカルPortable：** 2026-11-05、このPCの選択済み配置で、本人が指定した実Kindleの1冊・161画像を点検し、ZIP保存・内容と順序の照合・正常終了まで確認しました。途中停止からの復帰と修正を含む結果です。Ubuntu版は未公開で、別PCやクリーンUbuntuの確認、今回の修正を含むWindows実機確認とリリース検査は残っています。Wayland・対応Chromium Snap等の既存環境が必要です。[現在の状況と起動手順](docs/ubuntu-portable.ja.md)を参照してください。
 
 Ubuntu 26.04では、導入済みZenityで匿名のZIP/CBZ保存先選択・取消を本人操作で確認し、表示も正常との本人目視報告を受領しました。nativeダイアログの画像は未提供・独立検査なしです。選択だけでは書き出されないことを確認したもので、ZIP/CBZ出力・内容照合は別の統合検査です。native pickerでの実出力や実Kindleの受入成功は意味しません。
 

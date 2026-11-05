@@ -11,6 +11,8 @@ import { PNG } from 'pngjs';
 import { startApplication } from '../app/server.mjs';
 import { Application } from '../app/application.mjs';
 import { Reader } from '../app/reader.mjs';
+import { kindleChromeConfig } from '../app/stores/kindle.mjs';
+import { createPortableLimitedCaptureBudget } from '../app/expected-capture-budget.mjs';
 import { createStoreAdapter } from '../app/stores/index.mjs';
 import { openControlWindow as openWindow } from '../app/control-window.mjs';
 import { chooseSaveDestination, linuxSaveDestination, saveDialogAvailable } from '../app/save-dialog.mjs';
@@ -114,7 +116,9 @@ test('日英中の簡易切替: 公開選択・動的残数・隣接エラー・
     await ui.waitForFunction(value => document.documentElement.lang === value && document.querySelector('#counts').textContent.length > 0, lang);
   }
   await ui.locator('#language').selectOption('ja');
-  await checkLanguageFlow(ui);
+  const languageEvidence = path.resolve('artifacts/ubuntu-portable/common-language-2d0eeb29');
+  await mkdir(languageEvidence, { recursive: true });
+  await checkLanguageFlow(ui, name => ui.screenshot({ path: path.join(languageEvidence, name) }));
   assert.equal(JSON.stringify((await r.app.snapshot()).job.manifest), manifest, 'language / cancelled reset must not edit the job');
 });
 
@@ -837,7 +841,283 @@ test('Kindle初回hiddenのページ内復帰候補: 公開試料の実観測復
   });
 });
 
-test('動的Kindle試料の公開復帰: preset→hidden停止1枚→点検/ZIP→再承認/明示開始→同app次冊', async t => {
+test('上下UI付き匿名試料: 有限停止から原本保持・手動クロップ・ZIP/CBZ', async t => {
+  await mkdir('artifacts/mvp-tests', { recursive: true });
+  const directory = await mkdtemp(path.resolve('artifacts/mvp-tests/chrome-crop-'));
+  let r, control;
+  t.after(async () => {
+    // Only remove this run's scratch after both owned components have closed.
+    if (!r) return;
+    const errors = [];
+    try { if (control) await control.close(); } catch (error) { errors.push(error); }
+    try { await r.close(); } catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, 'anonymous_crop_cleanup_unconfirmed');
+    if (control) await rm(directory, { recursive: true, force: true });
+  });
+  r = await startApplication({ dataDir: path.join(directory, 'data'), sampleFixture: 'kindle-chrome' });
+  control = await openControlWindow(r.url, { headless: true });
+  const ui = control.page;
+  await ui.locator('#create').click();
+  await ui.locator('#openSample').click();
+  await ui.waitForFunction(() => document.querySelector('#readerTab').options.length > 1);
+  await ui.locator('#readerTab').selectOption({ index: 1 });
+  await ui.locator('#selectReaderTab').click();
+  await ui.waitForFunction(() => !document.querySelector('#quickPreview').disabled);
+
+  // This is fixture setup, not a change to the capture geometry or to the app.
+  // Preserve the existing marker nodes while making the two UI bands and the
+  // near-boundary body marks visually and numerically distinguishable.
+  const page = r.app.reader.page;
+  const controls = await page.evaluate(() => {
+    const surface = document.querySelector('#chromeSurface');
+    const titleBar = surface.querySelector(':scope > div');
+    const nav = surface.querySelector('nav');
+    Object.assign(titleBar.style, { top: '0', left: '0', width: '560px', height: '32px', background: '#7d2544', color: 'white' });
+    Object.assign(nav.style, { bottom: '0', left: '0', width: '560px', height: '32px', background: '#176888', display: 'flex', alignItems: 'center', gap: '12px' });
+    const canvas = surface.querySelector('canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#f6f0d9'; ctx.fillRect(0, 0, 560, 360);
+    ctx.fillStyle = '#335b87'; ctx.fillRect(80, 72, 170, 190);
+    ctx.fillStyle = '#c9623b'; ctx.fillRect(310, 82, 170, 180);
+    ctx.fillStyle = '#00aa77'; ctx.fillRect(40, 36, 24, 8);
+    ctx.fillStyle = '#bb33cc'; ctx.fillRect(470, 316, 24, 8);
+    window.anonymousCropTurns = 0;
+    document.querySelector('#next').addEventListener('click', () => { window.anonymousCropTurns++; });
+    const origin = surface.getBoundingClientRect();
+    const point = element => {
+      const box = element.getBoundingClientRect();
+      return [box.left - origin.left + 5, box.top - origin.top + 5];
+    };
+    const next = document.querySelector('#next');
+    const box = next.getBoundingClientRect();
+    return { next: point(next), previous: point(nav.querySelector('button')),
+      nextBox: { left: box.left - origin.left, top: box.top - origin.top, right: box.right - origin.left, bottom: box.bottom - origin.top } };
+  });
+  // Use the existing CDP screenshot helper for this fixture-only comparison;
+  // Playwright's locator screenshot can reset the reader's device metrics.
+  const visibleFixture = PNG.sync.read(await r.app.reader.screenshotVisibleClip(await page.locator('#chromeSurface').boundingBox()));
+  await ui.locator('#preset').selectOption('kindle-reader-chrome');
+  await wait(r.app, s => s.presets.selected === 'kindle-reader-chrome' && !s.busy);
+  await ui.locator('#quickPreview').click();
+  const inspection = await wait(r.app, s => s.displayInspection && s.displayInspection.status !== 'checking' && !s.busy);
+  assert.equal(inspection.displayInspection.status, 'passed', JSON.stringify(inspection.displayInspection));
+  await ui.locator('#previewImage').waitFor({ state: 'visible' });
+  assert.equal((await r.app.snapshot()).job.manifest.images.length, 0, 'preview alone does not save');
+  assert.equal((await r.app.snapshot()).previewApproved, false);
+  await ui.locator('#maxCaptures').fill('1');
+  await ui.locator('#previewConfirmed').check();
+  await ui.locator('#approve').click();
+  const approved = await wait(r.app, s => s.previewApproved && !s.busy);
+  assert.equal(approved.approvedMaxCaptures, 1);
+  assert.equal(approved.job.manifest.images.length, 0, 'approval is not start');
+  await ui.locator('#start').click();
+  const stopped = await wait(r.app, s => s.state === 'Review' && !s.busy);
+  assert.equal(stopped.reason, 'capture_limit_reached');
+  assert.equal(stopped.job.manifest.images.length, 1);
+  assert.equal(stopped.job.manifest.checkpoint.dispatch, 'not_sent');
+  assert.equal(await page.locator('#position').inputValue(), '7');
+  assert.equal(await page.evaluate(() => window.anonymousCropTurns), 0);
+  const original = await r.app.image(1, true);
+  const originalHash = hash(original);
+  const source = PNG.sync.read(original);
+  assert.deepEqual([source.width, source.height], [1120, 720]);
+  assert.deepEqual([visibleFixture.width, visibleFixture.height], [source.width, source.height]);
+  const pixel = (image, x, y) => [...image.data.subarray((y * image.width + x) * 4, (y * image.width + x) * 4 + 4)];
+  const atCss = (image, [x, y]) => pixel(image, Math.floor(x * 2), Math.floor(y * 2));
+  assert.deepEqual(pixel(source, 1000, 20), [125, 37, 68, 255], 'upper toolbar is present in the original');
+  assert.deepEqual(pixel(source, 1000, 690), [23, 104, 136, 255], 'lower toolbar is present in the original');
+  assert.notDeepEqual(atCss(visibleFixture, controls.next), atCss(source, controls.next), 'only the selected next control is hidden during capture');
+  assert.deepEqual(atCss(source, controls.next), [23, 104, 136, 255]);
+  assert.deepEqual(atCss(visibleFixture, controls.previous), atCss(source, controls.previous), 'the other navigation control remains visible');
+  const bounds = { left: Math.max(0, Math.floor((controls.nextBox.left - 2) * 2)), top: Math.max(0, Math.floor((controls.nextBox.top - 2) * 2)),
+    right: Math.min(source.width, Math.ceil((controls.nextBox.right + 2) * 2)), bottom: Math.min(source.height, Math.ceil((controls.nextBox.bottom + 2) * 2)) };
+  for (let y = 0; y < source.height; y++) {
+    const start = y * source.width * 4, end = start + source.width * 4;
+    if (y < bounds.top || y >= bounds.bottom) {
+      assert.deepEqual(source.data.subarray(start, end), visibleFixture.data.subarray(start, end), 'pixels outside next must remain visible');
+    } else {
+      for (const [a, b] of [[start, start + bounds.left * 4], [start + bounds.right * 4, end]]) {
+        assert.deepEqual(source.data.subarray(a, b), visibleFixture.data.subarray(a, b), 'only the selected next area may change');
+      }
+    }
+  }
+  assert.equal(await page.locator('#next').isVisible(), true, 'selected control is restored after capture');
+
+  await ui.locator('[data-stage-target="review"]').first().click();
+  await ui.locator('#images article[data-capture-id="1"] button').first().click();
+  await ui.locator('#inspectImage').waitFor({ state: 'visible' });
+  const inspectPixels = points => ui.locator('#inspectImage').evaluate((image, points) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+    const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+    return points.map(([x, y]) => [...ctx.getImageData(x, y, 1, 1).data]);
+  }, points);
+  assert.equal(await ui.locator('#inspectCaption').textContent(), '原本');
+  assert.deepEqual(await inspectPixels([[1000, 20], [1000, 690]]), [[125, 37, 68, 255], [23, 104, 136, 255]], 'public original inspection shows both UI bands');
+  const crop = { x: 0, y: 64, width: 1120, height: 592 };
+  for (const [id, value] of Object.entries({ cropX: crop.x, cropY: crop.y, cropWidth: crop.width, cropHeight: crop.height })) {
+    await ui.locator(`#${id}`).fill(String(value));
+  }
+  await ui.locator('#crop').click();
+  const edited = await wait(r.app, s => s.job.manifest.images[0].crop?.height === crop.height && !s.busy);
+  const storedCrop = edited.job.manifest.images[0].crop;
+  assert.deepEqual({ x: storedCrop.x, y: storedCrop.y, width: storedCrop.width, height: storedCrop.height }, crop);
+  assert.equal(hash(await r.app.image(1, true)), originalHash);
+  await ui.waitForFunction(() => {
+    const image = document.querySelector('#images article[data-capture-id="1"] img');
+    const inspected = document.querySelector('#inspectImage');
+    return image?.naturalWidth === 1120 && image?.naturalHeight === 592
+      && inspected.naturalWidth === 1120 && inspected.naturalHeight === 592
+      && document.querySelector('#inspectCaption').textContent === '適用後のクロップ結果';
+  });
+  assert.deepEqual(await inspectPixels([[90, 10], [950, 574]]), [[0, 170, 119, 255], [187, 51, 204, 255]], 'public edited inspection shows both body marks');
+  const reviewScreenshot = process.env.KTZ_CHROME_CROP_EVIDENCE === '1'
+    ? await ui.locator('section[data-stage="review"]').screenshot() : null;
+  await ui.locator('[data-stage-target="export"]').first().click();
+  const archives = [];
+  let exportedPng;
+  for (const [index, format] of ['zip', 'cbz'].entries()) {
+    const destination = path.join(directory, `anonymous-crop.${format}`);
+    await ui.locator('#format').selectOption(format);
+    await ui.locator('#destination').fill(destination);
+    await ui.locator('#export').click();
+    await wait(r.app, s => s.job.manifest.exports.length === index + 1 && !s.busy);
+    const archive = await readFile(destination);
+    const entries = storedPngEntries(archive);
+    assert.deepEqual(entries.map(entry => entry.name), ['000001.png']);
+    const output = PNG.sync.read(entries[0].bytes);
+    assert.deepEqual([output.width, output.height], [crop.width, crop.height]);
+    // Every output pixel must come from the requested rectangle, not just the
+    // two markers; this also rules out retaining either coloured UI band.
+    for (let y = 0; y < crop.height; y++) {
+      const start = ((y + crop.y) * source.width + crop.x) * 4;
+      assert.deepEqual(output.data.subarray(y * crop.width * 4, (y + 1) * crop.width * 4), source.data.subarray(start, start + crop.width * 4));
+    }
+    assert.deepEqual(pixel(output, 90, 10), [0, 170, 119, 255], 'upper body boundary mark survives');
+    assert.deepEqual(pixel(output, 950, 574), [187, 51, 204, 255], 'lower body boundary mark survives');
+    if (exportedPng) assert.deepEqual(entries[0].bytes, exportedPng);
+    exportedPng = entries[0].bytes;
+    archives.push({ destination, archive });
+  }
+  const occupied = path.join(directory, 'already-present.zip');
+  const sentinel = Buffer.from('anonymous existing output: do not overwrite');
+  await writeFile(occupied, sentinel, { flag: 'wx' });
+  await ui.locator('#format').selectOption('zip');
+  await ui.locator('#destination').fill(occupied);
+  const [failure] = await Promise.all([
+    ui.waitForResponse(response => response.url().endsWith('/api/command') && response.request().postDataJSON().action === 'export'),
+    ui.locator('#export').click(),
+  ]);
+  assert.equal(failure.status(), 400);
+  assert.equal((await failure.json()).code, 'output_exists');
+  assert.deepEqual(await readFile(occupied), sentinel);
+  assert.equal((await r.app.snapshot()).job.manifest.exports.length, 2);
+  for (const { destination, archive } of archives) assert.deepEqual(await readFile(destination), archive);
+  assert.equal(hash(await r.app.image(1, true)), originalHash);
+  assert.equal(hash(await readFile(path.join(stopped.job.job_path, 'originals/000001.png'))), originalHash);
+
+  if (reviewScreenshot) {
+    const root = path.resolve('artifacts/image-review-evidence/chrome-crop-98eefa8d');
+    await mkdir(root, { recursive: true });
+    const evidence = await mkdtemp(path.join(root, 'anonymous-'));
+    await writeFile(path.join(evidence, 'original.png'), original, { flag: 'wx' });
+    await writeFile(path.join(evidence, 'edited.png'), exportedPng, { flag: 'wx' });
+    await writeFile(path.join(evidence, 'review-ui.png'), reviewScreenshot, { flag: 'wx' });
+    await writeFile(path.join(evidence, 'result.json'), JSON.stringify({ fixture: 'anonymous', stop: stopped.reason, captures: 1, turns: 0,
+      originalSha256: originalHash, originalSize: [source.width, source.height], crop, editedSha256: hash(exportedPng),
+      checks: ['selected-next-only', 'both-ui-bands-removed', 'both-body-marks-retained', 'zip-cbz-pixels', 'original-and-existing-output-unchanged'] }, null, 2) + '\n', { flag: 'wx' });
+    console.log(`匿名画像の証拠: ${evidence}`);
+  }
+});
+
+test('動的Kindle試料の公開復帰: 送り後hiddenの進行証拠と必須拒否を分離する', { timeout: 90_000 }, async t => {
+  for (const mode of ['progress', 'unknown-progress', 'changed-next', 'wrong-direction', 'target-change', 'auth', 'overlay', 'owner-unknown']) await t.test(mode, async t => {
+    await mkdir('artifacts/mvp-tests', { recursive: true });
+    const directory = await mkdtemp(path.resolve('artifacts/mvp-tests/post-turn-observation-'));
+    const r = await startApplication({ dataDir: path.join(directory, 'data'), sampleFixture: 'kindle-chrome-dynamic' });
+    let verified = false;
+    t.after(async () => { await r.close(); if (verified) await rm(directory, { recursive: true }); });
+    await r.app.command('create'); await r.app.command('openBrowser', { mode: 'sample' });
+    const reader = r.app.reader;
+    await r.app.command('selectReaderTab', { id: reader.tabs()[0].id });
+    const page = reader.page, budget = createPortableLimitedCaptureBudget();
+    // Use the existing real single-run accounting on this anonymous Reader.
+    // The real owned Portable integration is exercised separately below.
+    reader.ownedSessionGuard = { singleRunBudget: budget, preparePreview() { budget.beginPreview(); },
+      validateConfig() {}, validateTransition() {}, async dispose() {},
+      async assertIdentity() { assert.equal(reader.page, page); await reader.assertReaderDocument(page); },
+      async observe() { await this.assertIdentity(); } };
+    await r.app.command('preview', { config: kindleChromeConfig });
+    const preview = Buffer.from(r.app.previewImage);
+    let sends = 0, screenshots = 0;
+    const click = reader.page.mouse.click.bind(reader.page.mouse);
+    reader.page.mouse.click = async (...args) => {
+      sends++;
+      const value = await click(...args);
+      if (mode === 'owner-unknown') reader.readGuard = async () => { throw Object.assign(new Error('owned state unavailable'), { code: 'window_not_available' }); };
+      return value;
+    };
+    const capture = reader.screenshotVisibleClip.bind(reader);
+    reader.screenshotVisibleClip = async (...args) => { screenshots++; return capture(...args); };
+    await reader.page.evaluate(mode => {
+      const button = document.querySelector('#next'), position = document.querySelector('#position');
+      const previous = position.value;
+      button.addEventListener('click', () => {
+        // Keep the actual same node hidden even after the fixture restores its
+        // toolbar. Success cannot be an accidental wait for the old timer.
+        button.style.visibility = 'hidden';
+        if (mode === 'unknown-progress') position.value = previous; // paint really changed, range did not.
+        if (mode === 'changed-next') button.replaceWith(button.cloneNode(true));
+        if (mode === 'wrong-direction') button.setAttribute('aria-label', '次 / previous');
+        if (mode === 'target-change') document.querySelector('#readerChromeTitle').textContent = '別の匿名試料';
+        if (mode === 'auth') {
+          const input = document.createElement('input'); input.type = 'password'; document.body.append(input);
+        }
+        if (mode === 'overlay') {
+          const modal = document.createElement('div'); modal.setAttribute('aria-modal', 'true');
+          modal.style.cssText = 'position:fixed;inset:0;z-index:99999;background:white'; document.body.append(modal);
+        }
+      }, { once: true });
+    }, mode);
+    await r.app.command('approve', { confirmed: true, maxCaptures: 2 });
+    assert.equal((await r.app.snapshot()).job.manifest.images.length, 0, '承認は取得ではない');
+    await r.app.command('start', { confirmed: true });
+    const stopped = await wait(r.app, s => !s.busy && ['Review', 'NeedsAttention'].includes(s.state));
+    assert.equal(sends, 1);
+    assert.deepEqual(await r.app.image(1, true), preview, '最初の原本は既存previewと一致');
+    if (mode === 'progress') {
+      assert.equal(stopped.state, 'Review'); assert.equal(stopped.reason, 'capture_limit_reached');
+      assert.equal(stopped.job.manifest.images.length, 2); assert.equal(stopped.job.manifest.checkpoint.dispatch, 'not_sent');
+      assert.deepEqual(budget.snapshot(), { phase: 'finished', screenshots: 2, sends: 1, committed: 2, approved: 2 });
+      assert.equal(screenshots, 1, '第二原本の1撮影だけ。進行確認のための追加撮影なし');
+      assert.equal(await reader.page.locator('#next').isVisible(), false);
+      assert.equal(await reader.page.locator('#position').inputValue(), '8');
+      const first = PNG.sync.read(await r.app.image(1, true)), second = PNG.sync.read(await r.app.image(2, true));
+      assert.deepEqual([first.width, first.height, second.width, second.height], [1120, 720, 1120, 720]);
+      const pixel = (image, x, y) => [...image.data.subarray((y * image.width + x) * 4, (y * image.width + x) * 4 + 3)];
+      assert.deepEqual(pixel(first, 190, 90), [79, 128, 98]);
+      assert.notDeepEqual(pixel(second, 190, 90), pixel(first, 190, 90), '位置7の既存描画ではなく位置8の描画');
+      assert.deepEqual(pixel(second, 238, 90), [79, 128, 98]);
+      await assert.rejects(reader.advance(() => false), { code: 'reader_ui_unknown' }, '次の操作前には可視性が必須');
+    } else {
+      assert.equal(stopped.state, 'NeedsAttention'); assert.equal(stopped.job.manifest.images.length, 1);
+      assert.equal(budget.snapshot().phase, 'failed');
+      assert.equal(screenshots, 0, '進行・対象・所有等が不明なら第二原本は撮影しない');
+      assert.equal(stopped.job.manifest.checkpoint.dispatch, 'sent');
+      if (mode === 'unknown-progress') assert.deepEqual(stopped.lastFailure.detail, { field: 'next', cause: 'hidden' });
+      if (mode === 'changed-next') assert.deepEqual(stopped.lastFailure.detail, { field: 'next', cause: 'hidden' });
+      if (mode === 'target-change') assert.equal(stopped.lastFailure.code, 'target_changed');
+      if (mode === 'wrong-direction') assert.equal(stopped.lastFailure.code, 'reader_ui_unknown');
+      if (mode === 'auth' || mode === 'overlay') assert.equal(stopped.lastFailure.code, 'auth_or_overlay_detected');
+      if (mode === 'owner-unknown') assert.equal(stopped.lastFailure.code, 'capture_or_advance_failed');
+      await assert.rejects(reader.advance(() => false), { code: 'advance_uncertain' }, 'sent状態から再送しない');
+    }
+    assert.equal(sends, 1, '観測・失敗後に別ノードclickや再clickを増やさない');
+    verified = true;
+  });
+});
+
+test('動的Kindle試料の公開復帰: 進行証拠不足のhidden停止1枚→点検/ZIP→再承認/明示開始→同app次冊', async t => {
   await mkdir('artifacts/mvp-tests', { recursive: true });
   const directory = await mkdtemp(path.resolve('artifacts/mvp-tests/dynamic-resume-public-'));
   const dataDir = path.join(directory, 'data');
@@ -852,6 +1132,13 @@ test('動的Kindle試料の公開復帰: preset→hidden停止1枚→点検/ZIP�
   const selectPresetPreview = async () => {
     await ui.locator('#preset').selectOption('kindle-reader-chrome');
     await wait(r.app, snapshot => snapshot.presets.selected === 'kindle-reader-chrome' && !snapshot.busy);
+    // Normal auto-hide with intact range evidence is now a separate positive
+    // case above. This established recovery caller still needs a real failure:
+    // change its range bounds on the first real turn, so value 8 alone cannot
+    // prove progress under the approved range contract.
+    await r.app.reader.page.locator('#next').evaluate(button => button.addEventListener('click', () => {
+      document.querySelector('#position').max = '13';
+    }, { once: true }));
     await next();
     await ui.locator('#previewImage').waitFor({ state: 'visible' });
     assert.equal((await r.app.snapshot()).previewApproved, false);
@@ -859,7 +1146,7 @@ test('動的Kindle試料の公開復帰: preset→hidden停止1枚→点検/ZIP�
   };
 
   await ui.locator('#create').click();
-  const sampleDetails = ui.locator('[data-stage="browser"] details');
+  const sampleDetails = ui.locator('#sampleFixture').locator('xpath=ancestor::details[1]');
   if (!await sampleDetails.evaluate(element => element.open)) await sampleDetails.locator('summary').click();
   await ui.locator('#keep').check(); await ui.locator('#session').selectOption('new');
   await ui.locator('#sampleFixture').selectOption('kindle-chrome-dynamic');
@@ -883,6 +1170,7 @@ test('動的Kindle試料の公開復帰: preset→hidden停止1枚→点検/ZIP�
     committedImages: 1, advanceDispatch: 'sent',
   });
   assert.equal(await r.app.reader.page.locator('#position').inputValue(), '8', 'the real sample reports the advanced position');
+  await r.app.reader.page.locator('#position').evaluate(element => { element.max = '12'; });
   await ui.waitForFunction(() => document.querySelector('#message').textContent.includes('確定1枚')
     && document.querySelector('#message').textContent.includes('送り後の位置・表示確認'));
   assert.doesNotMatch(await ui.locator('#message').textContent(), /取得は始めていません/);
@@ -947,7 +1235,7 @@ test('動的Kindle試料の公開復帰: preset→hidden停止1枚→点検/ZIP�
   assert.equal((await stat(profilePath)).isDirectory(), true, 'the explicitly saved profile survives book close');
   await next();
   const second = await wait(r.app, snapshot => Boolean(snapshot.job) && snapshot.job.job_path !== stopped.job.job_path && !snapshot.busy);
-  const browserDetails = ui.locator('[data-stage="browser"] details');
+  const browserDetails = ui.locator('#sampleFixture').locator('xpath=ancestor::details[1]');
   if (!await browserDetails.evaluate(element => element.open)) await browserDetails.locator('summary').click();
   await ui.locator('#keep').check(); await ui.locator('#session').selectOption(profileId);
   await ui.locator('#openSample').click();
@@ -1085,7 +1373,8 @@ test('3ボタン公開導線: 同一app・同一profileでAを保存後にBを�
   const ui = control.page;
   await ui.setViewportSize({ width: 390, height: 700 });
   await ui.waitForFunction(() => !document.querySelector('#decisionButton').disabled);
-  assert.deepEqual(await ui.locator('.workflow-actions button').allTextContents(), ['決定・次へ', 'キャンセル・前へ', '終了・最初から']);
+  assert.deepEqual(await ui.locator('.workflow-actions button:visible').allTextContents(), ['決定・次へ', 'キャンセル・前へ', '終了・最初から']);
+  assert.equal(await ui.locator('#newLimitedTrialButton').isHidden(), true, '通常作業には限定試行用の操作を表示しない');
   const assertBarVisible = async () => {
     for (const [width, height] of [[390, 700], [1280, 650]]) {
       await ui.setViewportSize({ width, height });
@@ -1109,8 +1398,8 @@ test('3ボタン公開導線: 同一app・同一profileでAを保存後にBを�
     await ui.waitForFunction(() => document.querySelector('#message').textContent !== '処理中…');
   };
   const chooseSampleAndPreset = async expectedProfile => {
-    const details = ui.locator('[data-stage="browser"] details');
-    if (!await details.evaluate(element => element.open)) await details.locator('summary').click();
+    const details = ui.locator('#openSample').locator('xpath=ancestor::details[1]');
+    if (!await details.evaluate(element => element.open)) await details.locator(':scope > summary').click();
     const session = expectedProfile ?? 'new';
     await ui.waitForFunction(id => [...document.querySelector('#session').options].some(option => option.value === id), session);
     await ui.locator('#keep').check();
@@ -1372,8 +1661,8 @@ async function closeRepairSaveContext(ui, app) {
   if ((await app.snapshot()).browserOpen) {
     const destination = await ui.locator('#destination').inputValue();
     await ui.locator('[data-stage-target="browser"]').first().click();
-    const browserDetails = ui.locator('[data-stage="browser"] details');
-    if (!await browserDetails.evaluate(element => element.open)) await browserDetails.locator('summary').click();
+    const browserDetails = ui.locator('#closeBrowser').locator('xpath=ancestor::details[1]');
+    if (!await browserDetails.evaluate(element => element.open)) await browserDetails.locator(':scope > summary').click();
     await ui.locator('#closeBrowser').click(); await wait(app, s => !s.browserOpen && !s.busy);
     assert.equal(await ui.locator('#destination').inputValue(), destination, '同じジョブのブラウザ終了では保存先編集を保持する');
   }

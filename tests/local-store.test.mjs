@@ -209,6 +209,44 @@ test('Rust local-store IPC: create, exclusive PNG commit, resume, review, crop a
   assert.equal(reopened.manifest.exports.length, 1);
   assert.equal(expectOk(reopen[1]).snapshot.issues.length, 0);
   expectOk(reopen[2]);
+
+  // The public IPC must recognize a registered job-root export after close and
+  // reopen, even when subsequent review changes the selection and crops.
+  if (process.env.KTZ_CONTROLLER_PATH) assert.equal(guardExecutable, path.resolve(process.env.KTZ_CONTROLLER_PATH));
+  const localOutput = path.join(created.job_path, 'registered.zip');
+  const initialLocal = run([
+    request(1, 'open_job', { path: created.job_path }),
+    request(2, 'export', { destination: localOutput, format: 'zip' }),
+    request(3, 'job_info'), request(4, 'close_job'),
+  ]);
+  expectOk(initialLocal[0]); expectOk(initialLocal[1]);
+  assert.deepEqual(expectOk(initialLocal[2]).snapshot.orphan_files, []);
+  expectOk(initialLocal[3]);
+  const savedBytes = await readFile(localOutput);
+  const newOutput = path.join(created.job_path, 'edited.cbz');
+  const edited = run([
+    request(1, 'open_job', { path: created.job_path }),
+    request(2, 'crop_image', { capture_id: 3, x: 0, y: 0, width: 2, height: 2 }),
+    request(3, 'set_review_order', { capture_ids: [1, 3] }),
+    request(4, 'export', { destination: newOutput, format: 'cbz' }),
+    request(5, 'job_info'), request(6, 'close_job'),
+  ]);
+  assert.deepEqual(expectOk(edited[0]).snapshot.orphan_files, []);
+  expectOk(edited[1]); expectOk(edited[2]); expectOk(edited[3]);
+  const afterEdit = expectOk(edited[4]).snapshot;
+  assert.deepEqual(afterEdit.orphan_files, []); assert.deepEqual(afterEdit.issues, []);
+  assert.deepEqual(afterEdit.manifest.selected_capture_ids, [1, 3]);
+  expectOk(edited[5]);
+  const editedEntries = parseStoredZip(await readFile(newOutput));
+  assert.deepEqual(editedEntries.map(entry => entry.name), ['000001.png', '000002.png']);
+  for (const [index, captureId] of [1, 3].entries()) {
+    const image = afterEdit.manifest.images.find(item => item.capture_id === captureId);
+    assert.deepEqual(editedEntries[index].data, await readFile(path.join(created.job_path, image.crop.path)));
+  }
+  assert.deepEqual(await readFile(localOutput), savedBytes);
+  assert.deepEqual(await readFile(output), archive);
+  assert.deepEqual(await readFile(path.join(created.job_path, 'originals/000001.png')), color);
+  assert.deepEqual(await readFile(path.join(created.job_path, 'originals/000003.png')), white);
 });
 
 test('Rust local-store IPC: split spread preserves deliberate black crops and remains editable after a rejected narrow crop', async t => {

@@ -2,15 +2,32 @@
 
 ## What is automated
 
-- `ci.yml` tests the published source on Windows for pushes to `main` and pull requests. It does not publish executable assets.
+- `ci.yml` tests the published source on Windows 2025 and Ubuntu 24.04 for pushes to `main` and pull requests. It does not publish executable assets.
 - `release.yml` is **manual only** and only runs from this repository's `main` branch. It requires an existing version tag pointing to the exact workflow commit. It does not create a tag or silently build a different revision.
-- The build job has read-only repository permissions. It installs pinned dependencies, tests Rust and the public source UI, builds the portable package, and runs the packaged public selection/export regression with self-authored fixtures.
+- Both build jobs have read-only repository permissions. They install pinned dependencies, test Rust and the public source UI, build the portable packages, and run packaged capture/export regressions with self-authored fixtures. Windows builds run on the Windows runner; Linux builds run on the Ubuntu runner.
 - A separate job verifies checksums, creates GitHub artifact attestations, and prepares a **draft** release. Only that job has release-writing and attestation permissions. Third-party actions are pinned to commit SHAs.
 - The archive contains the executable, project license and README, build metadata, and collected third-party notices. Collection is not a legal determination that every redistribution obligation has been met.
 
 There is no claim of bit-for-bit reproducible builds, independent security review, or legal clearance. The successful hosted release run below establishes the recorded fixture and package checks. The user's later confirmation of clean-Windows operation and complete real-book capture is recorded separately, not attributed to the hosted tests.
 
 ## Current public release
+
+### v0.2.0 release preparation
+
+The candidate adds Ubuntu x64 Portable alongside Windows x64. Node is pinned to
+22.22.1 (the new source tests use its module hooks); Rust remains 1.99.1 and
+Playwright remains 1.64.1. Both hosted source jobs and the tag-free Windows/Linux
+package preflight must pass for the candidate before merge/tag/publication.
+The manual release workflow then rebuilds both packages from the same tag and
+creates a single draft with archive checksums and provenance.
+
+Linux package verification extracts the actual tarball, verifies its receipt and
+metadata, and runs the bundled anonymous reader through capture, crop and ZIP.
+It does not test Snap/Wayland authentication. Native desktop fixtures require the
+prepared development installation and explicit `KTZ_DESKTOP_TESTS=1`; hosted CI
+runs their synthetic ownership/permission checks plus `npm run test:linux`.
+See [Ubuntu requirements](ubuntu-portable.ja.md). Publication status and exact
+run/asset identifiers are recorded after the hosted release completes.
 
 [v0.1.6 for Windows x64](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.6) was published on **2026-10-29** from `50bde1f1561eb40b19022097b6ca5f61fc3cda59`, after Draft verification, exact-source CI **40847394795** and tagged release **40857160980**. It is a normal Release + **Latest**, titled **v0.1.6**. Public anonymous downloads matched the verified Draft; ZIP/EXE provenance, allowlisted contents and notices passed. The actual TOP-right Releases pane was checked. This adds explicit automatic-margin comparison/application and language-independent Japan/US/UK selection; other stores remain future plans. [The v0.1.6 record](validation.md#v016-public-release--2026-10-29) separates the user's unspecified local confirmation, saved local evidence, hosted fixture checks and byte-specific public verification. No all-region/all-book/clean-Windows/legal/independent-security success is inferred. The hosted EXE was deployed to `_testenv` only after backing up the retained local candidate, without touching user data or forcibly stopping an application.
 
@@ -44,11 +61,11 @@ Those paths describe this local historical evidence, not files a fresh clone sho
 ### 2. Commit the release source and version tag
 
 - Preserve author and committer `zufall-upon`. Commit the reviewed final source, required tests/helpers, and release documentation; keep unrelated local work out of staging.
-- The tag must match `package.json` (`v0.1.6` for `0.1.5`). Record the complete source commit. An existing tag or release is not overwritten or deleted to make a retry work. Earlier `v0.1.0`, `v0.1.1` and `v0.1.3` tags are retained after failed preparation; none has a published executable.
+- The tag must match `package.json` (`v0.2.0` for `0.2.0`). Record the complete source commit. An existing tag or release is not overwritten or deleted to make a retry work. Earlier `v0.1.0`, `v0.1.1` and `v0.1.3` tags are retained after failed preparation; none has a published executable.
 - Push the source first and require successful source CI for that exact commit before creating its annotated tag. Never call a failing or unrelated run green.
 
 ```powershell
-$tag = 'v0.1.6'
+$tag = 'v0.2.0'
 $source = (git rev-parse HEAD).Trim()
 git push origin HEAD:main
 gh run list --workflow ci.yml --commit $source --limit 1
@@ -64,7 +81,7 @@ For this bounded repair, push the candidate with `[skip ci]` only to avoid launc
 
 ### 3. Run the existing mandatory release workflow once
 
-In Actions, select **Draft Windows release**, choose `main`, and enter the existing tag. Or use an authenticated GitHub CLI:
+In Actions, select **Draft Windows and Ubuntu release**, choose `main`, and enter the existing tag. Or use an authenticated GitHub CLI:
 
 ```powershell
 gh workflow run release.yml --ref main -f "tag=$tag"
@@ -105,6 +122,12 @@ Review [security disclosures](security-and-trust.md), [legal questions](legal-no
 GitHub Actions artifacts are uploaded to GitHub and are not private storage, even when a release is a draft. The release workflow is not run as part of initial source publication.
 
 ## Verify a downloaded release
+
+For Ubuntu, download the `linux-x64.tar.gz` and `SHA256SUMS-linux.txt` from the
+same release, then run `sha256sum --check SHA256SUMS-linux.txt`. Verify provenance
+with `gh attestation verify <archive> --repo zufall-upon/KindleToZip
+--signer-workflow zufall-upon/KindleToZip/.github/workflows/release.yml`.
+Follow the included Ubuntu README for extraction, login and normal launch.
 
 Only use release assets from [zufall-upon/KindleToZip](https://github.com/zufall-upon/KindleToZip/releases). Download the ZIP and `SHA256SUMS.txt` from the same release.
 

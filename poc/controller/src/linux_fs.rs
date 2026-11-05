@@ -156,7 +156,7 @@ fn fault(_point: FaultPoint) -> io::Result<()> {
     Ok(())
 }
 fn sync(file: &File, point: FaultPoint) -> io::Result<()> { fault(point)?; file.sync_all() }
-fn same_inode(left: &File, right: &File) -> io::Result<bool> {
+pub(crate) fn same_inode(left: &File, right: &File) -> io::Result<bool> {
     let (a, b) = (left.metadata()?, right.metadata()?);
     Ok(a.dev() == b.dev() && a.ino() == b.ino())
 }

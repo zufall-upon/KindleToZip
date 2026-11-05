@@ -88,9 +88,9 @@ if (ambiguous) {
     position.value = String(page + 1);
     paint(page + 1);
 
-    // First post-commit change outlasts the reader's bounded visibility wait,
-    // producing a real, observable stop after one committed page. Later turns
-    // recover within that same bound so a separately confirmed resume can run.
+    // The first auto-hide outlasts the old next-visibility wait. The position
+    // and paint really advance, so post-turn observation must distinguish this
+    // from an uncertain send. Later controls recover within the old bound too.
     const hiddenFor = advances === 1 ? 1100 : 240;
     identity.style.visibility = 'hidden';
     position.style.visibility = 'hidden';

@@ -1,6 +1,6 @@
 {
   "name": "kindle-to-zip-g02-poc",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "description": "Capture displayed Kindle web reader pages, review and crop images, and export ordered PNG archives on Windows. No DRM bypass.",
   "author": "zufall-upon",
   "license": "GPL-3.0-only",
@@ -17,6 +17,7 @@
     "test:resources": "node --test --test-concurrency=1 --test-name-pattern=\"点検画像待機分離|ブラウザ終了だけの失敗|3ボタン公開導線\" tests/portable-repair-flow.test.mjs",
     "test:ui": "node --test --test-concurrency=1 tests/mvp-workflow.test.mjs tests/portable-repair-flow.test.mjs",
     "test:store": "node --test --test-concurrency=1 tests/rust-ipc.test.mjs tests/local-store.test.mjs",
+    "test:linux": "node --test --test-concurrency=1 tests/linux-distribution.test.mjs tests/finite-archive-permission.test.mjs tests/linux-auth-reuse.test.mjs tests/reader-marker-autonomy.test.mjs tests/resume-inspection.test.mjs",
     "start": "node app/main.mjs",
     "test:headed": "node --test --test-concurrency=1 tests/headed-non-interference.test.mjs",
     "dist:build": "pwsh -NoProfile -File scripts/build-distribution.ps1",

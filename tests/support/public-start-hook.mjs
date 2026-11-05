@@ -29,8 +29,8 @@ if (process.platform === 'linux' && process.env.KTZ_PUBLIC_TEST_SOCKET
               void (async () => {
                 if (request.action === 'exercise') {
                   await page.locator('#decisionButton').click();
-                  await page.waitForFunction(() => document.querySelector('#state')?.textContent === '手動ログイン・1冊選択待ち');
-                  await page.locator('[data-stage="browser"] details > summary').click();
+                  await page.waitForFunction(() => document.querySelector('#state')?.textContent === '取得元選択待ち');
+                  await page.locator('[data-stage="browser"] > details > summary').click();
                   await page.locator('#openSample').click();
                   await page.waitForFunction(() => document.querySelector('#readerTab').options.length > 1);
                   if (request.screenshot) await page.screenshot({ path: request.screenshot, scale: 'css' });

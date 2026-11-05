@@ -30,7 +30,7 @@ Startup distinguishes known controller, private-storage, lock and control-window
 - Internet access for initial tool and dependency downloads.
 - The scripts install isolated **Rust 1.99.1** and use **Playwright 1.64.1 / Chromium revision 1248**, without replacing your normal browser profile or changing the global Rust PATH.
 
-Portable packaging, unlike source execution, requires **Node.js 22.14.0** exactly. See [developer build instructions](development.md).
+Portable packaging, unlike source execution, requires **Node.js 22.22.1** exactly. See [developer build instructions](development.md).
 
 ## Install and launch
 
