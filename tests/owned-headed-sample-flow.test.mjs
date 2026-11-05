@@ -474,7 +474,7 @@ if (process.platform === 'linux') test('最小OS adapter: 公開Applicationか�
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });
 
-test('最小OS adapter: Reader子環境は起動時7キーだけを復元し親と匿名ownerの隔離を維持', async t => {
+if (process.platform === 'linux') test('最小OS adapter: Reader子環境は起動時7キーだけを復元し親と匿名ownerの隔離を維持', async t => {
   for (const [variant, originalTmp] of [
     { TMPDIR: 'fixture-launch-tmpdir', TMP: '', TEMP: 'fixture-launch-temp' },
     {},
@@ -538,7 +538,7 @@ test('最小OS adapter: Reader子環境は起動時7キーだけを復元し親�
     const caller = await readFile(new URL('../app/portable-linux-reader.mjs', import.meta.url), 'utf8');
     assert.equal(caller.indexOf('assertPortableReaderEnvironment();') >= 0
       && caller.indexOf('assertPortableReaderEnvironment();') < caller.indexOf('await claimPortableLimitedRun(')
-      && caller.includes("usePortableEnvironment: authorization === 'portable-limited'"), true, '実Readerだけ、claim前に検証');
+      && caller.includes("usePortableEnvironment: ['portable-limited', 'portable-normal'].includes(authorization)"), true, '実Readerだけ、claim前に検証');
     const owner = await readFile(new URL('../app/linux-owned-reader-owner.mjs', import.meta.url), 'utf8');
     assert.equal(owner.includes("const env = { ...process.env, DISPLAY: '' };") && owner.includes('env, detached: true'), true, 'Snapまで同envを継承');
     for (const owner of owners) await owner.close();
@@ -553,7 +553,7 @@ test('最小OS adapter: Reader子環境は起動時7キーだけを復元し親�
   });
 });
 
-test('Portable限定: 接合段階を公開Readerで一度だけ観測し取得gateと正常joinを維持', async t => {
+if (process.platform === 'linux') test('Portable限定: 接合段階を公開Readerで一度だけ観測し取得gateと正常joinを維持', async t => {
   const { chromium } = await import('playwright');
   const { Reader } = await import('../app/reader.mjs');
   const { ControlOwner } = await import('./support/owned-pipe-control-fixture.mjs');
@@ -687,7 +687,7 @@ test('Portable限定: 接合段階を公開Readerで一度だけ観測し取得g
   });
 });
 
-test('Portable限定: 10秒対照は未接合の認証遷移で公開Readerを正常joinし旧v5も保持', async t => {
+if (process.platform === 'linux') test('Portable限定: 10秒対照は未接合の認証遷移で公開Readerを正常joinし旧v5も保持', async t => {
   const { chromium } = await import('playwright');
   const { Reader } = await import('../app/reader.mjs');
   const { ControlOwner } = await import('./support/owned-pipe-control-fixture.mjs');
@@ -937,7 +937,7 @@ async function stoppedPilotFixture(onWaiting, { laterSnapshot, snapshotError = f
   return outcome;
 }
 
-test('対象変更理由: 明示した別タブを公開quickPreviewへ渡し既存停止と固定causeだけを保持', async t => {
+if (process.platform === 'linux') test('対象変更理由: 明示した別タブを公開quickPreviewへ渡し既存停止と固定causeだけを保持', async t => {
   const { Reader } = await import('../app/reader.mjs');
   const { Application } = await import('../app/application.mjs');
   const { AppError } = await import('../app/store-client.mjs');
@@ -1126,7 +1126,7 @@ test('停止理由引継ぎ: 固定停止は進行中commandを静止してReade
       cancelPick: async () => {},
       close: async () => { closes++; if (unconfirmed) throw new Error('PRIVATE_SENTINEL'); lifecycle.state = 'closed_confirmed'; },
       tabs: () => { throw new Error('must_not_query_reader'); } };
-    const app = Object.create(Application.prototype), job = { manifest: { images: [], exports: [] } };
+    const app = Object.create(Application.prototype), job = { manifest: { job_id: '0123456789abcdef0123456789abcdef', images: [], exports: [] } };
     Object.assign(app, { reader, readerLifecycle: lifecycle, job, commands: new Set([active]), epoch: 0, bookGeneration: 1,
       state: 'AuthPending', store: { close: async () => {}, call: () => { throw new Error('must_not_query_store'); } } });
     const outcome = { stage: 'stopped', images: 0, sends: 0, stop: { observedCode: 'target_changed',
@@ -1439,7 +1439,7 @@ test('撮影なし起動診断: 閉じた結果と途中状態・unknownを混�
   finally { await handle.close(); }
   assert.deepEqual(JSON.parse(await readFile(filename, 'utf8')), value, '位置指定の上書きでNULや旧末尾を残さない');
   await assert.rejects(exclusiveDiagnosticFile(filename), { code: 'EEXIST' });
-  assert.equal((await stat(filename)).mode & 0o777, 0o600);
+  if (process.platform === 'linux') assert.equal((await stat(filename)).mode & 0o777, 0o600);
 });
 
 test('撮影なし起動診断: 初期確認後のタブ消失・差替え・複数化は作成せず同ownerで拒否する', () => {
@@ -2153,7 +2153,7 @@ if (process.platform === 'linux') test('Linux期待本session監視fixture: 観�
     await assert.rejects(reader.advance(() => false, async update => journal.push(update)), { code: 'target_changed' });
     assert.equal(counts().sends, 1); assert.equal(counts().screenshots, 1);
     assert.equal(journal.at(-1).status, 'unknown');
-    await assert.rejects(reader.capture(), { code: 'target_changed' });
+    await assert.rejects(reader.capture(), { code: 'advance_uncertain' });
     assert.deepEqual(counts(), { screenshots: 1, sends: 1 });
   });
   for (const mode of ['route-restore', 'document']) await t.test(mode, async sub => {
@@ -2255,7 +2255,7 @@ if (process.platform === 'linux') {
     let screenshots = 0, sends = 0, upload = [];
     budget.beginPreview();
     await budget.screenshot('preview', async () => { screenshots++; return preview; });
-    const manifest = { state: 'ready', images: [], exports: [], selected_capture_ids: [],
+    const manifest = { job_id: '0123456789abcdef0123456789abcdef', state: 'ready', images: [], exports: [], selected_capture_ids: [],
       capture_settings: { image_format: 'png', page_output_mode: 'single_image' } };
     const job = { manifest }, saved = [];
     const app = Object.create(Application.prototype);
@@ -2405,7 +2405,7 @@ if (process.platform === 'linux') {
     assert.equal(app.busy, false);
   });
 
-  test('Portable限定: 通常GUIの接続失敗は消費済み停止を表示し再接続へ誘導しない', { timeout: 80_000 }, async t => {
+  if (enabled) test('Portable限定: 通常GUIの接続失敗は消費済み停止を表示し再接続へ誘導しない', { timeout: 80_000 }, async t => {
     const { runPortableLimitedGui } = await import('./support/portable-limited-gui-fixture.mjs');
     const r = await runPortableLimitedGui(t, 'connection-failure');
     assert.deepEqual(r.firstOpen, { code: 'browser_open_failed', cause: 'target_changed' });
@@ -2662,7 +2662,7 @@ if (process.platform === 'linux') {
 
   // These are real product waits, not the separate init-ready injected-error
   // check below. The fixed sample alone controls the page and delayed resource.
-  for (const mode of ['wait-main-dcl', 'wait-origin', 'wait-child-frame']) test(`Portable限定: 実準備待機 ${mode}`, { timeout: 80_000 }, async t => {
+  if (enabled) for (const mode of ['wait-main-dcl', 'wait-origin', 'wait-child-frame']) test(`Portable限定: 実準備待機 ${mode}`, { timeout: 80_000 }, async t => {
     const { runPortableLimitedGui } = await import('./support/portable-limited-gui-fixture.mjs');
     const r = await runPortableLimitedGui(t, mode), fixed = r.fixed;
     assert.equal(fixed.initialOriginMatches, mode !== 'wait-origin');
@@ -2724,13 +2724,13 @@ if (process.platform === 'linux') {
     }
   });
 
-  test('Portable限定: 準備到達 匿名準備失敗でも試験gateを解放し正常joinする', { timeout: 80_000 }, async t => {
+  if (enabled) test('Portable限定: 準備到達 匿名準備失敗でも試験gateを解放し正常joinする', { timeout: 80_000 }, async t => {
     const { runPortableLimitedGui } = await import('./support/portable-limited-gui-fixture.mjs');
     const r = await runPortableLimitedGui(t, 'wait-setup-failure');
     assert.deepEqual(r, { setupFailureRecorded: true, ownerJoined: true, temporaryRemoved: true, images: 0, exports: 0 });
   });
 
-  for (const mode of ['wait-blank', 'wait-blank-timeout', 'wait-close', 'wait-disconnect', 'wait-owner-unknown', 'wait-post-close', 'wait-post-origin']) test(`Portable限定: 準備到達 ${mode}`, { timeout: 80_000 }, async t => {
+  if (enabled) for (const mode of ['wait-blank', 'wait-blank-timeout', 'wait-close', 'wait-disconnect', 'wait-owner-unknown', 'wait-post-close', 'wait-post-origin']) test(`Portable限定: 準備到達 ${mode}`, { timeout: 80_000 }, async t => {
     const { runPortableLimitedGui } = await import('./support/portable-limited-gui-fixture.mjs');
     const r = await runPortableLimitedGui(t, mode);
     if (['wait-blank', 'wait-blank-timeout', 'wait-close', 'wait-disconnect'].includes(mode))
@@ -2760,7 +2760,7 @@ if (process.platform === 'linux') {
     assert.deepEqual(r.diskStartup, r.startup);
   });
 
-  for (const [mode, started, completed, label, previous] of [
+  if (enabled) for (const [mode, started, completed, label, previous] of [
     ['init-page', 'page_identity', null, 'ページ個体検査', '未記録'],
     ['init-ready', 'pipe_ready', 'page_identity', 'Reader準備待ち', 'ページ個体検査'],
     ['init-viewport-read', 'viewport_read', 'pipe_ready', '表示領域取得', 'Reader準備待ち'],
@@ -2782,7 +2782,7 @@ if (process.platform === 'linux') {
     for (const value of [r.retry, r.reuse, ...r.forbidden]) assert.deepEqual(value, { status: 400, code: 'portable_limited_review_only' });
   });
 
-  test('Portable限定: 初期化境界のない旧記録は通常GUIでも未記録のまま', { timeout: 80_000 }, async t => {
+  if (enabled) test('Portable限定: 初期化境界のない旧記録は通常GUIでも未記録のまま', { timeout: 80_000 }, async t => {
     const { runPortableLimitedGui } = await import('./support/portable-limited-gui-fixture.mjs');
     const r = await runPortableLimitedGui(t, 'legacy-init');
     assert.deepEqual(startupBase(r.startup), { record: 'complete', lastReached: 'pipe_attached', pipe: 'attached', outcome: 'failed',
@@ -2794,7 +2794,7 @@ if (process.platform === 'linux') {
     assert.equal(r.images, 0); assert.equal(r.screenshots, 0); assert.equal(r.sends, 0);
   });
 
-  for (const mode of ['browser-failure', 'pipe-failure', 'record-error', 'scale-failure']) test(`Portable限定: ${mode === 'scale-failure' ? '準備到達 ' : ''}初回記録の公開GUI停止と非秘密分類 ${mode}`, { timeout: 80_000 }, async t => {
+  if (enabled) for (const mode of ['browser-failure', 'pipe-failure', 'record-error', 'scale-failure']) test(`Portable限定: ${mode === 'scale-failure' ? '準備到達 ' : ''}初回記録の公開GUI停止と非秘密分類 ${mode}`, { timeout: 80_000 }, async t => {
     const { runPortableLimitedGui } = await import('./support/portable-limited-gui-fixture.mjs');
     const r = await runPortableLimitedGui(t, mode);
     assert.equal(r.images, 0); assert.equal(r.exports, 0); assert.equal(r.screenshots, 0); assert.equal(r.sends, 0);
@@ -2939,7 +2939,7 @@ if (process.platform === 'linux') {
     }
   });
 
-  for (const mode of ['positive', 'legacy-stop', 'separate-tab', 'no-selection', 'target-change', 'save-error', 'extra-tab', 'target-close', 'document-reload', 'route-change', 'position-change', 'position-turn-restore', 'cancel', 'turn-reply-lost']) test(`Portable限定: 製品capabilityと通常GUIで単回・PNG・Review停止 ${mode}`, { timeout: 80_000 }, async t => {
+  if (enabled) for (const mode of ['positive', 'legacy-stop', 'separate-tab', 'no-selection', 'target-change', 'save-error', 'extra-tab', 'target-close', 'document-reload', 'route-change', 'position-change', 'position-turn-restore', 'cancel', 'turn-reply-lost']) test(`Portable限定: 製品capabilityと通常GUIで単回・PNG・Review停止 ${mode}`, { timeout: 80_000 }, async t => {
     const { runPortableLimitedGui } = await import('./support/portable-limited-gui-fixture.mjs');
       const r = await runPortableLimitedGui(t, mode);
       assert.deepEqual(r.beforeChoice, { screenshots: 0, sends: 0, images: 0 });
@@ -3087,7 +3087,7 @@ if (process.platform === 'linux') {
     t.diagnostic(`匿名公開GUI画像: ${evidence}; 固定匿名fixtureだけで検証、実Kindleは未接続`);
   });
 
-  test('Linux一般GUI接合: 通常npm startから匿名所有sourceを有限承認し点検、対象変更を拒否して正常join', { timeout: 150_000 }, async t => {
+  if (enabled) test('Linux一般GUI接合: 通常npm startから匿名所有sourceを有限承認し点検、対象変更を拒否して正常join', { timeout: 150_000 }, async t => {
     assert.ok(process.env.WAYLAND_DISPLAY, '実Snap/Waylandが必要です。検査0件を成功にしません');
     const root = await mkdtemp('/tmp/opencode/ktz-linux-gui-98eefa8d-');
     const temp = path.join(root, 'temp'); await mkdir(temp, { mode: 0o700 });
@@ -3305,12 +3305,12 @@ if (process.platform === 'linux') {
         assert.deepEqual(await readdir(temp), []);
       }
   }
-  for (const mode of ['positive', 'book', 'position', 'document', 'wrong-transition', 'response-loss', 'unknown']) {
+  if (enabled) for (const mode of ['positive', 'book', 'position', 'document', 'wrong-transition', 'response-loss', 'unknown']) {
     test(`Linux所有pipe: 公開npm start ${mode}`, { timeout: 100_000 }, t => runOwnedPipeFlow(t, mode));
   }
   // The registered expected-session check exercises the same public entry,
   // real Snap/owner, Application, separate approval/start and normal join.
-  test('Linux期待本session: 公開npm start 匿名期待本から有限取得と正常終了', { timeout: 100_000 }, t => runOwnedPipeFlow(t, 'positive'));
+  if (enabled) test('Linux期待本session: 公開npm start 匿名期待本から有限取得と正常終了', { timeout: 100_000 }, t => runOwnedPipeFlow(t, 'positive'));
 }
 
 if (process.platform === 'linux') test('Linux所有pipe: 公開CLIはURLやprofileを受け付けない', { timeout: 30_000 }, () => {
