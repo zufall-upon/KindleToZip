@@ -1332,7 +1332,7 @@ test('最小OS adapter pilot: 選択bundleだけ準備を許可し本人gateを�
     installed, ownRoot: installed,
     process: { platform: 'linux', argv: ['node', 'main', '--portable-limited-pilot'],
       env: { KTZ_PORTABLE_ROOT: installed, KTZ_USER_DATA_DIR: `${installed}/data/application` } },
-    path, refuse: code => { throw Object.assign(new Error(code), { pilotCode: code }); }, ...change,
+    path: path.posix, refuse: code => { throw Object.assign(new Error(code), { pilotCode: code }); }, ...change,
   });
   assert.doesNotThrow(() => validate());
   assert.throws(() => validate({ ownRoot: '/other-bundle' }), { pilotCode: 'invalid_invocation' });

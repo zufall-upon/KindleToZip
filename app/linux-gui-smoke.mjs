@@ -146,7 +146,7 @@ export async function runAnonymousGuiSmoke({ page, app }) {
   // Close the owned Reader through the ordinary visible auxiliary control.
   await stage('browser');
   const readerLifecycle = app.readerLifecycle;
-  await page.locator('[data-stage="browser"] details > summary').click(); await click('#closeBrowser');
+  await page.locator('[data-stage="browser"] > details > summary').click(); await click('#closeBrowser');
   await wait('reader normal close', state => !state.browserOpen && !state.busy, 25000);
   assert.equal(readerLifecycle.state, 'closed_confirmed');
   return { version: 1, kind: 'fixed-anonymous-packaged-gui', result: 'pass', run: path.relative(root, run),

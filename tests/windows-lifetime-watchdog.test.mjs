@@ -47,13 +47,14 @@ async function fixture(root, source, options = {}) {
 
 test('Windows全文collector: Wayland専用testは非対象環境でskipを登録しない', async t => {
   const root = await sandbox();
-  const env = { ...process.env }; delete env.WAYLAND_DISPLAY; delete env.NODE_TEST_CONTEXT;
+  const env = { ...process.env }; delete env.WAYLAND_DISPLAY; delete env.KTZ_DESKTOP_TESTS; delete env.NODE_TEST_CONTEXT;
   const { result } = await fixture(root, '', {
-    args: ['--test', '--test-concurrency=1', 'tests/owned-headed-sample-flow.test.mjs'], env,
+    args: ['--test', '--test-concurrency=1', '--test-name-pattern=^(?:Linux公開npm start: 専用有頭|有頭自作(?:認可|proxy):)', 'tests/owned-headed-sample-flow.test.mjs'], env,
     requireTap: true, full: true, outerMs: 10_000, warningMs: 5000, snapshotMs: 6000, idleMs: 8000,
   });
-  // This is the real Node test registration/TAP and public collector, with
-  // modeled ownership only. No Wayland browser or Windows CIM is exercised.
+  // Select the native Wayland cases and their portable authorization neighbor.
+  // The file also contains independent owner regressions run by the full suite.
+  // This uses real Node registration/TAP with modeled ownership only.
   if (result.childExit?.code === 0 && result.childExit.signal === null && result.forced.length === 0)
     t.after(() => rm(root, { recursive: true, force: true }));
   assert.equal(result.outcome, 'passed', result.collectionError);

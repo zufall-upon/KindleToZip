@@ -524,7 +524,7 @@ async function publicTwoBookFlow() {
   };
   const selectFixtureAndPreset = async profileId => {
     const ui = control.page;
-    const details = ui.locator('[data-stage="browser"] details');
+    const details = ui.locator('[data-stage="browser"] > details');
     if (!await details.evaluate(element => element.open)) await details.locator('summary').click();
     const session = profileId ?? 'new';
     await ui.waitForFunction(id => [...document.querySelector('#session').options].some(option => option.value === id), session);
