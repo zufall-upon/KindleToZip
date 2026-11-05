@@ -1731,9 +1731,10 @@ test('停止確定境界: 保存中は編集を拒否し完了後の採用順を
 });
 
 test('公開MVP画面: 試料プレビュー・明示開始・一時停止/復帰・点検順序・クロップ・ZIP/CBZ・中断データ再表示', async t => {
-  const r = await setup(t);
-  const control = await openControlWindow(r.url, { headless: true });
-  t.after(() => control.close());
+  let control, controlFailure;
+  const r = await setup(t, { controlFirst: { control: () => control, controlFailure: () => controlFailure } });
+  try { control = await openControlWindow(r.url, { headless: true }); }
+  catch (error) { controlFailure = { error }; throw error; }
   const page = control.page;
   const foreign = [];
   page.on('request', req => { if (new URL(req.url()).origin !== r.origin && !req.url().startsWith('blob:')) foreign.push(req.url()); });
