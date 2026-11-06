@@ -14,7 +14,7 @@ export const appFiles = [
   'linux-playwright-pipe.mjs', 'linux-reader-probe.mjs', 'main.mjs', 'owned-sample-identity.mjs',
   'owned-sample.mjs', 'owned-session.mjs', 'presets.mjs', 'private-path.mjs', 'reader.mjs', 'reader-chrome-overlay.mjs',
   'sample-reader-config.mjs', 'save-dialog.mjs', 'server.mjs', 'session-preference.mjs',
-  'startup-cleanup.mjs', 'startup-error.mjs', 'startup.mjs', 'store-client.mjs', 'visible-geometry.mjs',
+  'startup-cleanup.mjs', 'startup-error.mjs', 'startup.mjs', 'store-client.mjs', 'visible-candidate.mjs', 'visible-geometry.mjs',
   'stores/index.mjs', 'stores/kindle.mjs', 'ui/index.html', 'ui/i18n.mjs', 'ui/messages.mjs', 'ui/style.css', 'ui/ui.mjs',
 ].map(name => `app/${name}`);
 export const fixtureFiles = ['reader.html', 'reader.js', 'reader.css', 'reader-image-review.html', 'reader-image-review.js',
