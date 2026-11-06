@@ -1,5 +1,11 @@
 # Initial source validation
 
+## v0.2.3 release preparation — 2026-11-06
+
+The v0.2.2 tag remains immutable at `bd23bbadaa527aa3a767d0888daadecdec68273f`. Exact-source CI `42168244764` attempt 2 succeeded on Windows and Ubuntu after attempt 1 remained in-progress despite completed steps and eventually became cancelled. Release run `42177227567` attempt 1 passed Linux but failed Windows IPC browser startup (`browser_start_failed`, underlying cause not retained); its failed-job retry passed IPC but stopped producing UI-test output after the JPEG test and reached the 45-minute job timeout. No Draft or Windows release asset was produced. The cause of the browser startup failure and UI stall is not claimed as proven.
+
+v0.2.3 keeps the product correction unchanged and aligns the Windows release's full UI invocation with the existing source CI supervisor (`diagnose-windows-test-lifetime.mjs full`). It still runs the original full `npm test`, requires its successful TAP/lifecycle result, and fails on timeout or uncertain ownership; it does not relax tests or accept partial output. Required hosted CI, package gates and Draft verification apply to the new version before publication.
+
 ## v0.2.2 release preparation — 2026-11-06
 
 The release candidate contains the local preview/selection/responsive-next correction described below, plus the version bump to 0.2.2. The source-bound 57/57 result was formally reused after exact input-fingerprint comparison, and deployment/original-preservation checks passed. The version bump is not a claim that the previously tested local EXE already contains version 0.2.2: hosted source/package gates and Draft verification are still required for the new release bytes. The user reported one-book acquisition and ZIP success on the local correction and authorized normal Release + Latest publication. No new real-book acquisition is required for release preparation.

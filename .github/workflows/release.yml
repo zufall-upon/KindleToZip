@@ -57,7 +57,7 @@ jobs:
       - name: Rust and IPC tests
         run: ./scripts/test-rust.ps1
       - name: Public source UI regressions
-        run: npm test
+        run: node scripts/diagnose-windows-test-lifetime.mjs full
       - name: Deployment regressions
         run: npm run test:distribution
       - name: Build portable executable
