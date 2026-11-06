@@ -1,5 +1,38 @@
 # Initial source validation
 
+## v0.2.2 release preparation — 2026-11-06
+
+The release candidate contains the local preview/selection/responsive-next correction described below, plus the version bump to 0.2.2. The source-bound 57/57 result was formally reused after exact input-fingerprint comparison, and deployment/original-preservation checks passed. The version bump is not a claim that the previously tested local EXE already contains version 0.2.2: hosted source/package gates and Draft verification are still required for the new release bytes. The user reported one-book acquisition and ZIP success on the local correction and authorized normal Release + Latest publication. No new real-book acquisition is required for release preparation.
+
+## v0.2.1 Windows local repair candidate — 2026-11-06
+
+### Mid-run recovery correction (subsequent local candidate)
+
+- Final local evidence reuse: the host-archived native 57/57 success from 2026-11-06 04:11–04:17 UTC (352.416 seconds, exit 0) remains input-bound to the unchanged source/tests/dependencies. A read-only collector compares the original generated-input fingerprint with the current fingerprint; it does not fabricate a new suite run or edit the host ledger. Subsequent locked-profile registration failures are process-record failures, not product-test failures. Live data/profile/temp trees are excluded from the new candidate write scope.
+- The user subsequently reported completing acquisition of one book and ZIP output and explicitly requested release. This is a user-reported check of this local correction, distinct from the author's bounded two-display recovery and anonymous automated fixtures. It is not an all-region, all-book, clean-Windows, Linux desktop, legal or independent-security claim.
+
+- The reported stop retained 68 originals with the last confirmed dispatch at position 136; the public reader displayed 138. The old UI recorded a generic capture-stage failure, not the underlying exception, so its exact historical exception cannot be recovered or claimed as proven.
+- On that actual packaged reader, the next-page selector matched two nodes, only one visible. Automatic re-preview rejected this responsive structure. Automatic detection now shares the reader's single-visible-candidate rule; two visible candidates are still rejected. A retained locator is no longer visibility-filtered: the source-backed hide-between-check-and-read regression reproduced the old `locator.isEnabled: Timeout 1800ms exceeded` and passed with the correction. Previously bound hidden nodes are usable only through the existing identity, progress and pre-dispatch visibility checks; unknown progress, replacement, authentication and overlays still stop acquisition.
+- Packaged public UI, not just anonymous fixtures: recovered the existing job and saved authentication session, opened the same official reader URL, adjusted the public position control to 138, selected the dedicated tab, and observed automatic preview success. Manual selection reached 4/4 and automatically produced a valid preview. The last-original/current-position comparison displayed 136/138 with no re-send. After visually inspecting both previews, explicitly approving a two-display limit and separately starting, two new JPEG originals were committed (2200×1700, right-to-left split output); the job stopped in Review at position 140 with `dispatch: not_sent`. This is bounded recovery, not a whole-book or all-region claim.
+- EXE SHA-256 `5f0deccd82f4ee44aacf04423b0c98ba9f9dc48ec9afbc48690da36f13a85297`, local build 10.27 seconds with the same pinned toolchain. Both local targets were replaced only after the immediately preceding `ea19e3fc…` binary and metadata were backed up. Hash checks verified the embedded application source, both deployments/backups, all 68 previous originals and 26 unrelated job manifests. Private screenshots, manifests and authentication data are excluded from public artifacts.
+- Diagnostic limitation: application exit was observed after two local debugger sessions; causality is unconfirmed. That diagnostic method was stopped. Subsequent successful packaged verification used normal startup, public controls and window-targeted native input without debugger attachment, forced termination or safety bypasses.
+- Focused regression checks: 11 passed in 39.659 seconds. The first integrated run passed 56/57 in 351.203 seconds; its added test raced the public re-preview response and read the preceding ready state. Waiting for that command response fixed the test without weakening its assertions; its focused rerun passed in 5.611 seconds. The final `node --test --test-concurrency=1 tests/portable-repair-flow.test.mjs` run passed 57/57 in 380.736 seconds (exit 0). `git diff --check` also exited 0. The task host could not bind these observations (`mission-review-correction-validation-binding-unavailable:git diff --check`); formal acceptance, independent review and new-version publication are not claimed.
+
+### Initial local candidate (retained history)
+
+Host-registration follow-up: after the author-started control window was closed normally and the Portable parent exited naturally, the same Mission accepted the validation registration including the deployment collector. The new binding accepted `git diff --check`, but required a fresh integrated run rather than the earlier 57/57 observation. That run passed 56/57 in 355.728 seconds: the existing close-failure UI test read the temporary busy hint before the failed command's final poll/pending-action cleanup. The assertion now waits for the public stopped-state hint before checking the unchanged disabled-entry and warning expectations. Both close-failure tests then passed in 11.766 seconds. No application-source change, additional real-book capture or rebuild was needed for this test synchronization correction. Final host-bound results and publication remain separate from this history.
+
+これは未公開のローカル修正候補であり、既存のRelease、タグ、公開配布物は変更していない。`pull --ff-only` による `f6a149a` への更新後、既存の未コミット作業を保全して調査した。
+
+- 実Kindleの可視構造で、書名の親枠が操作文言も含むこと、描画面と操作面・ツールバーが兄弟要素であることを観測。汎用候補の列挙と任意の小要素のhit検査だけでは、書名の曖昧判定と手動読書領域の遮蔽停止が発生した。これらの判定部分は旧Windowsソースにも存在するため、Linux追加による単一の導入commitが原因とは断定しない。
+- 自動判定と読書領域の明示選択で、既存Kindleプリセットの一意なマーカー・共通の表示枠・方向の構造検査を再利用。未知の構造は従来の候補判定へ戻す。認証・表示・対象binding・承認・取得時の安全検査は維持する。
+- 明示プレビューで選択済みの画面密度を再確立し、密度反映を有限時間待つ。取得中の予期しない密度変更を許容する変更ではない。
+- ソース版の公開UIから実Kindleを選択し、自動プレビュー、手動4項目選択、手動プレビューを確認。プレビュー画像を直接確認し、未承認・取得0件も記録した。
+- `node --test --test-concurrency=1 tests/portable-repair-flow.test.mjs`: 最終56/56成功、344.304秒。初回は55/56成功、339.384秒。最新JSに旧ローカルRust controllerを組み合わせたZIP進捗テストの不一致を、最新controllerのoffline buildで修正し、該当テスト成功後に一式を再検証した。既存期待値は緩和していない。
+- 固定Node 22.22.1 / Playwright 1.64.1 / Chromium 1248 / Rust 1.99.1でローカル包装、19.89秒。EXE SHA-256: `ea19e3fc65dc5eaae2cab51eff3440c4a4a5bfb58d8ed8da26f6fb0ccbe7d1ae`。指定配布先と`_testenv`へ配置。指定先の置換直前EXE (`bd7afb4de846571bc4b0be8774ccad82ee09594e75126eed4b0874734583d32c`) とメタデータは退避し照合した。`_testenv`には置換前EXEがなく、新規配置だった。
+- 指定EXEを通常起動後、取得中の公開UIと確定済み68画像を読み取り観測した。この担当から配布版の取得開始操作は行っていない。利用中のジョブを止めたり、タブ・手動指定を変更したりしていない。
+- 未検証: 取得中の指定配布版での手動4項目の再実施、全冊完了、今回候補のLinux実機、クリーンWindows。独立レビュー・最終受入は別途必要。ソース版の手動試験と配布版の取得観測を、同一の自動完走試験とは扱わない。
+
 ## v0.2.1 public release — 2026-11-05 UTC
 
 **Published:** [v0.2.1 — Windows x64 and Ubuntu x64 Portable](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.1), **2026-11-05T17:41:43Z** (2026-11-06 JST), as one normal Release + **Latest**, titled **v0.2.1**. The public API and repository Releases sidebar both identify v0.2.1 as Latest. Annotated tag object `459cc48e4cbaacccc46f373d88fa788158c54f72` points to source **`4518f9f7426419ddf1e11b3f67478204dc18b9f5`**. Earlier tags and assets are retained.

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { AppError } from '../store-client.mjs';
+import { uniqueVisibleCandidate } from '../visible-candidate.mjs';
 
 // Explicit official Web entrypoints, independently selected from UI language.
 // Evidence and deliberately unsupported regions: docs/store-adapters.md.
@@ -61,6 +62,48 @@ async function validateMarkers({ config, region, identity, position, next }) {
   } finally { await Promise.all(handles.map(handle => handle?.dispose())); }
 }
 
+// Recognize the same public chrome contract as the explicit Kindle preset.
+// Merely finding a title-looking wrapper is not sufficient: every marker must
+// be unique and share the established rendered reader container. configure()
+// still performs visibility, authentication, geometry and binding checks.
+async function automaticConfiguration(page) {
+  const locators = Object.fromEntries(['reader', 'identity', 'position', 'next'].map(key => [key, page.locator(kindleChromeConfig[key])]));
+  // Match read()'s responsive-chrome rule: a hidden duplicate is not an
+  // actionable candidate, but two visible controls must remain ambiguous.
+  if (await locators.next.count() > 1) {
+    const next = await uniqueVisibleCandidate(locators.next);
+    if (!next) return null;
+    locators.next = next;
+  }
+  if ((await Promise.all(Object.values(locators).map(locator => locator.count()))).some(count => count !== 1)) return null;
+  if (!await locators.reader.isVisible()) return null;
+  try {
+    await validateMarkers({ config: kindleChromeConfig, region: locators.reader, ...locators });
+  } catch (error) {
+    if (error instanceof AppError && error.code === 'reader_ui_unknown') return null;
+    throw error;
+  }
+  return { ...kindleChromeConfig, frames: {} };
+}
+
+async function readerSelection(page, point) {
+  const config = await automaticConfiguration(page);
+  if (!config) return null;
+  const insidePainting = await page.locator(config.reader).evaluate((region, { x, y }) => {
+    const hit = document.elementFromPoint(x, y);
+    if (!hit || !region.contains(hit) || hit.closest('button,a,input,[role="button"],[contenteditable="true"],#readerChromeTop,#readerChromeBottom')) return false;
+    return [...region.querySelectorAll('canvas,img')].filter(surface => {
+      for (let node = surface; node; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        if (style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility) || Number(style.opacity) === 0) return false;
+      }
+      const r = surface.getBoundingClientRect();
+      return r.width >= 160 && r.height >= 120 && x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+    }).length === 1;
+  }, point);
+  return insidePainting ? config.reader : null;
+}
+
 // Explicit preview recovery only. The caller supplies the generic visible-auth
 // observation; this adapter owns Kindle-specific chrome and direction semantics.
 async function revealChrome(reader, recovery, authIndicators) {
@@ -120,7 +163,7 @@ export function createKindleAdapter(regionId = 'jp') {
     identify(url, title, position) {
       return { book: { title, identity: createHash('sha256').update(JSON.stringify([url.origin, title])).digest('hex') }, position };
     },
-    isChromeConfiguration, validateMarkers, revealChrome, rangePosition, rangeAdvanced,
+    isChromeConfiguration, validateMarkers, revealChrome, rangePosition, rangeAdvanced, automaticConfiguration, readerSelection,
     // Shared code owns preflight, bound-node/geometry checks, cancellation,
     // dispatch journaling and post-turn confirmation. No adapter retries.
     async turnPage(page, point) { await page.mouse.click(point.x, point.y); },

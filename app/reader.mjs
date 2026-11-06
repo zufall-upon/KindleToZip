@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { AppError } from './store-client.mjs';
 import { withReaderChromeHidden } from './reader-chrome-overlay.mjs';
+import { uniqueVisibleCandidate } from './visible-candidate.mjs';
 import { visibleCaptureGeometry } from './visible-geometry.mjs';
 import { translateCopy } from './ui/messages.mjs';
 import { createStoreAdapter } from './stores/index.mjs';
@@ -159,7 +160,23 @@ function visibleConfigurationCandidates() {
   // several remain, the caller reports ambiguity rather than guessing.
   const identityElements = headings.length ? headings : [...document.querySelectorAll('[id*="title" i], [class*="title" i], [data-testid*="title" i]')]
     .filter(element => { const value = text(element); return value.length > 0 && value.length <= 500; });
-  const identities = once(identityElements);
+  // A single displayed title can be wrapped in several title-named elements.
+  // Collapse only a descendant with exactly the same visible text as its
+  // ancestor; retain the outer node so a later title addition is also bound.
+  // Separate elements, or an ancestor with additional text, are still distinct
+  // ambiguous candidates. Comparisons stay in the document.
+  const identityCandidates = new Set(identityElements.filter(visible));
+  for (const element of identityElements) {
+    if (!identityCandidates.has(element)) continue;
+    const value = text(element);
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+      if (identityCandidates.has(parent) && text(parent) === value) {
+        identityCandidates.delete(element);
+        break;
+      }
+    }
+  }
+  const identities = once(identityCandidates);
   const positions = once([...document.querySelectorAll('output, [role="status"], input[type="number"], input[type="range"], input[type="text"], [id*="location" i], [id*="position" i], [data-testid*="location" i]')]
     .filter(element => element.tagName === 'INPUT'
       ? /^\s*\d+(?:\s*(?:[/／]|of)\s*\d+)?\s*$/i.test(element.value ?? '')
@@ -400,6 +417,7 @@ export class Reader {
         width: viewport.width, height: viewport.height, screenWidth: viewport.width, screenHeight: viewport.height,
         deviceScaleFactor: scale, mobile: false,
       });
+      await this.page.waitForFunction(expected => devicePixelRatio === expected, scale, { timeout: 1800 });
       const actual = await this.page.evaluate(() => devicePixelRatio);
       if (actual !== scale) throw new AppError('capture_scale_unavailable');
       if (this.captureScale !== scale) {
@@ -454,6 +472,9 @@ export class Reader {
 
   async autoConfiguration() {
     if (this.ownedSessionGuard?.limited || this.ownedSessionGuard?.normal) return { ...kindleChromeConfig, frames: {} };
+    await this.adoptVisibleReaderPage();
+    const preset = await this.adapter.automaticConfiguration?.(this.page);
+    if (preset) return preset;
     const page = this.page, generation = this.generation;
     const deadline = Date.now() + 1200;
     for (;;) {
@@ -645,7 +666,14 @@ export class Reader {
         scope = await handle?.contentFrame();
         if (!scope || scope.parentFrame() !== this.page.mainFrame()) throw new AppError('picker_frame_unsupported');
       }
-      const selector = await scope.evaluate(selectedElementAt, { ...(frameHit ?? point), field });
+      let selector = await scope.evaluate(selectedElementAt, { ...(frameHit ?? point), field });
+      // Kindle's page-turn surface and chrome are siblings of its painting.
+      // A point inside the uniquely verified painting selects the established
+      // reader container, not an arbitrary enclosing ancestor. The ordinary
+      // auth/geometry checks below and at preview/capture remain mandatory.
+      if (field === 'reader' && scope === this.page && selector) {
+        selector = await this.adapter.readerSelection?.(this.page, point) ?? selector;
+      }
       if (!selector) throw new AppError('picker_element_unknown');
       const locator = scope.locator(selector);
       if (await locator.count() !== 1 || !await locator.isVisible()) throw new AppError('reader_ui_unknown', { field, cause: 'hidden' });
@@ -823,6 +851,10 @@ export class Reader {
       || marker.frame !== (nextConfig.frames?.[key] ?? nextConfig.frame));
     await this.clearPickedMarkers(stale.map(([key]) => key));
     this.config = nextConfig;
+    // A newly opened reader can finish navigation after tab selection and
+    // replace Chromium's metrics override. Explicit preview re-establishes the
+    // selected scale; acquisition continues to reject an unexpected DPR change.
+    await this.setCaptureScale(this.captureScale);
     this.bound = null;
     // Recovery belongs to this explicit configuration/preview only. Acquisition
     // and approval must not inherit a wait policy from an earlier call.
@@ -869,8 +901,11 @@ export class Reader {
       // Never choose the first match: require exactly one visible candidate;
       // bound-node identity, direction, geometry and hit checks still apply.
       if (key === 'next' && count > 1) {
-        const visibleNext = locator.filter({ visible: true });
-        if (await visibleNext.count() === 1) { locator = visibleNext; count = 1; }
+        const boundNext = this.pickedMarkers.next;
+        const sameBinding = this.bound && boundNext?.page === this.page && boundNext.generation === this.generation
+          && boundNext.frame === (this.config.frames?.next ?? this.config.frame);
+        const visibleNext = await uniqueVisibleCandidate(locator, sameBinding ? boundNext.handle : null);
+        if (visibleNext) { locator = visibleNext; count = 1; }
       }
       if (count !== 1) reject(count === 0 ? 'not_found' : 'not_unique');
       const picked = this.pickedMarkers[key];

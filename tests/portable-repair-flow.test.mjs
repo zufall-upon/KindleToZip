@@ -1041,7 +1041,7 @@ test('上下UI付き匿名試料: 有限停止から原本保持・手動クロ�
 });
 
 test('動的Kindle試料の公開復帰: 送り後hiddenの進行証拠と必須拒否を分離する', { timeout: 90_000 }, async t => {
-  for (const mode of ['progress', 'unknown-progress', 'changed-next', 'wrong-direction', 'target-change', 'auth', 'overlay', 'owner-unknown']) await t.test(mode, async t => {
+  for (const mode of ['progress', 'progress-responsive', 'unknown-progress', 'changed-next', 'wrong-direction', 'target-change', 'auth', 'overlay', 'owner-unknown']) await t.test(mode, async t => {
     await mkdir('artifacts/mvp-tests', { recursive: true });
     const directory = await mkdtemp(path.resolve('artifacts/mvp-tests/post-turn-observation-'));
     const r = await startApplication({ dataDir: path.join(directory, 'data'), sampleFixture: 'kindle-chrome-dynamic' });
@@ -1051,6 +1051,10 @@ test('動的Kindle試料の公開復帰: 送り後hiddenの進行証拠と必須
     const reader = r.app.reader;
     await r.app.command('selectReaderTab', { id: reader.tabs()[0].id });
     const page = reader.page, budget = createPortableLimitedCaptureBudget();
+    if (mode === 'progress-responsive') await page.locator('#next').evaluate(button => {
+      const duplicate = button.cloneNode(true); duplicate.id = 'responsiveDuplicate';
+      duplicate.hidden = true; button.after(duplicate);
+    });
     // Use the existing real single-run accounting on this anonymous Reader.
     // The real owned Portable integration is exercised separately below.
     reader.ownedSessionGuard = { singleRunBudget: budget, preparePreview() { budget.beginPreview(); },
@@ -1095,7 +1099,7 @@ test('動的Kindle試料の公開復帰: 送り後hiddenの進行証拠と必須
     const stopped = await wait(r.app, s => !s.busy && ['Review', 'NeedsAttention'].includes(s.state));
     assert.equal(sends, 1);
     assert.deepEqual(await r.app.image(1, true), preview, '最初の原本は既存previewと一致');
-    if (mode === 'progress') {
+    if (mode.startsWith('progress')) {
       assert.equal(stopped.state, 'Review'); assert.equal(stopped.reason, 'capture_limit_reached');
       assert.equal(stopped.job.manifest.images.length, 2); assert.equal(stopped.job.manifest.checkpoint.dispatch, 'not_sent');
       assert.deepEqual(budget.snapshot(), { phase: 'finished', screenshots: 2, sends: 1, committed: 2, approved: 2 });
@@ -1532,6 +1536,137 @@ test('Kindleプリセット表示候補: 非表示見出しを採らず可視tit
   assert.equal(r.app.reader.config.position, '#position');
   assert.equal((await r.app.snapshot()).previewApproved, false);
 });
+test('自動表示候補: 同一表示のtitle親子は一つにし独立候補と追加文字は拒否する', async t => {
+  await mkdir('artifacts/mvp-tests', { recursive: true });
+  const directory = await mkdtemp(path.resolve('artifacts/mvp-tests/nested-title-'));
+  const r = await startApplication({ dataDir: path.join(directory, 'data'), sampleFixture: 'layout' });
+  const control = await openControlWindow(r.url, { headless: true });
+  t.after(async () => { await control.close(); await r.close(); await rm(directory, { recursive: true, force: true }); });
+  const ui = control.page;
+  await ui.locator('#create').click(); await ui.locator('#openSample').click();
+  await ui.waitForFunction(() => document.querySelector('#readerTab').options.length > 1);
+  await ui.locator('#readerTab').selectOption({ index: 1 }); await ui.locator('#selectReaderTab').click();
+  await ui.waitForFunction(() => !document.querySelector('#quickPreview').disabled);
+  const frame = r.app.reader.page.frameLocator('#readingFrame');
+  await frame.locator('#readerChromeTitle').evaluate(element => {
+    const child = document.createElement('span'); child.id = 'fixture-title-label';
+    child.textContent = element.textContent; element.replaceChildren(child);
+  });
+  await ui.locator('#quickPreview').click();
+  await ui.waitForFunction(() => !document.querySelector('#previewImage').hidden);
+  assert.equal(r.app.reader.config.identity, '#readerChromeTitle');
+  let snapshot = await r.app.snapshot();
+  assert.equal(snapshot.displayInspection.status, 'passed');
+  assert.equal(snapshot.previewApproved, false);
+  assert.equal(snapshot.job.manifest.images.length, 0);
+
+  await frame.locator('#readerChromeTitle').evaluate(element => element.append(' 追加表示'));
+  await assert.rejects(r.app.reader.requireBound(), /target_changed/, '親の表示が変わったら子が同じでも対象変更として停止する');
+  await frame.locator('#readerChromeTitle').evaluate(element => element.lastChild.remove());
+
+  await frame.locator('#readerChromeTitle').evaluate(element => {
+    const duplicate = document.createElement('div'); duplicate.id = 'fixture-other-title';
+    duplicate.textContent = element.innerText;
+    duplicate.style.cssText = 'position:fixed;top:60px;left:12px;z-index:10;background:white';
+    element.after(duplicate);
+  });
+  await Promise.all([
+    ui.waitForResponse(response => response.url().endsWith('/api/command') && response.request().postDataJSON().action === 'quickPreview'),
+    ui.locator('#quickPreview').click(),
+  ]);
+  snapshot = await wait(r.app, s => s.displayInspection?.status === 'failed' && !s.busy);
+  assert.deepEqual(snapshot.displayInspection.detail, { field: 'identity', cause: 'not_unique' });
+  assert.equal(snapshot.previewReady, false);
+  assert.equal(snapshot.previewApproved, false);
+  assert.equal(snapshot.job.manifest.images.length, 0);
+
+  await frame.locator('#fixture-other-title').evaluate(element => element.remove());
+  await frame.locator('#readerChromeTitle').evaluate(element => element.prepend(document.createTextNode('別の表示 ')));
+  await Promise.all([
+    ui.waitForResponse(response => response.url().endsWith('/api/command') && response.request().postDataJSON().action === 'quickPreview'),
+    ui.locator('#quickPreview').click(),
+  ]);
+  snapshot = await wait(r.app, s => s.displayInspection?.status === 'failed' && !s.busy);
+  assert.deepEqual(snapshot.displayInspection.detail, { field: 'identity', cause: 'not_unique' });
+  assert.equal(snapshot.previewReady, false);
+  assert.equal(snapshot.previewApproved, false);
+  assert.equal(snapshot.job.manifest.images.length, 0);
+});
+test('Kindle既知構造の自動・手動選択: 書名枠と操作面を識別し安全停止を保つ', async t => {
+  const directory = await mkdtemp(path.resolve('artifacts/mvp-tests/chrome-selection-'));
+  const r = await startApplication({ dataDir: path.join(directory, 'data'), sampleFixture: 'kindle-chrome' });
+  const control = await openControlWindow(r.url, { headless: true });
+  t.after(async () => { await control.close(); await r.close(); await rm(directory, {recursive:true,force:true}); });
+  const ui = control.page;
+  await ui.locator('#create').click(); await ui.locator('#openSample').click();
+  await ui.waitForFunction(() => document.querySelector('#readerTab').options.length > 1);
+  await ui.locator('#readerTab').selectOption({index:1}); await ui.locator('#selectReaderTab').click();
+  const reader = r.app.reader, page = reader.page;
+  await page.locator('#readerChromeTitle').evaluate(title => {
+    title.parentElement.id = 'readerChromeTitleBar';
+    const label = document.createElement('span'); label.textContent = '追加の操作案内'; title.parentElement.append(label);
+    const canvas = document.querySelector('canvas'), box = canvas.getBoundingClientRect();
+    canvas.style.pointerEvents = 'none';
+    const surface = document.createElement('div'); surface.id = 'sampleTurnSurface';
+    surface.style.cssText = `position:fixed;left:${box.x}px;top:${box.y}px;width:${box.width}px;height:${box.height}px`;
+    canvas.parentElement.append(surface);
+    const next = document.querySelector('button[aria-label="次のページへ"]');
+    const hiddenNext = next.cloneNode(true); hiddenNext.id = 'responsiveHiddenNext';
+    hiddenNext.style.display = 'none'; next.after(hiddenNext);
+  });
+  await reader.scaleSession.send('Emulation.clearDeviceMetricsOverride');
+  await ui.locator('#quickPreview').click();
+  await ui.waitForFunction(() => !document.querySelector('#previewImage').hidden);
+  assert.equal(reader.config.reader, kindleChromeConfig.reader);
+  assert.equal(reader.config.identity, kindleChromeConfig.identity);
+  assert.equal(await page.evaluate(() => devicePixelRatio), reader.captureScale);
+  assert.equal((await r.app.snapshot()).previewApproved, false);
+  assert.equal((await r.app.snapshot()).job.manifest.images.length, 0);
+  await reader.scaleSession.send('Emulation.clearDeviceMetricsOverride');
+  await assert.rejects(reader.requireBound(), /capture_scale_unavailable/);
+  await Promise.all([
+    ui.waitForResponse(response => response.url().endsWith('/api/command') && response.request().postDataJSON().action === 'quickPreview'),
+    ui.locator('#quickPreview').click(),
+  ]);
+  await wait(r.app, s => s.previewReady && !s.busy);
+  // A responsive duplicate remains hidden while the selected control hides
+  // after the visibility/geometry checks. Metadata lookup must keep that node,
+  // not wait on a now-empty :visible locator and escape as a raw TimeoutError.
+  const adapter = reader.adapter;
+  const observingReader = Object.create(reader);
+  Object.defineProperty(observingReader, 'adapter', { value: { ...adapter, assertState: async (...args) => {
+    await adapter.assertState(...args);
+    await page.locator('button[aria-label="次のページへ"]').first().evaluate(element => { element.style.visibility = 'hidden'; });
+  } } });
+  const observed = await observingReader.read();
+  assert.equal(observed.nextDisabled, false);
+  await assert.rejects(reader.requireBound(), error => error.code === 'reader_ui_unknown', 'hidden ambiguity must still stop without dispatch');
+  await page.locator('button[aria-label="次のページへ"]').first().evaluate(element => { element.style.visibility = ''; });
+  const box = await page.locator('canvas').boundingBox();
+  await ui.locator('#pickReader').click();
+  await wait(r.app, s => s.pickerStage === 'waiting_click');
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await wait(r.app, s => !s.pickingField && !s.busy);
+  assert.equal(reader.selections.reader.selector, kindleChromeConfig.reader);
+  assert.equal(reader.selectionFailure, null);
+  assert.equal((await r.app.snapshot()).previewApproved, false);
+  await page.locator('#responsiveHiddenNext').evaluate(element => { element.style.display = ''; });
+  await ui.locator('#quickPreview').click();
+  const ambiguous = await wait(r.app, s => s.displayInspection?.status === 'failed' && !s.busy);
+  assert.equal(ambiguous.previewReady, false);
+  assert.equal(ambiguous.previewApproved, false);
+  assert.equal(ambiguous.job.manifest.images.length, 0);
+  await page.locator('#responsiveHiddenNext').evaluate(element => { element.style.display = 'none'; });
+  await page.evaluate(() => {
+    const modal = document.createElement('div'); modal.setAttribute('aria-modal','true');
+    modal.style.cssText='position:fixed;inset:0;background:white;z-index:100'; modal.textContent='認証が必要な匿名試料'; document.body.append(modal);
+  });
+  await ui.locator('#quickPreview').click();
+  const rejected = await wait(r.app, s => s.displayInspection?.status === 'failed' && !s.busy);
+  assert.equal(rejected.previewReady, false);
+  assert.equal(rejected.previewApproved, false);
+  assert.equal(rejected.job.manifest.images.length, 0);
+});
 test('公開保存画面の遅延poll: 安全停止の反映で利用者のZIP画面を奪わない', async t => {
   await mkdir('artifacts/mvp-tests', { recursive: true });
   const directory = await mkdtemp(path.resolve('artifacts/mvp-tests/save-panel-'));
@@ -1798,6 +1933,9 @@ test('ブラウザ終了だけの失敗: 原本点検/ZIPを続け、再終了�
     assert.match(await ui.locator('#message').textContent(), expected);
   }
   await ui.locator('[data-stage-target="capture"]').first().click();
+  // The failure message precedes run()'s final poll and pending-action cleanup.
+  // Wait for that public UI settlement before asserting the stopped-state hint.
+  await ui.waitForFunction(() => /終了が未確認.*新しい検査・取得はできません/.test(document.querySelector('#nextAction').textContent));
   assert.equal(await ui.locator('#decisionButton').isDisabled(), true, '終了不明の間は新しい検査・取得への公開入口を閉じる');
   assert.match(await ui.locator('#nextAction').textContent(), /終了が未確認.*新しい検査・取得はできません/);
   await ui.locator('[data-stage-target="export"]').first().click();
