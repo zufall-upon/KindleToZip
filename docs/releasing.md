@@ -12,6 +12,12 @@ There is no claim of bit-for-bit reproducible builds, independent security revie
 
 ## Current public release
 
+### v0.2.3 — 2026-11-06
+
+[v0.2.3](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.3) is a normal Release + Latest, published from `9dac56a81733b68797e0792a81dc574122151afd`. Exact-source CI `42186461110`, preflight `42184150736` and release `42188837177` succeeded. Actual Draft archives, metadata, checksums and provenance were verified before publication; anonymous downloads matched and the real Releases sidebar was inspected afterward. The failed v0.2.2 tag and attempt history remain intact. See [the validation record](validation.md#v023-public-release--2026-11-06).
+
+The status batch below is read-only, not a one-click publisher. Its tests passed 5/5. It and the updated instructions are delivered in a later documentation/helper commit, separate from the frozen release source; existing successful source/package gates are not attributed to that later commit.
+
 ### v0.2.0 release preparation
 
 The candidate adds Ubuntu x64 Portable alongside Windows x64. Node is pinned to
@@ -40,6 +46,51 @@ run/asset identifiers are recorded after the hosted release completes.
 [v0.1.2 for Windows x64](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.1.2) was published on **2026-10-28** from `e3e3977588d75fffb72dae9f402288ca69f8bfe0`. Its exact source CI, tagged package gates, checksums, and GitHub build provenance passed. The public ZIP was downloaded without authentication and matched the verified draft. At the user's explicit request, it is a normal GitHub Release marked **Latest** in the TOP-right **Releases** pane, titled **v0.1.2**. On **2026-10-29**, the user confirmed clean-Windows operation and complete real-book capture and requested removal of the experimental label. This metadata/documentation change does not replace the tag or assets. See [the final public validation record](validation.md#v012-public-release--2026-10-28) and the [Portable quick start](portable.md). The earlier `v0.1.0` / `v0.1.1` tags have no executable release assets and are not replaced.
 
 ## Maintainer routine: freeze, draft, verify, publish
+
+### Resume without starting another release (Windows)
+
+Use the read-only batch from any working directory (specify its full path when
+outside this checkout). Node 22+ and an authenticated GitHub CLI (`gh`) must already
+be available; it never installs tools or logs in. Pass the saved run ID and full
+expected source SHA, not `main` or an abbreviated SHA.
+
+```bat
+scripts\release-status.cmd --run RUN_ID --source FULL_40_CHARACTER_SHA
+scripts\release-status.cmd --run RUN_ID --source FULL_40_CHARACTER_SHA --wait 300
+```
+
+`--gh "C:\path\to\gh.exe"` selects an existing CLI. The default is a single
+observation; optional waiting is capped at 600 seconds, with each network query
+bounded at 30 seconds (an in-flight query may finish after the wait limit).
+It prints observation time, GitHub run update time, job outcome, and the active
+or last completed step with timestamps. The run update is **not** a heartbeat
+or evidence of test progress. Read step logs when progress appears stalled.
+
+Exit codes: **0** = this exact-source run succeeded; **1** = terminal non-success;
+**2** = still pending/running when observation ended; **3** = invalid input,
+source mismatch, or query error. Code 0 does not establish that other required
+runs, Draft assets, provenance, publication or deployment have been verified.
+The batch never dispatches, reruns, cancels, tags, uploads or publishes.
+
+Resume checklist:
+
+1. Read saved source/tag/run IDs and inspect current Git status. Preserve unrelated
+   changes and user data. Query the existing run before launching anything.
+2. If active, observe with bounded waiting; do not cancel it or launch a duplicate.
+   If failed, use the printed `gh run view ... --log-failed` command. For a timeout,
+   also inspect `gh run view RUN_ID --job JOB_ID --log` for the final progress.
+3. Reuse successful jobs only for the same source through GitHub's supported
+   failed-job retry after diagnosing the cause. Do not automatically retry an
+   unchanged failure. Changed source needs its own mandatory exact-source CI
+   and package gates. Never move an existing tag to attach different source.
+4. Follow steps 4–6 below: verify actual Draft archives, metadata, provenance,
+   allowlisted contents and checksums **before** authorized publication. Public
+   authorization does not waive those gates. Then check anonymous downloads and
+   the actual Releases sidebar, update all language guides, and deploy only with
+   immediate prior-EXE backups, preserving runtime/data/temp.
+
+The helper's fixture tests are `node --test tests/release-status.test.mjs`.
+They start no hosted workflow, build, reader or release operation.
 
 Treat a release request as a bounded handoff, not a new improvement project. Group the related final fixes, reuse passed checks for the unchanged candidate, and stop adding tests or features once the required evidence and public deliverable agree.
 
@@ -132,8 +183,8 @@ Follow the included Ubuntu README for extraction, login and normal launch.
 Only use release assets from [zufall-upon/KindleToZip](https://github.com/zufall-upon/KindleToZip/releases). Download the ZIP and `SHA256SUMS.txt` from the same release.
 
 ```powershell
-Get-FileHash .\KindleToZip-Portable-v0.2.1-win-x64.zip -Algorithm SHA256
-gh attestation verify .\KindleToZip-Portable-v0.2.1-win-x64.zip --repo zufall-upon/KindleToZip --signer-workflow zufall-upon/KindleToZip/.github/workflows/release.yml
+Get-FileHash .\KindleToZip-Portable-v0.2.3-win-x64.zip -Algorithm SHA256
+gh attestation verify .\KindleToZip-Portable-v0.2.3-win-x64.zip --repo zufall-upon/KindleToZip --signer-workflow zufall-upon/KindleToZip/.github/workflows/release.yml
 ```
 
 Compare the hash with the matching line in `SHA256SUMS.txt`. The attestation verification must succeed, and its source commit, repository, and workflow must match the release you intend to use. The detached `.sigstore.json` bundle is also attached for inspection and offline-verification workflows; consult the current GitHub CLI documentation before relying on offline verification.

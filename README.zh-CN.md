@@ -12,10 +12,12 @@
 
 **完全免费、开源 · Windows / Ubuntu x64 · 无需注册 KindleToZip 账户 · 无付费 DLC**
 
-> **Windows x64 与 Ubuntu x64 Portable v0.2.1 已同时发布。**
+> **Windows x64 与 Ubuntu x64 Portable v0.2.3 已同时发布。**
 > 两个平台均通过必需的源码和打包样本检查，实际下载、校验和及构建来源证明已核对。Ubuntu 真实书籍的161张图像记录来自开发安装版，与新发行包的验证分开记录。
 
-**[Windows ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.2.1/KindleToZip-Portable-v0.2.1-win-x64.zip)** · **[Ubuntu tar.gz](https://github.com/zufall-upon/KindleToZip/releases/download/v0.2.1/KindleToZip-Portable-v0.2.1-linux-x64.tar.gz)** · [发行说明与校验和](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.1)
+**[Windows ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.2.3/KindleToZip-Portable-v0.2.3-win-x64.zip)** · **[Ubuntu tar.gz](https://github.com/zufall-upon/KindleToZip/releases/download/v0.2.3/KindleToZip-Portable-v0.2.3-linux-x64.tar.gz)** · [发行说明与校验和](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.3)
+
+v0.2.3修复预览、手动阅读区域选择及响应式下一页控件和恢复。作者对本地修正版进行了有限的真实阅读恢复验证，用户报告完成一本书获取和ZIP导出。这些记录与发行包的匿名样本检查分开，并非所有书籍或全新系统的保证。
 
 [Windows 指南](docs/portable.md) · [Ubuntu 指南](docs/ubuntu-portable.ja.md) · [从源代码体验](docs/getting-started.zh-CN.md)
 
@@ -68,17 +70,17 @@ v0.1.6 新增 **Kindle 使用地区** 选择，可选 **日本、美国、英国
 
 ## 开始使用
 
-**Windows Portable：** 下载 [v0.2.1 Windows ZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.1)，用 `SHA256SUMS.txt` 校验后完整解压到可写目录，再运行 `KindleToZip-Portable.exe`。已包含 Node.js 与专用浏览器，无需开发环境。详见[三语 Portable 指南](docs/portable.md)。
+**Windows Portable：** 下载 [v0.2.3 Windows ZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.3)，用 `SHA256SUMS.txt` 校验后完整解压到可写目录，再运行 `KindleToZip-Portable.exe`。已包含 Node.js 与专用浏览器，无需开发环境。详见[三语 Portable 指南](docs/portable.md)。
 
 **从源代码：** 需要 **Windows x64、Git、Node.js 22+ 和 PowerShell 7**。[入门指南](docs/getting-started.zh-CN.md)会安装隔离的 Rust 工具链与浏览器，再通过 `npm start` 启动。建议先体验自制样本，无需 Amazon 登录或真实书籍。
 
-**Ubuntu x64 Portable：** 下载 v0.2.1 Linux 压缩包，用 `SHA256SUMS-linux.txt` 校验并解压到主目录。初次登录运行 `./start-linux-bundle.sh --login`，之后正常运行 `./start-linux-bundle.sh`。真实阅读器需要 Wayland 和受支持的 Chromium Snap。2026-11-05 开发安装版完成了用户指定的一本书、161 张图像的获取、中断恢复、ZIP 内容及顺序核对和正常退出；此结果与新发行包的匿名样本检查分开记录。详见 [Ubuntu Portable 指南](docs/ubuntu-portable.ja.md)和[发行验证](docs/releasing.md)。
+**Ubuntu x64 Portable：** 下载 v0.2.3 Linux 压缩包，用 `SHA256SUMS-linux.txt` 校验并解压到主目录。初次登录运行 `./start-linux-bundle.sh --login`，之后正常运行 `./start-linux-bundle.sh`。真实阅读器需要 Wayland 和受支持的 Chromium Snap。2026-11-05 开发安装版完成了用户指定的一本书、161 张图像的获取、中断恢复、ZIP 内容及顺序核对和正常退出；此结果与新发行包的匿名样本检查分开记录。详见 [Ubuntu Portable 指南](docs/ubuntu-portable.ja.md)和[发行验证](docs/releasing.md)。
 
 在 Ubuntu 26.04 中，已通过本人操作，使用已安装的 Zenity 验证匿名 ZIP/CBZ 保存位置选择与取消，并收到显示正常的本人目视报告。原生对话框图像未提供，也未独立检查。这些检查确认仅选择位置不会导出文件；ZIP/CBZ 输出与内容核对是另行进行的集成检查，不代表原生选择器导出或真实 Kindle 已验收。
 
 ## 使用前须知
 
-- **质量：** v0.2.1 已通过两个平台的精确源码CI、带标签发行的必需关卡和打包获取／导出检查。实际文件、metadata、校验和及4个对象的构建来源证明一致，匿名下载也已验证。首次失败保留为历史。Ubuntu开发安装版的161张图像及此前v0.1.2的干净Windows／整本报告，与新发行包的样本检查分开记录。详见[验证历史与发布记录](docs/validation.md)（英语）。
+- **质量：** v0.2.3 已通过两个平台的精确源码CI、带标签发行的必需关卡和打包获取／导出检查。实际文件、metadata、校验和及4个对象的构建来源证明一致，匿名下载也已验证。首次失败保留为历史。Ubuntu开发安装版的161张图像及此前v0.1.2的干净Windows／整本报告，与新发行包的样本检查分开记录。详见[验证历史与发布记录](docs/validation.md)（英语）。
 - **登录与本地数据：** 只在官方页面登录。**默认保存登录状态。** 关闭保留设置后会使用独立的临时配置，正常退出时删除，但异常退出可能留下文件。不要分享配置、Cookie、书籍信息或截图。详见[隐私与存储说明](docs/security-and-trust.md)（英语）。
 - **网络与信任：** 没有应用自建的登录服务器、遥测或自动更新检查。官方阅读与认证服务、浏览器和安装过程仍会联网。开源**不等于安全保证**，详见[网络目标与信任边界](docs/security-and-trust.md)（英语）。
 - **兼容性：** v0.1.6 可独立于界面语言选择日本、美国或英国的 Kindle 入口；各地区真实书籍、所有布局、ZIP64 和所有 CBZ 阅读器均未验证。用户确认的干净 Windows 与真实书籍运行情况不保证所有环境和书籍。标准 / 2倍渲染有**每张图像 1600万像素 / 32 MiB** 的上限，无法恢复原始显示中不存在的细节。

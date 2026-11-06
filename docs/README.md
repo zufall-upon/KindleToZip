@@ -7,7 +7,7 @@
 - [Portable quick start / Portable版の使い方 / Portable 使用指南](portable.md) — current instructions; the release ZIP retains the guide frozen at its source tag
 - [Actual app screenshots / 実画面 / 实际界面](screenshots.md) — preview, image review, ZIP export, and the original Japanese UI
 
-[v0.2.1 — Windows x64 and Ubuntu x64 Portable](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.1) is publicly available as a normal Release + Latest. Both platforms' mandatory source/package gates, actual metadata/checksums/provenance, anonymous downloads and the Releases sidebar were verified. Start with the [Windows Portable guide](portable.md) or [Ubuntu guide](ubuntu-portable.ja.md); source guides remain for development. The 161-image Ubuntu development result and historical clean-Windows report remain separate from these new packages' fixture checks in the [validation record](validation.md).
+[v0.2.3 — Windows x64 and Ubuntu x64 Portable](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.3) is publicly available as a normal Release + Latest. Both platforms' mandatory source/package gates, actual metadata/checksums/provenance, anonymous downloads and the Releases sidebar were verified. Start with the [Windows Portable guide](portable.md) or [Ubuntu guide](ubuntu-portable.ja.md); source guides remain for development. The 161-image Ubuntu development result and historical clean-Windows report remain separate from these new packages' fixture checks in the [validation record](validation.md).
 
 ## Details and implementation records
 

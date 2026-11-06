@@ -4,7 +4,7 @@ English · 日本語 · 简体中文
 
 Windows x64 Portable application. A source-tagged snapshot of this guide is included as `README.md` in the release ZIP; an existing ZIP is not replaced for documentation updates. Use only assets from [the official repository's Releases page](https://github.com/zufall-upon/KindleToZip/releases).
 
-Current release: [v0.2.1 — Windows x64 and Ubuntu x64 Portable](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.1), normal Release + Latest. This page covers Windows; Ubuntu uses the [Ubuntu Portable guide](ubuntu-portable.ja.md). Bundled guides retain their frozen source snapshot; these online instructions identify the current release.
+Current release: [v0.2.3 — Windows x64 and Ubuntu x64 Portable](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.3), normal Release + Latest. This page covers Windows; Ubuntu uses the [Ubuntu Portable guide](ubuntu-portable.ja.md). Bundled guides retain their frozen source snapshot; these online instructions identify the current release.
 
 ## English
 

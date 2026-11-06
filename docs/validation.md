@@ -1,6 +1,25 @@
 # Initial source validation
 
-## v0.2.3 release preparation — 2026-11-06
+## v0.2.3 public release — 2026-11-06
+
+Published [v0.2.3](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.3) at **2026-11-06T09:03:23Z**, normal Release + Latest, title **v0.2.3**, from **`9dac56a81733b68797e0792a81dc574122151afd`**. Existing assets and tags were not replaced.
+
+- Tag-free preflight **42184150736** succeeded. Mandatory exact-source CI **42186461110** completed successfully at 08:35:25Z: Windows 19m10s, Ubuntu 13m11s. The annotated tag was created only afterward.
+- Release **42188837177** completed successfully at 08:59:26Z. Windows public UI, deployment, actual packaged selection/export and notices gates passed; Linux source, bundle and extracted capture/export gates passed. The Draft transfer/checksum/attestation job also passed. No unchanged failed job was automatically retried in this v0.2.3 continuation.
+- Actual Draft Windows ZIP/EXE and Linux tarball were downloaded. Metadata matched tag/source/run; Windows embedded app source and payload digest were checked without launching the app. Linux's 878 receipt entries matched size/hash and package allowlists; only immutable runtime payload, source/anonymous fixtures and notices were present, not used runtime/data/temp, credentials or book images. ZIP, EXE and Linux archive provenance verified before publication against the same GitHub-hosted source/workflow; the extracted controller's additional provenance check succeeded after publication.
+- Authorized publication followed Draft verification. All five public assets were downloaded without authentication and matched the verified Draft hashes. The actual 1600×1100 repository TOP-right Releases pane visibly showed **v0.2.3 Latest**; the release page had all three language sections.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Windows ZIP | `f794097d4c1cd1740668141ffd4eb11cd10fed8d39e77afabc984dc205340587` |
+| Windows EXE | `cc97d163fc61c83e47b26e9a6083a0cc12b8db1fd263d730110f5154e5e1be24` |
+| Linux tar.gz | `082974375e083ba503c1ef38f17d501d37df87bb3efd3b6c74232f1933af0ec7` |
+
+The previous `_testenv` EXE (`5f0deccd82f4ee44aacf04423b0c98ba9f9dc48ec9afbc48690da36f13a85297`) was copied to a hash-verified backup before deploying the published EXE. No app was running, launched or forcibly terminated, and data/runtime/temp were not modified. **The other user-designated portable directory was absent during final deployment; that target is not claimed updated.** No replacement folder was fabricated and no private data was moved. Its current location must be resolved separately. Private deployment/evidence details remain ignored under `artifacts/release-routine/v0.2.3/`.
+
+The user's one-book capture/ZIP report and author's bounded two-display real-Kindle recovery on the earlier local correction remain distinct from these hosted anonymous-fixture results. The prior source-bound 57/57 and actual public UI observations were reused, not rerun. No all-region/all-book/clean-Windows, real-Linux-reader, independent security audit or legal-clearance claim is added. Online trilingual links and the read-only release-status helper are delivered after the frozen package source; bundled guides retain their older source snapshot.
+
+### Preserved preparation history
 
 The v0.2.2 tag remains immutable at `bd23bbadaa527aa3a767d0888daadecdec68273f`. Exact-source CI `42168244764` attempt 2 succeeded on Windows and Ubuntu after attempt 1 remained in-progress despite completed steps and eventually became cancelled. Release run `42177227567` attempt 1 passed Linux but failed Windows IPC browser startup (`browser_start_failed`, underlying cause not retained); its failed-job retry passed IPC but stopped producing UI-test output after the JPEG test and reached the 45-minute job timeout. No Draft or Windows release asset was produced. The cause of the browser startup failure and UI stall is not claimed as proven.
 

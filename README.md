@@ -12,10 +12,12 @@ Capture displayed pages in the Kindle web reader on Windows or Ubuntu, review an
 
 **Free & open source · Windows / Ubuntu x64 · No KindleToZip account · No paid DLC**
 
-> **Windows x64 and Ubuntu x64 Portable v0.2.1 are available together.**
+> **Windows x64 and Ubuntu x64 Portable v0.2.3 are available together.**
 > Both platforms passed mandatory source and packaged-fixture checks; actual downloads, checksums and provenance were verified. The 161-image Ubuntu book result belongs to a development installation, not these newly built packages.
 
-**[Windows ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.2.1/KindleToZip-Portable-v0.2.1-win-x64.zip)** · **[Ubuntu tar.gz](https://github.com/zufall-upon/KindleToZip/releases/download/v0.2.1/KindleToZip-Portable-v0.2.1-linux-x64.tar.gz)** · [Release & checksums](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.1)
+**[Windows ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.2.3/KindleToZip-Portable-v0.2.3-win-x64.zip)** · **[Ubuntu tar.gz](https://github.com/zufall-upon/KindleToZip/releases/download/v0.2.3/KindleToZip-Portable-v0.2.3-linux-x64.tar.gz)** · [Release & checksums](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.3)
+
+v0.2.3 fixes preview, manual reader selection and responsive next-control recovery. The author checked bounded real-reader recovery on the local correction; the user reported one-book capture and ZIP success. These are separate from the hosted packages' anonymous-fixture checks, not an all-book or clean-system guarantee.
 
 [Windows guide](docs/portable.md) · [Ubuntu guide](docs/ubuntu-portable.ja.md) · [Run from source](docs/getting-started.md)
 
@@ -63,17 +65,17 @@ v0.1.6 also adds a **Kindle region** selector for **Japan, United States and Uni
 
 ## Get started
 
-**Windows Portable:** download the [v0.2.1 Windows ZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.1), verify `SHA256SUMS.txt`, extract the entire ZIP into a writable folder, and run `KindleToZip-Portable.exe`. Node.js and the dedicated browser are bundled; no development setup is needed. See the [trilingual Portable guide](docs/portable.md).
+**Windows Portable:** download the [v0.2.3 Windows ZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.3), verify `SHA256SUMS.txt`, extract the entire ZIP into a writable folder, and run `KindleToZip-Portable.exe`. Node.js and the dedicated browser are bundled; no development setup is needed. See the [trilingual Portable guide](docs/portable.md).
 
 **From source:** you need **Windows x64, Git, Node.js 22+, and PowerShell 7**. The [setup guide](docs/getting-started.md) installs an isolated Rust toolchain and browser, then launches the app with `npm start`. Start with the self-authored sample, without an Amazon login or a real book.
 
-**Ubuntu x64 Portable:** download the v0.2.1 Linux archive and verify `SHA256SUMS-linux.txt`. Extract it under your home directory; use `./start-linux-bundle.sh --login` for initial sign-in, then `./start-linux-bundle.sh` normally. Real-reader use requires Wayland and a supported Chromium Snap. The 2026-11-05 development installation's user-selected 161-image book export, interruption recovery, ZIP content/order verification and normal shutdown remain separate evidence from this package's anonymous-fixture checks. See the [Ubuntu Portable guide](docs/ubuntu-portable.ja.md) and [release verification](docs/releasing.md).
+**Ubuntu x64 Portable:** download the v0.2.3 Linux archive and verify `SHA256SUMS-linux.txt`. Extract it under your home directory; use `./start-linux-bundle.sh --login` for initial sign-in, then `./start-linux-bundle.sh` normally. Real-reader use requires Wayland and a supported Chromium Snap. The 2026-11-05 development installation's user-selected 161-image book export, interruption recovery, ZIP content/order verification and normal shutdown remain separate evidence from this package's anonymous-fixture checks. See the [Ubuntu Portable guide](docs/ubuntu-portable.ja.md) and [release verification](docs/releasing.md).
 
 On Ubuntu 26.04, anonymous ZIP/CBZ destination selection and cancellation were manually exercised with the installed Zenity; the user reported normal display. No native-dialog image was provided or independently inspected. These checks confirmed that selection alone creates no archive; ZIP/CBZ output/content checks are separate integration evidence, not native-picker export or real-Kindle acceptance.
 
 ## Before you use it
 
-- **Quality:** v0.2.1 passed both platforms' mandatory exact-source and tagged-release gates, including packaged capture/export checks. Actual assets, metadata, checksums and four provenance subjects matched; anonymous downloads were verified. Initial failures remain recorded. The 161-image Ubuntu development result and earlier v0.1.2 clean-Windows/whole-book report are separate from these packages' fixture checks; see [validation history and release evidence](docs/validation.md).
+- **Quality:** v0.2.3 passed both platforms' mandatory exact-source and tagged-release gates, including packaged capture/export checks. Actual assets, metadata, checksums and four provenance subjects matched; anonymous downloads were verified. Initial failures remain recorded. The 161-image Ubuntu development result and earlier v0.1.2 clean-Windows/whole-book report are separate from these packages' fixture checks; see [validation history and release evidence](docs/validation.md).
 - **Login & local data:** sign in only on the official page. **Login state is saved by default.** Turn retention off for a separate temporary profile; normal shutdown removes temporary data, but crashes may leave files. Never share profiles, cookies, book data, or captured pages. See [privacy and storage details](docs/security-and-trust.md).
 - **Network & trust:** no app-operated login server, application telemetry, or automatic update checks. Reader, authentication, browser, and setup traffic still occurs. Open source is **not a security guarantee**; see [network destinations and trust boundaries](docs/security-and-trust.md).
 - **Compatibility:** v0.1.6 offers Japan, US and UK Kindle entry points independently of UI language; actual regional books, every layout, ZIP64, and every CBZ viewer are unverified. User-confirmed clean-Windows and real-book operation does not guarantee all environments or books. Standard / 2× rendering has a **16-megapixel / 32 MiB limit per image**; it cannot restore missing source detail.

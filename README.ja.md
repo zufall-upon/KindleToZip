@@ -12,10 +12,12 @@ Windows・UbuntuでKindle Webの表示画面をPNG／JPEG画像として取得�
 
 **完全無料・オープンソース · Windows / Ubuntu x64 · 独自アカウント登録不要 · 有料DLCなし**
 
-> **Windows x64・Ubuntu x64用Portable v0.2.1を同時公開しました。**
+> **Windows x64・Ubuntu x64用Portable v0.2.3を同時公開しました。**
 > 両OSの必須ソース検査・配布試料検査が成功し、実ダウンロード・チェックサム・provenanceを照合済みです。Ubuntuの実本161画像の実績は開発配置の結果で、新しい配布物の検証とは区別します。
 
-**[Windows ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.2.1/KindleToZip-Portable-v0.2.1-win-x64.zip)** · **[Ubuntu tar.gz](https://github.com/zufall-upon/KindleToZip/releases/download/v0.2.1/KindleToZip-Portable-v0.2.1-linux-x64.tar.gz)** · [リリースとチェックサム](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.1)
+**[Windows ZIP](https://github.com/zufall-upon/KindleToZip/releases/download/v0.2.3/KindleToZip-Portable-v0.2.3-win-x64.zip)** · **[Ubuntu tar.gz](https://github.com/zufall-upon/KindleToZip/releases/download/v0.2.3/KindleToZip-Portable-v0.2.3-linux-x64.tar.gz)** · [リリースとチェックサム](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.3)
+
+v0.2.3はプレビュー・手動読書領域選択・可変表示の次ページ操作と復帰を修正しました。作者のローカル修正版による限定的な実読書復帰確認と、利用者の1冊取得・ZIP成功報告は、配布物の匿名試料検査とは別に記録しています。全冊・クリーン環境の保証ではありません。
 
 [Windowsガイド](docs/portable.md) · [Ubuntuガイド](docs/ubuntu-portable.ja.md) · [ソースから試す](docs/getting-started.ja.md)
 
@@ -68,19 +70,19 @@ v0.1.6では、専用ブラウザを開く前に **「Kindle利用地域」か�
 
 ## 使い始める
 
-**Windows Portable版：** [v0.2.1のWindows ZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.1)を取得し、`SHA256SUMS.txt` と照合してZIP全体を書き込み可能なフォルダへ展開し、`KindleToZip-Portable.exe` を起動します。Node.js・専用ブラウザは同梱済みで、開発環境は不要です。[3言語のPortableガイド](docs/portable.md)を参照してください。
+**Windows Portable版：** [v0.2.3のWindows ZIP](https://github.com/zufall-upon/KindleToZip/releases/tag/v0.2.3)を取得し、`SHA256SUMS.txt` と照合してZIP全体を書き込み可能なフォルダへ展開し、`KindleToZip-Portable.exe` を起動します。Node.js・専用ブラウザは同梱済みで、開発環境は不要です。[3言語のPortableガイド](docs/portable.md)を参照してください。
 
 **ソースから：** **Windows x64・Git・Node.js 22以降・PowerShell 7** が必要です。[入門ガイド](docs/getting-started.ja.md)で専用のRust環境とブラウザを導入し、`npm start` で起動します。まずはAmazonへのログインも実書籍も不要な自作サンプルから試せます。
 
 **Ubuntu試験段階のソース版：** 通常の `npm start` では、取得元に「匿名の自作試料」を明示選択して、プレビュー・有限画面数の承認・別の開始操作から点検・編集を試せます。旧headless試料や明示的な `npm start -- --sample-headed` の動作も残ります。実Kindleを確認した選択済みPortableの状況は次項、ソース開発は[Ubuntu向け手順](docs/getting-started.ja.md#ubuntu-source)を参照してください。導入済みの `/usr/bin/zenity` は任意の保存先選択機能で、手入力も残ります。選択だけでは保存・取得しません。
 
-**Ubuntu x64 Portable：** v0.2.1のLinuxアーカイブを `SHA256SUMS-linux.txt` と照合してホーム内に展開します。初回ログインは `./start-linux-bundle.sh --login`、通常起動は `./start-linux-bundle.sh`。実KindleにはWayland・対応Chromium Snapが必要です。2026-11-05の開発配置では本人指定の1冊・161画像を、中断復帰・ZIP内容と順序の照合・正常終了まで確認しました。この実績は新配布物の匿名試料検査とは別です。[起動手順](docs/ubuntu-portable.ja.md)と[リリース検証](docs/releasing.md)を参照してください。
+**Ubuntu x64 Portable：** v0.2.3のLinuxアーカイブを `SHA256SUMS-linux.txt` と照合してホーム内に展開します。初回ログインは `./start-linux-bundle.sh --login`、通常起動は `./start-linux-bundle.sh`。実KindleにはWayland・対応Chromium Snapが必要です。2026-11-05の開発配置では本人指定の1冊・161画像を、中断復帰・ZIP内容と順序の照合・正常終了まで確認しました。この実績は新配布物の匿名試料検査とは別です。[起動手順](docs/ubuntu-portable.ja.md)と[リリース検証](docs/releasing.md)を参照してください。
 
 Ubuntu 26.04では、導入済みZenityで匿名のZIP/CBZ保存先選択・取消を本人操作で確認し、表示も正常との本人目視報告を受領しました。nativeダイアログの画像は未提供・独立検査なしです。選択だけでは書き出されないことを確認したもので、ZIP/CBZ出力・内容照合は別の統合検査です。native pickerでの実出力や実Kindleの受入成功は意味しません。
 
 ## 利用前に知っておきたいこと
 
-- **品質：** v0.2.1は両OSの確定ソースCI・タグ付きリリースの必須ゲートと配布版の取得／出力検査を通過しました。実asset・metadata・checksum・4対象のprovenanceを照合し、匿名ダウンロードも確認済みです。初回失敗は履歴に保持。Ubuntu開発配置の161画像と従来のv0.1.2のクリーンWindows・全冊報告は新配布物の試料検査とは別です。[検証履歴とリリース記録](docs/validation.md)（英語）を参照してください。
+- **品質：** v0.2.3は両OSの確定ソースCI・タグ付きリリースの必須ゲートと配布版の取得／出力検査を通過しました。実asset・metadata・checksum・4対象のprovenanceを照合し、匿名ダウンロードも確認済みです。初回失敗は履歴に保持。Ubuntu開発配置の161画像と従来のv0.1.2のクリーンWindows・全冊報告は新配布物の試料検査とは別です。[検証履歴とリリース記録](docs/validation.md)（英語）を参照してください。
 - **ログインと保存データ：** ログインは公式画面だけで行います。**ログイン状態は既定で保存します。** 保存をOFFにすると別の一時プロファイルを使い、通常終了で削除しますが、異常終了では残る場合があります。プロファイル・Cookie・書籍情報・取得画像は共有しないでください。[プライバシーと保存先](docs/security-and-trust.md)（英語）に詳細があります。
 - **通信と信頼：** アプリ独自の認証サーバー・テレメトリ・自動更新確認はありません。公式読書・認証サービス、ブラウザ、導入時の通信は発生します。ソース公開は**安全性の保証ではありません**。[通信先と信頼境界](docs/security-and-trust.md)（英語）を参照してください。
 - **動作範囲：** v0.1.6では表示言語とは別に日本・米国・英国のKindle入口を選べますが、各地域の実書籍、全レイアウト、ZIP64、すべてのCBZビューアは未検証です。利用者側で確認したクリーンWindows・実書籍の動作は、全環境・全書籍を保証するものではありません。標準・2倍の描画密度には **画像ごとに16メガピクセル・32 MiB** の上限があり、元の表示にない細部は復元できません。
