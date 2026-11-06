@@ -360,8 +360,13 @@ if (process.platform === 'linux') test('最小OS adapter: 公開Applicationか�
       const context = new EventEmitter(); browser = new EventEmitter(); page = new EventEmitter();
       let url = 'about:blank', viewport = null, scale = 1;
       Object.assign(page, { context: () => context, isClosed: () => false, mainFrame: () => page, url: () => url,
-        setDefaultTimeout() {}, viewportSize: () => viewport, setViewportSize: async value => { viewport = value; },
-        evaluate: async fn => {
+         setDefaultTimeout() {}, viewportSize: () => viewport, setViewportSize: async value => { viewport = value; },
+         waitForFunction: async (predicate, expected, options) => {
+           assert.match(String(predicate), /devicePixelRatio/);
+           assert.equal(expected, scale); assert.equal(options.timeout, 1800);
+           if (mode === 'scale-error') throw new Error('fixture_scale_wait_timeout');
+         },
+         evaluate: async fn => {
           const source = String(fn);
           if (source.includes('innerWidth') && source.includes('innerHeight')) return { width: 1100, height: 850 };
           if (source.includes('devicePixelRatio')) return mode === 'scale-error' ? scale + 1 : scale;
